@@ -11,7 +11,7 @@ aes-gcm = "0.10"
 argon2 = "0.5"
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
-base64 = "0.22"
+base64 = "0.23"
 bcrypt = "0.17"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
