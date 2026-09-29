@@ -7,7 +7,7 @@ authors = ["Miguel Ángel González Pelegrina"]
 license = "Proprietary"
 
 [dependencies]
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 argon2 = "0.5"
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
