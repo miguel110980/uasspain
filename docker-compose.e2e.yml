@@ -1,0 +1,143 @@
+# Pila E2E aislada: no comparte contenedores, red ni volúmenes con producción.
+name: uasspain-e2e
+
+services:
+  postgres-e2e:
+    image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    environment:
+      POSTGRES_DB: test_e2e_uasspain
+      POSTGRES_USER: uasspain
+      POSTGRES_PASSWORD: ${E2E_DB_PASSWORD:-e2e_only_db_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - e2e_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uasspain -d test_e2e_uasspain"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks: [e2e_net]
+
+  redis-e2e:
+    build:
+      context: ./infra/redis
+    image: uasspain-redis:8.2.10-alpine
+    # Isolated, un-published test network: accept only peers on this Compose
+    # network so the backend exercises the same Redis major as production.
+    command: ["redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks: [e2e_net]
+
+  backend-e2e:
+    image: uasspain-backend:e2e-local
+    depends_on:
+      postgres-e2e:
+        condition: service_healthy
+      redis-e2e:
+        condition: service_healthy
+    environment:
+      BIND_ADDRESS: 0.0.0.0:8000
+      RUST_LOG: info
+      SECRET_KEY: e2e-only-secret-key-with-at-least-thirty-two-bytes
+      FIELD_ENCRYPTION_KEY: ${E2E_FIELD_ENCRYPTION_KEY:?run-e2e.ps1 debe generar la clave efimera}
+      DB_NAME: test_e2e_uasspain
+      DB_USER: uasspain
+      DB_PASSWORD: ${E2E_DB_PASSWORD:-e2e_only_db_password}
+      DB_HOST: postgres-e2e
+      DB_PORT: "5432"
+      DB_SSLMODE: disable
+      REDIS_URL: redis://redis-e2e:6379/0
+      CORS_ALLOWED_ORIGINS: http://localhost:8010,http://127.0.0.1:8010
+      FRONTEND_URL: http://127.0.0.1:8010
+      JWT_COOKIE_SECURE: "false"
+      BOOTSTRAP_ADMIN_ENABLED: "true"
+      BOOTSTRAP_ADMIN_EMAIL: e2e-admin@test.local
+      BOOTSTRAP_ADMIN_USERNAME: e2e-admin
+      BOOTSTRAP_ADMIN_FIRST_NAME: E2E
+      BOOTSTRAP_ADMIN_LAST_NAME: Admin
+      BOOTSTRAP_ADMIN_DNI: 00000000T
+      BOOTSTRAP_ADMIN_BIRTH_DATE: 1990-01-01
+      BOOTSTRAP_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD:-E2eAdmin_2026!}
+      DEV_EMAIL: "true"
+      MEDIA_ROOT: /app/media
+      BACKUP_STORAGE_PATH: /app/backups
+      BACKUP_KEY_DIR: /app/backup_keys
+      BACKUP_ENCRYPTION_ENABLED: "true"
+      BACKUP_SCHEDULER_ENABLED: "false"
+      # The two SFTP fixtures are isolated Docker peers, not real WireGuard
+      # endpoints. Production compose fails closed with BACKUP_REQUIRE_VPN=true.
+      BACKUP_REQUIRE_VPN: "false"
+      PRODUCTION_RESTORE_ENABLED: "true"
+      REGISTRATION_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8010:8000"
+    volumes:
+      - e2e_backups:/app/backups
+      - e2e_media:/app/media
+      - e2e_backup_keys:/app/backup_keys
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/uasspain-backend", "--healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    networks: [e2e_net]
+
+  sftp-ext1-e2e:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r1-ls236@sha256:39ba37d50fdd6be1bf70644c871e5dcb9234ee79ac56424ea03ca08cadf1e7b0
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Europe/Madrid
+      PASSWORD_ACCESS: "false"
+      USER_NAME: backupsftp
+      PUBLIC_KEY: ${E2E_BACKUP_SSH_PUB:-}
+      SUDO_ACCESS: "false"
+    volumes:
+      - e2e_sftp1_config:/config
+      - e2e_sftp1_backups:/backups
+    networks: [e2e_net]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2222 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  sftp-ext2-e2e:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r1-ls236@sha256:39ba37d50fdd6be1bf70644c871e5dcb9234ee79ac56424ea03ca08cadf1e7b0
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Europe/Madrid
+      PASSWORD_ACCESS: "false"
+      USER_NAME: offsite
+      PUBLIC_KEY: ${E2E_BACKUP_SSH_PUB:-}
+      SUDO_ACCESS: "false"
+    volumes:
+      - e2e_sftp2_config:/config
+      - e2e_sftp2_backups:/backups
+    networks: [e2e_net]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2222 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+networks:
+  e2e_net:
+
+volumes:
+  e2e_pgdata:
+  e2e_backups:
+  e2e_media:
+  e2e_backup_keys:
+  e2e_sftp1_config:
+  e2e_sftp1_backups:
+  e2e_sftp2_config:
+  e2e_sftp2_backups:

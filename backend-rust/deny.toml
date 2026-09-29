@@ -1,0 +1,8 @@
+[graph]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "Owner: UASSpain Security. Review by: 2026-10-15. rsa 0.9.10 is lockfile-only metadata from sqlx-mysql; production enables only PostgreSQL and cargo tree has no active rsa path. Remove when SQLx publishes a lock graph without it." },
+]
+unused-ignored-advisory = "warn"

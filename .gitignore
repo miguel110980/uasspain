@@ -1,0 +1,67 @@
+# Entornos y secretos locales
+.env
+.env.*
+!.env.example
+!.env.*.example
+.secrets/
+wireguard-keys/
+infra/wireguard/keys/
+scripts/smtp.defaults
+scripts/google.defaults
+
+# Material criptografico privado (los certificados publicos .crt/.cer si pueden versionarse)
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+
+# Dependencias y salidas reproducibles
+node_modules/
+frontend/node_modules/
+frontend/dist/
+backend-rust/target/
+target/
+coverage/
+htmlcov/
+.coverage*
+
+# Python solo para utilidades y tests operativos
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Runtime y pruebas locales
+*.log
+*.sqlite3
+*.sqlite3-journal
+dump.rdb
+cookies.txt
+.secrets-results.json
+.local-snapshots/
+.pgtest/
+.run/
+project-tree.txt
+
+# Temporales y editores
+*.tmp
+*.bak
+*.old
+*.orig
+*.rej
+*.zip
+*.bundle
+.idea/
+.vscode/
+.cursor/
+.cursorindexingignore
+.cursorignore
+*.swp
+*~

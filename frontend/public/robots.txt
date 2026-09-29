@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /instructor
+Disallow: /alumno
+Disallow: /auth-redirect
+Disallow: /restablecer-contrasena
+Disallow: /api/
+
+Sitemap: https://uas-spain.com/sitemap.xml

@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Artefactos locales y baseline de hashes; no forman parte del codigo distribuible"
+paths = [
+  '''(^|/)[.]git/''',
+  '''(^|/)[.]local-snapshots/''',
+  '''(^|/)(node_modules|target|dist)/''',
+  '''(^|/)[.]secrets/''',
+  '''(^|/)[.]secrets[.]baseline$''',
+  '''(^|/)[.]env$''',
+  '''(^|/)[.]env[.]docker$''',
+]

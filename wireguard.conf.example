@@ -1,0 +1,13 @@
+# UASSPAIN — WireGuard VPN Configuration Template
+# Copia este archivo a wireguard.conf y rellena los valores
+
+[Interface]
+PrivateKey = <TU_PRIVATE_KEY_AQUI>
+ListenPort = 51820
+Address = 10.50.0.1/24
+
+[Peer]
+PublicKey = KbflDcpswxK5jgLvqZEJ9FIbOy0fpL4y4Wksn7acIQg=
+AllowedIPs = 10.50.0.0/24
+Endpoint = 81.38.12.50:51820
+PersistentKeepalive = 25

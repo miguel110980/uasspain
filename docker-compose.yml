@@ -1,0 +1,485 @@
+# =============================================================================
+# UASSPAIN — arquitectura final: EXACTAMENTE 5 servicios permanentes
+#   nginx (edge TLS, único puerto público) · frontend · backend · postgres · redis
+# Redes Zero Trust:
+#   edge  = nginx + frontend + backend        (salida a Internet p/ backend)
+#   data  = backend + postgres + redis        (internal: true, sin egress)
+# =============================================================================
+services:
+  # ─── PostgreSQL 18 (red data interna, TLS obligatorio verify-full) ───
+  postgres:
+    build:
+      context: .
+      dockerfile: infra/postgres/Dockerfile
+    image: uasspain-postgres:18.6-alpine3.24
+    container_name: uasspain-postgres
+    restart: unless-stopped
+    init: true
+    pids_limit: 200
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
+    entrypoint: ["sh", "/tls-entrypoint.sh"]
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/pgtls/server.crt
+      - -c
+      - ssl_key_file=/run/pgtls/server.key
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
+      - hba_file=/run/pgtls/pg_hba.conf
+    environment:
+      POSTGRES_DB: ${DB_NAME:-uasspain}
+      POSTGRES_USER: ${DB_USER:-uasspain}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # La imagen declara VOLUME /var/lib/postgresql (parent) → volumen nombrado
+      # explícito para no generar volúmenes anónimos en cada recreate.
+      - postgres_varlib:/var/lib/postgresql
+      - ./infra/postgres/docker-entrypoint-tls.sh:/tls-entrypoint.sh:ro
+      - ./infra/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./infra/postgres/10-provision-roles.sh:/docker-entrypoint-initdb.d/10-provision-roles.sh:ro
+    networks:
+      - data
+    read_only: true
+    tmpfs:
+      - /run/pgtls
+      - /var/run/postgresql
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      # Justificado (§34): el entrypoint oficial de postgres ejecuta como root
+      # `find "$PGDATA" ! -user postgres -exec chown` (docker-entrypoint.sh:58);
+      # sin DAC_OVERRIDE no puede atravesar dirs 0700 ya pertenecientes a
+      # postgres (cluster existente). Evidencia: crash-loop sin esta cap.
+      - CHOWN
+      - SETUID
+      - SETGID
+      - FOWNER
+      - DAC_OVERRIDE
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-uasspain} -d ${DB_NAME:-uasspain}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+          pids: 200
+    secrets:
+      - db_password
+      - db_app_password
+      - db_migration_password
+      - db_backup_password
+      - db_restore_password
+      - db_monitor_password
+      - pg_tls_ca
+      - pg_tls_cert
+      - pg_tls_key
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── Redis 8 (pub/sub + caché; TLS + ACL, red data interna) ───────
+  redis:
+    image: uasspain-redis:8.2.10-alpine
+    build:
+      context: ./infra/redis
+      dockerfile: Dockerfile
+    container_name: uasspain-redis
+    restart: unless-stopped
+    init: true
+    pids_limit: 128
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
+    entrypoint: ["sh", "/entrypoint.sh"]
+    command: []
+    volumes:
+      - redis_data:/data
+      - ./infra/redis/docker-entrypoint.sh:/entrypoint.sh:ro
+    networks:
+      - data
+    read_only: true
+    tmpfs:
+      - /run/redistls
+      - /run/redisacl
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - FOWNER
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "REDISCLI_AUTH=$(cat /run/secrets/redis_password) redis-cli -h localhost --no-auth-warning --user app --tls --cacert /run/secrets/redis_tls_ca ping | grep -q PONG",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    secrets:
+      - redis_password
+      - redis_tls_ca
+      - redis_tls_cert
+      - redis_tls_key
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+          pids: 128
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── Backend Rust/Axum — edge + data ────────────────────────────
+  backend:
+    build:
+      context: ./backend-rust
+      dockerfile: Dockerfile
+      target: production
+    container_name: uasspain-backend
+    restart: unless-stopped
+    init: true
+    pids_limit: 256
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      BIND_ADDRESS: 0.0.0.0:8000
+      RUST_LOG: ${RUST_LOG:-info,tower_http=info}
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      FIELD_ENCRYPTION_KEY_FILE: /run/secrets/field_encryption_key
+      BOOTSTRAP_ADMIN_ENABLED: ${BOOTSTRAP_ADMIN_ENABLED:-false}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_FIRST_NAME: ${BOOTSTRAP_ADMIN_FIRST_NAME:-Administrador}
+      BOOTSTRAP_ADMIN_LAST_NAME: ${BOOTSTRAP_ADMIN_LAST_NAME:-Sistema}
+      BOOTSTRAP_ADMIN_DNI: ${BOOTSTRAP_ADMIN_DNI:-}
+      BOOTSTRAP_ADMIN_BIRTH_DATE: ${BOOTSTRAP_ADMIN_BIRTH_DATE:-}
+      BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
+      FRONTEND_URL: ${FRONTEND_URL:-https://localhost}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://localhost}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-uasspain}
+      DB_USER: uasspain_app
+      DB_PASSWORD_FILE: /run/secrets/db_app_password
+      DB_MIGRATION_USER: uasspain_migrator
+      DB_MIGRATION_PASSWORD_FILE: /run/secrets/db_migration_password
+      DB_BACKUP_USER: uasspain_backup
+      DB_BACKUP_PASSWORD_FILE: /run/secrets/db_backup_password
+      DB_RESTORE_USER: uasspain_restore
+      DB_RESTORE_PASSWORD_FILE: /run/secrets/db_restore_password
+      DB_SSLMODE: verify-full
+      DB_SSLROOTCERT: /run/secrets/pg_tls_ca
+      DB_POOL_MIN: "1"
+      DB_POOL_MAX: "20"
+      DB_CONNECT_TIMEOUT: "10"
+      REDIS_URL: ${REDIS_URL:-}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      REDIS_TLS_CA_FILE: /run/secrets/redis_tls_ca
+      PG_BIN: /usr/bin
+      TLS_CERT_FILE: /run/secrets/backend_tls_cert
+      TLS_KEY_FILE: /run/secrets/backend_tls_key
+      JWT_ACCESS_COOKIE: uasspain_access
+      JWT_REFRESH_COOKIE: uasspain_refresh
+      JWT_COOKIE_SECURE: "true"
+      JWT_ACCESS_MINUTES: "60"
+      JWT_REFRESH_DAYS: "7"
+      MEDIA_ROOT: /app/media
+      BACKUP_STORAGE_PATH: /app/backups
+      BACKUP_ENCRYPTION_ENABLED: "true"
+      BACKUP_SCHEDULER_ENABLED: "true"
+      BACKUP_REQUIRE_VPN: "true"
+      BACKUP_MIN_FREE_BYTES: ${BACKUP_MIN_FREE_BYTES:-268435456}
+      PRODUCTION_RESTORE_ENABLED: "true"
+      VPN_SERVER2_IP: ${VPN_SERVER2_IP:-10.50.0.2}
+      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
+      EMAIL_HOST: ${EMAIL_HOST:-}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_USE_SSL: ${EMAIL_USE_SSL:-false}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+      EMAIL_HOST_PASSWORD_FILE: /run/secrets/smtp_password
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+      CONTACT_EMAIL: ${CONTACT_RECIPIENT_EMAIL:-info@uasspain.com}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    networks:
+      - edge
+      - data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    volumes:
+      - backups_data:/app/backups
+      - media_data:/app/media
+      - backup_keys:/app/backup_keys
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/uasspain-backend", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+          pids: 256
+    secrets:
+      - secret_key
+      - db_password
+      - db_app_password
+      - db_migration_password
+      - db_backup_password
+      - db_restore_password
+      - smtp_password
+      - field_encryption_key
+      - bootstrap_admin_password
+      - redis_password
+      - pg_tls_ca
+      - redis_tls_ca
+      - backend_tls_ca
+      - backend_tls_cert
+      - backend_tls_key
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── Frontend (nginx interno + SPA) — solo alcanzable desde edge ─────
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: production
+    container_name: uasspain-frontend
+    restart: unless-stopped
+    init: true
+    pids_limit: 128
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /run/frontend-tls
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETGID
+      - SETUID
+    volumes:
+      - media_data:/media_data:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--cacert", "/run/frontend-tls/ca.crt", "https://frontend:8443/", "-o", "/dev/null"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+          pids: 128
+    security_opt:
+      - no-new-privileges:true
+    secrets:
+      - frontend_tls_ca
+      - frontend_tls_cert
+      - frontend_tls_key
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── Nginx edge: ÚNICO servicio con puertos públicos (80/443) ────────
+  nginx:
+    build:
+      context: ./nginx
+    container_name: uasspain-nginx
+    restart: unless-stopped
+    init: true
+    pids_limit: 256
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    environment:
+      # Reservado para futuros templates; la allowlist de Host vive en nginx.conf
+      TZ: ${TZ:-Europe/Madrid}
+    ports:
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-80}:8080"
+      - "${HTTP_BIND:-127.0.0.1}:${HTTPS_PORT:-443}:8443"
+    networks:
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "--no-check-certificate",
+          "https://127.0.0.1:8443/healthz",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+          pids: 256
+    secrets:
+      - edge_tls_cert
+      - edge_tls_key
+      - backend_tls_ca
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ─── Networks (Zero Trust) ──────────────────────────────────────────
+networks:
+  edge:
+    driver: bridge
+    internal: false
+  data:
+    driver: bridge
+    internal: true
+
+# ─── Volumes ────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+  postgres_varlib:
+    driver: local
+  redis_data:
+    driver: local
+  backups_data:
+    driver: local
+  media_data:
+    driver: local
+  backup_keys:
+    driver: local
+
+# ─── Secrets (fuera de Git, fuera de imágenes) ──────────────────────
+secrets:
+  secret_key:
+    file: ${SECRET_KEY_FILE:-.secrets/secret_key}
+  db_password:
+    file: ${DB_PASSWORD_FILE:-.secrets/db_password}
+  db_app_password:
+    file: ${DB_APP_PASSWORD_FILE:-.secrets/db_app_password}
+  db_migration_password:
+    file: ${DB_MIGRATION_PASSWORD_FILE:-.secrets/db_migration_password}
+  db_backup_password:
+    file: ${DB_BACKUP_PASSWORD_FILE:-.secrets/db_backup_password}
+  db_restore_password:
+    file: ${DB_RESTORE_PASSWORD_FILE:-.secrets/db_restore_password}
+  db_monitor_password:
+    file: ${DB_MONITOR_PASSWORD_FILE:-.secrets/db_monitor_password}
+  smtp_password:
+    file: ${SMTP_PASSWORD_FILE:-.secrets/smtp_password}
+  field_encryption_key:
+    file: ${FIELD_ENCRYPTION_KEY_FILE:-.secrets/field_encryption_key}
+  # §13 rotación de clave PII (descomenta junto con la variable de entorno):
+  # field_encryption_key_previous:
+  #   file: ${FIELD_ENCRYPTION_KEY_PREVIOUS_FILE:-.secrets/field_encryption_key_previous}
+  bootstrap_admin_password:
+    file: ${BOOTSTRAP_ADMIN_PASSWORD_FILE:-.secrets/bootstrap_admin_password}
+  redis_password:
+    file: ${REDIS_PASSWORD_FILE:-.secrets/redis_password}
+  pg_tls_ca:
+    file: .secrets/tls/ca.crt
+  pg_tls_cert:
+    file: .secrets/tls/postgres.crt
+  pg_tls_key:
+    file: .secrets/tls/postgres.key
+  redis_tls_ca:
+    file: .secrets/tls/ca.crt
+  redis_tls_cert:
+    file: .secrets/tls/redis.crt
+  redis_tls_key:
+    file: .secrets/tls/redis.key
+  edge_tls_cert:
+    file: .secrets/tls/edge.crt
+  edge_tls_key:
+    file: .secrets/tls/edge.key
+  backend_tls_ca:
+    file: .secrets/tls/ca.crt
+  backend_tls_cert:
+    file: .secrets/tls/backend.crt
+  backend_tls_key:
+    file: .secrets/tls/backend.key
+  frontend_tls_ca:
+    file: .secrets/tls/ca.crt
+  frontend_tls_cert:
+    file: .secrets/tls/frontend.crt
+  frontend_tls_key:
+    file: .secrets/tls/frontend.key

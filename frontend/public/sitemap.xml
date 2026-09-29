@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://uas-spain.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://uas-spain.com/nosotros</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://uas-spain.com/tecnologia</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://uas-spain.com/blog</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://uas-spain.com/contacto</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://uas-spain.com/servicios/seguridad</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://uas-spain.com/servicios/emergencias</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://uas-spain.com/servicios/audiovisuales</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://uas-spain.com/servicios/radiofonista</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://uas-spain.com/servicios/fumigacion</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://uas-spain.com/servicios/inspeccion</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://uas-spain.com/servicios/termografia</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://uas-spain.com/politica-privacidad</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://uas-spain.com/aviso-legal</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://uas-spain.com/politica-cookies</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+</urlset>

@@ -1,0 +1,16 @@
+{
+  "name": "UASSPAIN",
+  "short_name": "UASSPAIN",
+  "description": "Plataforma de formación y servicios UAS",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050507",
+  "theme_color": "#00e5ff",
+  "icons": [
+    {
+      "src": "/images/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
