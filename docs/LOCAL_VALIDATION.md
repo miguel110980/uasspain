@@ -91,6 +91,26 @@ responden 200 por HTTPS con CA y hostname verificados; readiness confirma
 PostgreSQL y Redis disponibles. No cambia código de aplicación, imágenes,
 volúmenes ni datos.
 
+## Inspección de usuarios de la instalación activa
+
+La inspección de solo lectura confirma que el backend `uasspain-backend` usa
+`postgres`, base `uasspain`, rol `uasspain_app`, sin override `DATABASE_URL`.
+`auth_user`, `accounts_userprofile` y `core_auditlog` contienen cero filas.
+La otra base, `postgres`, no contiene tablas de usuarios de la aplicación.
+Los dos contextos Docker locales muestran la misma pila y el volumen de backups
+está vacío. `BOOTSTRAP_ADMIN_ENABLED=false`; no se crean cuentas para completar
+la auditoría. Identificación, login y aislamiento de los tres usuarios reales
+quedan BLOCKED hasta localizar su base o copia original. No se puede verificar
+el algoritmo de una contraseña existente cuando no hay filas; el código genera
+Argon2id y la base conserva el índice UNIQUE sobre `email_lookup`.
+
+El campo de email del login conservaba únicamente minúsculas porque saneaba
+cada pulsación. Ahora conserva la entrada y normaliza al enviar. Typecheck,
+lint y build Docker pasan. Chromium contra HTTPS de la instalación real, sin
+mocks ni envío de login, demuestra `ABC → abc` antes y `ABC → ABC` después.
+Se actualiza únicamente el frontend; backend y PostgreSQL conservan sus
+contenedores. No se cambian usuarios, roles, emails, contraseñas ni datos.
+
 ## Integraciones externas pendientes
 
 El usuario indica que no hay un entorno externo de pruebas configurado y pide validar lo local disponible. **SMTP_FUNCTIONAL, OAUTH_E2E, TURN_RELAY_E2E y VPN_BACKUP_TRANSPORT = BLOCKED**: faltan cuenta/destinatario SMTP autorizado, cliente y cuenta Google de prueba, credenciales TURN y peer/rutas VPN autorizados. El OTP de los fixtures se activa únicamente en la base aislada; la prueba no demuestra entrega de correo. La carga es una muestra local y no certifica capacidad de producción. Los dispositivos WebRTC son simulados, con intercambio real de medios en localhost. Los dos destinos SFTP aislados prueban transporte/restauración, no una VPN real.

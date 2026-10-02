@@ -213,7 +213,8 @@ export default function AuthModal({ isOpen, onClose }) {
             autoCapitalize="none"
             spellCheck={false}
             value={email}
-            onChange={(e) => setEmail(sanitizeInput(e.target.value, 'email'))}
+            onChange={(e) => setEmail(e.target.value)}
+            maxLength={254}
             placeholder="tu@email.com"
             className="w-full bg-surface-muted border border-border-subtle focus:border-transparent text-foreground placeholder:text-muted-foreground/40 px-4 py-2.5 text-sm outline-none transition-colors rounded-sm"
           />
