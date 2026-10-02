@@ -8,6 +8,7 @@ const wsProxyTarget = process.env.VITE_DEV_PROXY_WS_ORIGIN || 'ws://127.0.0.1:80
 // https://vite.dev/config/
 export default defineConfig({
   logLevel: 'error',
+  test: { include: ['src/**/*.test.{ts,tsx}'] },
   plugins: [react()],
   resolve: {
     alias: {

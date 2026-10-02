@@ -235,9 +235,9 @@ export default function StaffChatPanel({
     document.addEventListener('visibilitychange', onVisible);
     const unsubscribe = conexionesService.subscribeMensajes((event) => {
       const payload = conexionesService.parseWsPayload(event);
-      if (payload?.type === 'mensaje_staff') {
+      if (payload?.type === 'mensaje_staff' && payload?.data) {
         handleIncomingStaffMessage(payload);
-      } else if (event.type === 'poll') {
+      } else if (payload?.type === 'mensaje_staff' || event.type === 'poll') {
         loadMeta();
         if (peerRef.current) loadMensajes(peerRef.current.id, true);
       }
@@ -255,7 +255,7 @@ export default function StaffChatPanel({
       const payload = conexionesService.parseWsPayload(event);
       if (payload?.type === 'mensaje_staff') {
         handleIncomingStaffMessage(payload);
-      } else if (payload?.type === 'mensaje' || event.type === 'poll') {
+      } else if (payload?.type === 'mensaje' || payload?.type === 'message' || event.type === 'poll') {
         loadMensajes(peerSeleccionado.id, true);
         loadMeta();
       }
@@ -620,6 +620,7 @@ export default function StaffChatPanel({
               />
               <button
                 type="submit"
+                aria-label="Enviar mensaje"
                 disabled={sending || !texto.trim()}
                 className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 font-bold uppercase tracking-tighter text-xs hover:bg-primary/80 transition-all duration-300 disabled:opacity-50"
               >

@@ -474,10 +474,15 @@ async def ws_expect_reject(url, cookie, origin):
 
 
 async def main():
-    if "8010" not in BASE and os.environ.get("E2E_ALLOW_MAIN") != "1":
+    target = urllib.parse.urlsplit(BASE)
+    isolated = (
+        target.hostname in {"localhost", "127.0.0.1", "host.docker.internal"}
+        and target.port == 8010
+    ) or (target.scheme == "http" and target.hostname == "backend-e2e" and target.port == 8000)
+    if not isolated or target.username or target.password or target.path or target.query or target.fragment:
         print(
-            f"ABORT: BASE={BASE} no apunta a la stack E2E (8010). "
-            "Define E2E_BASE o E2E_ALLOW_MAIN=1 conscientemente."
+            "ABORT: E2E_BASE no apunta a una entrada de la pila aislada. "
+            "Usa localhost:8010 o backend-e2e:8000 dentro de su red Docker."
         )
         sys.exit(2)
 
@@ -523,6 +528,7 @@ async def main():
             "categoria": "A1/A3",
             "descripcion": "E2E controlado",
             "activo": True,
+            "num_preguntas": 3,
         },
     )
     log(st == 201, "exam_create", f"{st}"[:200])
@@ -578,12 +584,19 @@ async def main():
     log(order1 == order2 == order3, "orden_estable_sin_aleatorizacion", f"{order1}")
 
     respuestas = {pids[0]: "a", pids[1]: "d"}
+    st, attempt = alum.call("POST", f"/api/examenes/{ex_id}/intentos/", {"modalidad": "tiempo"})
+    attempt_id = attempt.get("id")
+    log(st == 200 and len(attempt.get("preguntas", [])) == 3
+        and all("respuesta_correcta" not in q for q in attempt.get("preguntas", [])),
+        "intento_snapshot_sin_claves", str(st))
     st, res = alum.call(
         "POST",
         "/api/resultados-examen/",
         {
             "examen_id": ex_id,
+            "attempt_id": attempt_id,
             "respuestas": respuestas,
+            "tiempo_empleado": 999999,
             "aciertos": 99,
             "nota": 99,
             "aprobado": True,
@@ -608,6 +621,67 @@ async def main():
     det = res.get("detalle_revision") or {}
     log(len(det) == 3, "detalle_revision_3_items", f"{len(det)}")
     res_id = res.get("id")
+    log(res.get("tiempo_empleado", 999999) < 60, "tiempo_del_servidor_no_del_payload")
+    st, replay = alum.call("POST", "/api/resultados-examen/", {
+        "examen_id": ex_id, "attempt_id": attempt_id, "respuestas": {pids[0]: "d"},
+    })
+    log(st == 201 and replay.get("id") == res_id and replay.get("aciertos") == 1,
+        "envio_repetido_idempotente", str(st))
+
+    st, free_attempt = alum.call("POST", f"/api/examenes/{ex_id}/intentos/", {"modalidad": "libre"})
+    free_id = free_attempt.get("id")
+    saved, _ = alum.call("PUT", f"/api/intentos-examen/{free_id}/", {"respuestas": respuestas})
+    st, resumed = alum.call("POST", f"/api/examenes/{ex_id}/intentos/", {"modalidad": "libre"})
+    log(saved == 204 and st == 200 and resumed.get("id") == free_id
+        and resumed.get("respuestas") == respuestas and resumed.get("expires_at") is None,
+        "intento_reanuda_respuestas_y_reloj")
+    st, _ = alum.call("PUT", f"/api/intentos-examen/{free_id}/", {"respuestas": {str(uuid.uuid4()): "a"}})
+    log(st == 400, "intento_rechaza_preguntas_ajenas", str(st))
+    st, _ = alum.call("PUT", f"/api/intentos-examen/{free_id}/", {"respuestas": {pids[0]: ["a"]}})
+    log(st == 400, "intento_rechaza_respuestas_no_tipadas", str(st))
+    st, _ = instr.call("PUT", f"/api/intentos-examen/{free_id}/", {"respuestas": respuestas})
+    log(st == 403, "instructor_no_responde_por_alumno", str(st))
+    st, sampled_exam = instr.call("POST", "/api/examenes/", {
+        "nombre": "E2E selección", "categoria": "A1/A3", "num_preguntas": 2, "activo": True
+    })
+    sampled_ids = []
+    for number in range(3):
+        _, question = instr.call("POST", "/api/preguntas/", {
+            "examen_id": sampled_exam["id"], "enunciado": f"Banco {number}",
+            "opcion_a": "A", "opcion_b": "B", "opcion_c": "C", "opcion_d": "D", "respuesta_correcta": "a", "orden": number
+        })
+        sampled_ids.append(question["id"])
+    st, sampled = alum.call("POST", f"/api/examenes/{sampled_exam['id']}/intentos/", {"modalidad": "libre"})
+    selected_ids = [question["id"] for question in sampled.get("preguntas", [])]
+    log(st == 200 and len(selected_ids) == len(set(selected_ids)) == 2
+        and set(selected_ids).issubset(sampled_ids), "seleccion_respeta_numero_sin_duplicados")
+    st, _ = instr.call("DELETE", f"/api/examenes/{sampled_exam['id']}/")
+    log(st == 204, "borrado_examen_con_preguntas_e_intento", str(st))
+    st, _ = alum.call("POST", f"/api/examenes/{ex_id}/intentos/", {"modalidad": "inventada"})
+    log(st == 400, "intento_modalidad_cerrada", str(st))
+    st, _ = alum.call("POST", "/api/resultados-examen/", {
+        "examen_id": ex_id, "respuestas": respuestas,
+    })
+    log(st == 400, "examen_no_admite_envio_sin_intento", str(st))
+    st, _ = alum.call("POST", "/api/resultados-examen/", {
+        "examen_id": ex_id, "attempt_id": free_id, "modalidad": "tiempo", "respuestas": respuestas,
+    })
+    log(st == 400, "examen_no_admite_cambio_modalidad", str(st))
+
+    inactive, _ = instr.call("PATCH", f"/api/examenes/{ex_id}/", {"activo": False})
+    st, hidden = alum.call("GET", "/api/examenes/")
+    denied, _ = alum.call("POST", f"/api/examenes/{ex_id}/intentos/", {"modalidad": "libre"})
+    log(inactive == 200 and st == 200 and ex_id not in {e["id"] for e in hidden}
+        and denied == 404, "examen_inactivo_denegado_en_servidor")
+    instr.call("PATCH", f"/api/examenes/{ex_id}/", {"activo": True})
+
+    st, advanced = instr.call("POST", "/api/examenes/", {
+        "nombre": "E2E A2 prerequisite", "categoria": "A2", "activo": True,
+    })
+    advanced_id = advanced.get("id")
+    denied, _ = alum.call("POST", f"/api/examenes/{advanced_id}/intentos/", {"modalidad": "libre"})
+    log(st == 201 and denied == 403, "prerrequisito_categoria_validado_por_servidor")
+    instr.call("DELETE", f"/api/examenes/{advanced_id}/")
 
     st, again = alum.call("GET", f"/api/resultados-examen/{res_id}/")
     ok = st == 200 and float(again.get("nota", 0)) == esperado_nota
@@ -654,7 +728,7 @@ async def main():
     ]
     log(st == 200 and ex_id not in ids2, "bloqueo_oculta_examen_alumno", f"{st}")
     st, denied = alum.call(
-        "POST", "/api/resultados-examen/", {"examen_id": ex_id, "respuestas": {}}
+        "POST", "/api/resultados-examen/", {"examen_id": ex_id, "attempt_id": free_id, "respuestas": {}}
     )
     log(st == 400, "bloqueo_impide_envio", f"{st}")
     blk_id = blk["id"]
@@ -718,6 +792,16 @@ async def main():
         {"alumno_id": id_s, "contenido": "E2E mensaje inicial"},
     )
     log(st == 201, "mensaje_inicial_instructor", f"{st}")
+    st, _ = alum.call("PATCH", f"/api/mensajes/{m1['id']}/", {"leido_alumno": True})
+    log(st == 200, "alumno_marca_mensaje_instructor_leido", str(st))
+    st, _ = alum.call("PATCH", f"/api/mensajes/{m1['id']}/", {"contenido": "contenido adulterado"})
+    log(st == 403, "alumno_no_edita_mensaje_instructor", str(st))
+    other_student = Session("other_student")
+    ok, _ = login(other_student, "segundo.e2e@test.local", "E2eSecond_2026!")
+    st, _ = other_student.call("GET", f"/api/mensajes/{m1['id']}/")
+    log(ok and st == 403, "idor_mensaje_ajeno_denegado", str(st))
+    st, _ = other_student.call("PUT", f"/api/intentos-examen/{free_id}/", {"respuestas": {}})
+    log(st == 404, "idor_intento_ajeno_denegado", str(st))
 
     room = id_s
     url = f"{WS_BASE}/ws/chat/{room}/"
@@ -802,6 +886,52 @@ async def main():
         for x in (clist if isinstance(clist, list) else clist.get("results", []))
     ]
     log(st == 200 and id_a in cids, "staff_contacts_incluye_admin", f"{st}")
+    st, instructor_logs = instr.call("GET", "/api/registros-conexion/")
+    log(st == 200 and all(row.get("profile_id") != id_a for row in instructor_logs),
+        "instructor_no_ve_logs_administrador")
+    st, admin_logs = admin.call("GET", "/api/registros-conexion/")
+    admin_log = next((row for row in admin_logs if row.get("profile_id") == id_a), None)
+    if admin_log:
+        st, _ = instr.call("GET", f"/api/registros-conexion/{admin_log['id']}/")
+    log(admin_log is not None and st == 404, "idor_log_admin_denegado_al_instructor", str(st))
+
+    staff_room = "staff-" + "-".join(sorted([id_a, id_i]))
+    staff_url = f"{WS_BASE}/ws/chat/{staff_room}/"
+    async with websockets.connect(staff_url, ssl=TLS_CONTEXT, additional_headers={
+        "Origin": ORIGIN, "Cookie": f"uasspain_access={instr.access_cookie()}"
+    }, open_timeout=8) as staff_socket:
+        st, _ = admin.call("POST", "/api/mensajes-staff/", {
+            "destinatario_id": id_i, "contenido": "Staff realtime E2E"
+        })
+        incoming = json.loads(await asyncio.wait_for(staff_socket.recv(), timeout=5))
+        log(st == 201 and incoming.get("content") == "Staff realtime E2E",
+            "staff_ws_sala_compartida_bidireccional")
+    rejection = await ws_expect_reject(staff_url, alum.access_cookie(), ORIGIN)
+    log(str(rejection) == "HTTP 403", "staff_sala_ajena_denegada", str(rejection))
+
+    anonymous = Session("anonymous")
+    st, _ = anonymous.call("POST", "/api/auth/resend-otp/", {"email": ALUM_EMAIL})
+    verified_status, _ = alum.call("GET", "/api/auth/me/")
+    log(st == 200 and verified_status == 200, "resend_otp_no_revoca_cuenta_verificada")
+    st, _ = anonymous.call("POST", "/api/auth/resend-otp/", {"email": "missing@test.local"})
+    log(st == 200, "resend_otp_no_enumera_usuarios")
+
+    st, call_one = instr.call("POST", "/api/videollamadas/", {
+        "alumno_id": id_s, "estado": "activa", "room_id": "forged-public-room"
+    })
+    st2, second_me = other_student.call("GET", "/api/auth/me/")
+    st2, call_two = instr.call("POST", "/api/videollamadas/", {
+        "alumno_id": second_me["id"], "estado": "activa"
+    })
+    log(st == 201 and st2 == 201 and call_one["room_id"] == call_two["room_id"]
+        and call_one["room_id"] != "forged-public-room", "videollamada_grupal_sala_servidor")
+    st, _ = other_student.call("GET", f"/api/videollamadas/{call_one['id']}/")
+    log(st == 403, "videollamada_idor_denegada", str(st))
+    st, _ = instr.call("PATCH", f"/api/videollamadas/{call_one['id']}/", {"estado": "finalizada"})
+    st2, active_calls = instr.call("GET", "/api/videollamadas/?estado=activa")
+    log(st == 200 and st2 == 200 and active_calls == [], "instructor_cierra_toda_sala")
+    st, _ = alum.call("PATCH", f"/api/videollamadas/{call_one['id']}/", {"estado": "activa"})
+    log(st == 400, "alumno_no_reabre_sala_finalizada", str(st))
 
     st, perm = admin.call(
         "POST",
@@ -809,6 +939,10 @@ async def main():
         {"email": ADMIN_EMAIL, "password": "WrongPassword_e2e!"},
     )
     log(st in (400, 401), "login_password_invalida_rechazada", f"{st}")
+    for _ in range(10):
+        anonymous.call("POST", "/api/auth/login/", {"email": "rate-fixture@test.local", "password": "Incorrecta"})  # pragma: allowlist secret - invalid isolated fixture
+    st, _ = anonymous.call("POST", "/api/auth/login/", {"email": "rate-fixture@test.local", "password": "Incorrecta"})  # pragma: allowlist secret - invalid isolated fixture
+    log(st == 429, "limite_login_no_se_desactiva_en_e2e", str(st))
 
     # ─── Backups §8/§9: origen local, auditoría y control ───────
     st, origins = admin.call("GET", "/api/backups/origins/")

@@ -16,8 +16,19 @@ env:
   FRONTEND_IMAGE: ${{ github.repository }}-frontend
 
 jobs:
+  verify-ci:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  verify-security:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/security.yml
+
   # ─── Build & Push Backend ────────────────────────────────────
   build-backend:
+    needs: [verify-ci, verify-security]
     name: Build Backend
     runs-on: ubuntu-latest
     permissions:
@@ -57,6 +68,7 @@ jobs:
 
   # ─── Build & Push Frontend ───────────────────────────────────
   build-frontend:
+    needs: [verify-ci, verify-security]
     name: Build Frontend
     runs-on: ubuntu-latest
     permissions:

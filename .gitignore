@@ -26,6 +26,8 @@ frontend/dist/
 backend-rust/target/
 target/
 coverage/
+frontend/test-results/
+frontend/playwright-report/
 htmlcov/
 .coverage*
 

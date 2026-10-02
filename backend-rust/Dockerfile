@@ -4,14 +4,28 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY migrations ./migrations
 COPY src ./src
-RUN cargo build --locked --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
+    cargo build --locked --release && cp target/release/uasspain-backend /build/uasspain-backend
 
 FROM builder AS test
-RUN cargo test --locked --release --lib
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
+    cargo test --locked --release --workspace --all-features
+
+FROM test AS audit
+RUN rustup component add rustfmt clippy
+RUN cargo fmt --all -- --check
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
+    cargo check --locked --workspace --all-targets --all-features
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
 FROM postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722 AS pgtools
 
-FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS production
+FROM ubuntu:26.04@sha256:3595d7fc4286a33fad0fd853a4063e654287a9c3787437d7937c94ca3f7a804e AS production
 
 RUN apt-get update \
     && apt-get upgrade --yes \
@@ -22,7 +36,7 @@ RUN apt-get update \
     && mkdir -p /app/media /app/backups /app/backup_keys \
     && chown -R 10001:10001 /app
 
-COPY --from=builder /build/target/release/uasspain-backend /usr/local/bin/uasspain-backend
+COPY --from=builder /build/uasspain-backend /usr/local/bin/uasspain-backend
 COPY --from=pgtools /usr/lib/x86_64-linux-gnu/libpq.so.5.18 /usr/lib/x86_64-linux-gnu/libpq.so.5.18
 COPY --from=pgtools /usr/lib/x86_64-linux-gnu/libpq.so.5 /usr/lib/x86_64-linux-gnu/libpq.so.5
 COPY --from=pgtools /usr/lib/postgresql/18/bin/pg_dump /usr/bin/pg_dump

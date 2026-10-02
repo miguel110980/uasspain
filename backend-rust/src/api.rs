@@ -37,10 +37,14 @@ pub async fn live() -> Json<serde_json::Value> {
 
 pub async fn ready(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let database = match &state.pool {
-        Some(pool) => sqlx::query_scalar::<_, i32>("SELECT 1")
-            .fetch_one(pool)
-            .await
-            .is_ok(),
+        Some(pool) => matches!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(pool)
+            )
+            .await,
+            Ok(Ok(_))
+        ),
         None => false,
     };
     let redis = !state.events.configured() || state.events.connected();

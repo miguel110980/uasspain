@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use axum::{
     Json,
@@ -6,6 +9,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use chrono::{DateTime, Utc};
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sqlx::{FromRow, Postgres, Transaction};
@@ -94,6 +98,7 @@ pub async fn list_exams(
          e.num_preguntas::integer, e.created_date, e.updated_date \
          FROM examenes_examen e \
          WHERE ($1::text IS NULL OR e.categoria = $1) \
+           AND ($4::boolean = FALSE OR e.activo = TRUE) \
            AND ($2::boolean IS NULL OR e.activo = $2) \
            AND ($3::text IS NULL OR e.nombre = $3) \
            AND ($4::boolean = FALSE OR NOT EXISTS ( \
@@ -124,6 +129,7 @@ pub async fn exam_detail(
         "SELECT e.id, e.nombre, e.categoria, e.descripcion, e.activo, \
          e.num_preguntas::integer, e.created_date, e.updated_date \
          FROM examenes_examen e WHERE e.id = $1 \
+           AND ($2::boolean = FALSE OR e.activo = TRUE) \
            AND ($2::boolean = FALSE OR NOT EXISTS ( \
              SELECT 1 FROM examenes_bloqueoexamen b \
              WHERE b.alumno_id = $3 AND b.bloqueado = TRUE \
@@ -145,7 +151,7 @@ pub struct QuestionQuery {
     limit: Option<i64>,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Serialize, Deserialize)]
 struct QuestionRow {
     id: Uuid,
     examen_id: Uuid,
@@ -189,6 +195,7 @@ pub async fn list_questions(
          q.opcion_d, q.respuesta_correcta, q.orden::integer, q.imagen_url, q.created_date \
          FROM examenes_pregunta q JOIN examenes_examen e ON e.id = q.examen_id \
          WHERE ($1::uuid IS NULL OR q.examen_id = $1) \
+           AND ($2::boolean = FALSE OR e.activo = TRUE) \
            AND ($2::boolean = FALSE OR NOT EXISTS ( \
              SELECT 1 FROM examenes_bloqueoexamen b \
              WHERE b.alumno_id = $3 AND b.bloqueado = TRUE \
@@ -227,7 +234,7 @@ pub async fn question_detail(
     Path(id): Path<Uuid>,
 ) -> Result<Json<QuestionView>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    let row = sqlx::query_as::<_, QuestionRow>("SELECT q.id,q.examen_id,q.enunciado,q.opcion_a,q.opcion_b,q.opcion_c,q.opcion_d,q.respuesta_correcta,q.orden::integer,q.imagen_url,q.created_date FROM examenes_pregunta q JOIN examenes_examen e ON e.id=q.examen_id WHERE q.id=$1 AND ($2::boolean=FALSE OR NOT EXISTS (SELECT 1 FROM examenes_bloqueoexamen b WHERE b.alumno_id=$3 AND b.bloqueado=TRUE AND (b.examen_id=e.id OR (b.examen_id IS NULL AND b.categoria=e.categoria))))")
+    let row = sqlx::query_as::<_, QuestionRow>("SELECT q.id,q.examen_id,q.enunciado,q.opcion_a,q.opcion_b,q.opcion_c,q.opcion_d,q.respuesta_correcta,q.orden::integer,q.imagen_url,q.created_date FROM examenes_pregunta q JOIN examenes_examen e ON e.id=q.examen_id WHERE q.id=$1 AND ($2::boolean=FALSE OR (e.activo=TRUE AND NOT EXISTS (SELECT 1 FROM examenes_bloqueoexamen b WHERE b.alumno_id=$3 AND b.bloqueado=TRUE AND (b.examen_id=e.id OR (b.examen_id IS NULL AND b.categoria=e.categoria)))))")
         .bind(id).bind(claims.role=="alumno").bind(claims.profile_id).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?.ok_or(AppError::NotFound)?;
     Ok(Json(QuestionView {
         id: row.id,
@@ -265,8 +272,8 @@ pub struct ResultView {
     detalle_revision: Option<Value>,
     aciertos: i32,
     errores: i32,
-    nota: String,
-    porcentaje: String,
+    nota: f64,
+    porcentaje: f64,
     tiempo_empleado: i32,
     aprobado: bool,
     fecha: Option<DateTime<Utc>>,
@@ -283,7 +290,7 @@ pub async fn list_results(
     let rows = sqlx::query_as::<_, ResultView>(
         "SELECT r.id, r.alumno_id, r.examen_id, r.examen_nombre, r.categoria, r.modalidad, r.respuestas, \
          r.detalle_revision, r.aciertos::integer, r.errores::integer, \
-         r.nota::text AS nota, r.porcentaje::text AS porcentaje, r.tiempo_empleado::integer, \
+         r.nota::float8 AS nota, r.porcentaje::float8 AS porcentaje, r.tiempo_empleado::integer, \
          r.aprobado, r.fecha, r.created_date FROM examenes_resultadoexamen r JOIN accounts_userprofile p ON p.id=r.alumno_id \
          WHERE ($1 = 'admin' OR ($1 = 'alumno' AND r.alumno_id = $2) OR ($1 = 'instructor' AND p.assigned_instructor_id=$2)) \
            AND ($3::uuid IS NULL OR r.alumno_id = $3) \
@@ -314,7 +321,7 @@ pub async fn result_detail(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ResultView>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    let row = sqlx::query_as::<_, ResultView>("SELECT r.id,r.alumno_id,r.examen_id,r.examen_nombre,r.categoria,r.modalidad,r.respuestas,r.detalle_revision,r.aciertos::integer,r.errores::integer,r.nota::text AS nota,r.porcentaje::text AS porcentaje,r.tiempo_empleado::integer,r.aprobado,r.fecha,r.created_date FROM examenes_resultadoexamen r JOIN accounts_userprofile p ON p.id=r.alumno_id WHERE r.id=$1 AND ($2='admin' OR ($2='alumno' AND r.alumno_id=$3) OR ($2='instructor' AND p.assigned_instructor_id=$3))")
+    let row = sqlx::query_as::<_, ResultView>("SELECT r.id,r.alumno_id,r.examen_id,r.examen_nombre,r.categoria,r.modalidad,r.respuestas,r.detalle_revision,r.aciertos::integer,r.errores::integer,r.nota::float8 AS nota,r.porcentaje::float8 AS porcentaje,r.tiempo_empleado::integer,r.aprobado,r.fecha,r.created_date FROM examenes_resultadoexamen r JOIN accounts_userprofile p ON p.id=r.alumno_id WHERE r.id=$1 AND ($2='admin' OR ($2='alumno' AND r.alumno_id=$3) OR ($2='instructor' AND p.assigned_instructor_id=$3))")
         .bind(id).bind(&claims.role).bind(claims.profile_id).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?.ok_or(AppError::NotFound)?;
     Ok(Json(row))
 }
@@ -339,11 +346,180 @@ pub async fn delete_result(
 #[derive(Debug, Deserialize)]
 pub struct SubmitResult {
     examen_id: Uuid,
+    attempt_id: Uuid,
     #[serde(default)]
     modalidad: String,
     respuestas: HashMap<String, Value>,
-    #[serde(default)]
-    tiempo_empleado: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StartAttempt {
+    modalidad: String,
+}
+
+#[derive(Debug, FromRow)]
+struct AttemptRow {
+    id: Uuid,
+    alumno_id: Uuid,
+    examen_id: Uuid,
+    modalidad: String,
+    started_at: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    preguntas: Value,
+    respuestas: Value,
+    submitted_at: Option<DateTime<Utc>>,
+    result_id: Option<Uuid>,
+}
+
+fn attempt_view(row: AttemptRow, now: DateTime<Utc>) -> Result<Value, AppError> {
+    let mut questions = row.preguntas;
+    for question in questions.as_array_mut().ok_or(AppError::Internal)? {
+        question
+            .as_object_mut()
+            .ok_or(AppError::Internal)?
+            .remove("respuesta_correcta");
+    }
+    Ok(json!({
+        "id": row.id, "examen_id": row.examen_id, "alumno_id": row.alumno_id,
+        "modalidad": row.modalidad, "started_at": row.started_at,
+        "expires_at": row.expires_at, "server_now": now,
+        "preguntas": questions, "respuestas": row.respuestas,
+    }))
+}
+
+pub async fn start_attempt(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(exam_id): Path<Uuid>,
+    Json(input): Json<StartAttempt>,
+) -> Result<Json<Value>, AppError> {
+    let claims = authenticate(&state, &headers, "access")?;
+    if claims.role != "alumno" {
+        return Err(AppError::Forbidden);
+    }
+    if !matches!(input.modalidad.as_str(), "libre" | "tiempo") {
+        return Err(AppError::Validation("Modalidad no válida.".to_owned()));
+    }
+    let mut transaction = state
+        .pool
+        .as_ref()
+        .ok_or(AppError::Unavailable)?
+        .begin()
+        .await?;
+    // Serialize starts for this student, including concurrent tabs and retries.
+    sqlx::query("SELECT id FROM accounts_userprofile WHERE id=$1 FOR UPDATE")
+        .bind(claims.profile_id)
+        .execute(&mut *transaction)
+        .await?;
+    let exam = fetch_submittable_exam(&mut transaction, claims.profile_id, exam_id).await?;
+    let existing = sqlx::query_as::<_, AttemptRow>(
+        "SELECT * FROM examenes_intento WHERE alumno_id=$1 AND examen_id=$2 AND modalidad=$3 AND submitted_at IS NULL",
+    ).bind(claims.profile_id).bind(exam_id).bind(&input.modalidad)
+        .fetch_optional(&mut *transaction).await?;
+    let attempt = if let Some(row) = existing {
+        row
+    } else {
+        let mut questions = sqlx::query_as::<_, QuestionRow>(
+            "SELECT id, examen_id, enunciado, opcion_a, opcion_b, opcion_c, opcion_d, respuesta_correcta, orden::integer, imagen_url, created_date FROM examenes_pregunta WHERE examen_id=$1 ORDER BY orden, created_date",
+        ).bind(exam_id).fetch_all(&mut *transaction).await?;
+        if questions.is_empty() {
+            return Err(AppError::Validation(
+                "El examen no tiene preguntas.".to_owned(),
+            ));
+        }
+        questions.shuffle(&mut rand::rng());
+        let count = usize::try_from(exam.num_preguntas).map_err(|_| AppError::Internal)?;
+        if count == 0 {
+            return Err(AppError::Validation(
+                "Número de preguntas no válido.".into(),
+            ));
+        }
+        questions.truncate(count);
+        let snapshot = serde_json::to_value(questions).map_err(|_| AppError::Internal)?;
+        sqlx::query_as::<_, AttemptRow>(
+            "INSERT INTO examenes_intento (id, alumno_id, examen_id, modalidad, expires_at, preguntas) VALUES ($1,$2,$3,$4,CASE WHEN $4='tiempo' THEN NOW()+INTERVAL '40 minutes' ELSE NULL END,$5) RETURNING *",
+        ).bind(Uuid::new_v4()).bind(claims.profile_id).bind(exam_id).bind(&input.modalidad).bind(snapshot)
+            .fetch_one(&mut *transaction).await?
+    };
+    let now = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(Json(attempt_view(attempt, now)?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveAnswers {
+    respuestas: HashMap<String, Value>,
+}
+
+pub async fn save_answers(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(input): Json<SaveAnswers>,
+) -> Result<StatusCode, AppError> {
+    let claims = authenticate(&state, &headers, "access")?;
+    if claims.role != "alumno" {
+        return Err(AppError::Forbidden);
+    }
+    let mut transaction = state
+        .pool
+        .as_ref()
+        .ok_or(AppError::Unavailable)?
+        .begin()
+        .await?;
+    let attempt = sqlx::query_as::<_, AttemptRow>(
+        "SELECT * FROM examenes_intento WHERE id=$1 AND alumno_id=$2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(claims.profile_id)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *transaction)
+        .await?;
+    if attempt.submitted_at.is_some() || attempt.expires_at.is_some_and(|end| now >= end) {
+        return Err(AppError::Validation("El intento ha finalizado.".to_owned()));
+    }
+    fetch_submittable_exam(&mut transaction, claims.profile_id, attempt.examen_id).await?;
+    let questions = serde_json::from_value::<Vec<QuestionRow>>(attempt.preguntas)
+        .map_err(|_| AppError::Internal)?;
+    validate_answers(&input.respuestas, &questions)?;
+    sqlx::query("UPDATE examenes_intento SET respuestas=$2 WHERE id=$1")
+        .bind(id)
+        .bind(serde_json::to_value(input.respuestas).map_err(|_| AppError::Internal)?)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn validate_answers(
+    answers: &HashMap<String, Value>,
+    questions: &[QuestionRow],
+) -> Result<(), AppError> {
+    let ids: HashSet<String> = questions
+        .iter()
+        .map(|question| question.id.to_string())
+        .collect();
+    for (id, value) in answers {
+        if !ids.contains(id)
+            || !(value.is_null()
+                || value.as_str().is_some_and(|answer| {
+                    matches!(
+                        answer.to_ascii_lowercase().as_str(),
+                        "" | "a" | "b" | "c" | "d"
+                    )
+                }))
+        {
+            return Err(AppError::Validation(
+                "Respuesta o pregunta no válida.".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub async fn submit_result(
@@ -355,20 +531,43 @@ pub async fn submit_result(
     if claims.role != "alumno" {
         return Err(AppError::Forbidden);
     }
-    if input.modalidad.len() > 50 {
-        return Err(AppError::Validation("Modalidad no vÃ¡lida.".to_owned()));
-    }
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let mut transaction = pool.begin().await?;
-    let exam = fetch_submittable_exam(&mut transaction, claims.profile_id, input.examen_id).await?;
-    let questions = sqlx::query_as::<_, QuestionRow>(
-        "SELECT id, examen_id, enunciado, opcion_a, opcion_b, opcion_c, opcion_d, \
-         respuesta_correcta, orden::integer, imagen_url, created_date \
-         FROM examenes_pregunta WHERE examen_id = $1 ORDER BY orden, created_date",
+    let attempt = sqlx::query_as::<_, AttemptRow>(
+        "SELECT * FROM examenes_intento WHERE id=$1 AND alumno_id=$2 AND examen_id=$3 FOR UPDATE",
     )
+    .bind(input.attempt_id)
+    .bind(claims.profile_id)
     .bind(input.examen_id)
-    .fetch_all(&mut *transaction)
-    .await?;
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    if attempt.submitted_at.is_some() {
+        let id = attempt.result_id.ok_or(AppError::NotFound)?;
+        transaction.commit().await?;
+        return Ok((
+            StatusCode::CREATED,
+            result_detail(State(state), headers, Path(id)).await?,
+        ));
+    }
+    if !input.modalidad.is_empty() && input.modalidad != attempt.modalidad {
+        return Err(AppError::Validation(
+            "La modalidad no coincide con el intento.".to_owned(),
+        ));
+    }
+    let exam = fetch_submittable_exam(&mut transaction, claims.profile_id, input.examen_id).await?;
+    let questions: Vec<QuestionRow> =
+        serde_json::from_value(attempt.preguntas.clone()).map_err(|_| AppError::Internal)?;
+    let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *transaction)
+        .await?;
+    // Late submissions can only grade answers saved before the deadline.
+    let respuestas: HashMap<String, Value> = if attempt.expires_at.is_some_and(|end| now >= end) {
+        serde_json::from_value(attempt.respuestas).map_err(|_| AppError::Internal)?
+    } else {
+        validate_answers(&input.respuestas, &questions)?;
+        input.respuestas
+    };
     if questions.is_empty() {
         return Err(AppError::Validation(
             "El examen no tiene preguntas.".to_owned(),
@@ -380,18 +579,19 @@ pub async fn submit_result(
         .map(|question| AnswerKey {
             question_id: question.id,
             correct: question.respuesta_correcta.to_lowercase(),
-            answer: answer_value(&input.respuestas, question.id),
+            answer: answer_value(&respuestas, question.id),
         })
         .collect();
     let scored = score(&answer_keys)?;
     let revision = build_revision(&questions, &answer_keys);
     let result_id = Uuid::new_v4();
-    let now = Utc::now();
-    let respuestas = serde_json::to_value(&input.respuestas).map_err(|_| AppError::Internal)?;
+    let respuestas = serde_json::to_value(&respuestas).map_err(|_| AppError::Internal)?;
     let aciertos = i32::try_from(scored.aciertos).map_err(|_| AppError::Internal)?;
     let errores = i32::try_from(scored.errores).map_err(|_| AppError::Internal)?;
-    let tiempo_empleado = i32::try_from(input.tiempo_empleado)
-        .map_err(|_| AppError::Validation("Tiempo empleado no vÃ¡lido.".to_owned()))?;
+    let ended_at = attempt.expires_at.map_or(now, |end| end.min(now));
+    let tiempo_empleado = (ended_at - attempt.started_at)
+        .num_seconds()
+        .clamp(0, i64::from(i32::MAX)) as i32;
     sqlx::query(
         "INSERT INTO examenes_resultadoexamen \
          (id, created_date, updated_date, alumno_id, examen_id, examen_nombre, categoria, \
@@ -406,7 +606,7 @@ pub async fn submit_result(
     .bind(input.examen_id)
     .bind(&exam.nombre)
     .bind(&exam.categoria)
-    .bind(&input.modalidad)
+    .bind(&attempt.modalidad)
     .bind(&respuestas)
     .bind(&revision)
     .bind(aciertos)
@@ -415,6 +615,15 @@ pub async fn submit_result(
     .bind(format!("{:.1}", scored.porcentaje))
     .bind(tiempo_empleado)
     .bind(scored.aprobado)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "UPDATE examenes_intento SET submitted_at=$2, result_id=$3, respuestas=$4 WHERE id=$1",
+    )
+    .bind(attempt.id)
+    .bind(now)
+    .bind(result_id)
+    .bind(&respuestas)
     .execute(&mut *transaction)
     .await?;
     transaction.commit().await?;
@@ -427,13 +636,13 @@ pub async fn submit_result(
             examen_id: Some(input.examen_id),
             examen_nombre: exam.nombre,
             categoria: exam.categoria,
-            modalidad: input.modalidad,
+            modalidad: attempt.modalidad,
             respuestas,
             detalle_revision: Some(revision),
             aciertos,
             errores,
-            nota: format!("{:.1}", scored.nota),
-            porcentaje: format!("{:.1}", scored.porcentaje),
+            nota: scored.nota,
+            porcentaje: scored.porcentaje,
             tiempo_empleado,
             aprobado: scored.aprobado,
             fecha: Some(now),
@@ -448,7 +657,7 @@ async fn fetch_submittable_exam(
     exam_id: Uuid,
 ) -> Result<ExamIdentity, AppError> {
     let exam = sqlx::query_as::<_, ExamIdentity>(
-        "SELECT id, nombre, categoria FROM examenes_examen WHERE id = $1",
+        "SELECT id, nombre, categoria, num_preguntas::integer FROM examenes_examen WHERE id = $1 AND activo=TRUE",
     )
     .bind(exam_id)
     .fetch_optional(&mut **transaction)
@@ -469,6 +678,18 @@ async fn fetch_submittable_exam(
             "Este examen estÃ¡ bloqueado para su cuenta.".to_owned(),
         ));
     }
+    let prerequisite = match exam.categoria.as_str() {
+        "A2" => Some("A1/A3"),
+        "STS" | "STS-01" | "STS-02" => Some("A2"),
+        _ => None,
+    };
+    if let Some(category) = prerequisite {
+        let passed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM examenes_resultadoexamen WHERE alumno_id=$1 AND categoria=$2 AND aprobado=TRUE)")
+            .bind(profile_id).bind(category).fetch_one(&mut **transaction).await?;
+        if !passed {
+            return Err(AppError::Forbidden);
+        }
+    }
     Ok(exam)
 }
 
@@ -477,6 +698,7 @@ struct ExamIdentity {
     id: Uuid,
     nombre: String,
     categoria: String,
+    num_preguntas: i32,
 }
 
 fn answer_value(answers: &HashMap<String, Value>, question_id: Uuid) -> Option<String> {
@@ -517,7 +739,11 @@ fn safe_limit(limit: Option<i64>) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnswerKey, ExamScore, score};
+    use super::{
+        AnswerKey, AttemptRow, ExamScore, QuestionRow, attempt_view, score, validate_answers,
+    };
+    use chrono::Utc;
+    use serde_json::json;
     use uuid::Uuid;
 
     fn answer(correct: &str, supplied: Option<&str>) -> AnswerKey {
@@ -567,5 +793,63 @@ mod tests {
     #[test]
     fn empty_exam_is_rejected() {
         assert!(score(&[]).is_err());
+    }
+
+    fn question() -> QuestionRow {
+        QuestionRow {
+            id: Uuid::new_v4(),
+            examen_id: Uuid::new_v4(),
+            enunciado: "Question".into(),
+            opcion_a: "A".into(),
+            opcion_b: "B".into(),
+            opcion_c: "C".into(),
+            opcion_d: "D".into(),
+            respuesta_correcta: "a".into(),
+            orden: 1,
+            imagen_url: String::new(),
+            created_date: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn attempt_never_serializes_the_answer_key() {
+        let question = question();
+        let now = Utc::now();
+        let view = attempt_view(
+            AttemptRow {
+                id: Uuid::new_v4(),
+                alumno_id: Uuid::new_v4(),
+                examen_id: question.examen_id,
+                modalidad: "libre".into(),
+                started_at: now,
+                expires_at: None,
+                preguntas: json!([question]),
+                respuestas: json!({}),
+                submitted_at: None,
+                result_id: None,
+            },
+            now,
+        )
+        .unwrap();
+        assert!(view["preguntas"][0].get("respuesta_correcta").is_none());
+        assert_eq!(view["preguntas"][0]["opcion_a"], "A");
+    }
+
+    #[test]
+    fn answers_reject_foreign_questions_and_invalid_values() {
+        let question = question();
+        let id = question.id.to_string();
+        let questions = [question];
+        for value in [json!(["a"]), json!({"correct": "a"}), json!(1), json!("e")] {
+            assert!(validate_answers(&[(id.clone(), value)].into(), &questions).is_err());
+        }
+        assert!(
+            validate_answers(
+                &[(Uuid::new_v4().to_string(), json!("a"))].into(),
+                &questions
+            )
+            .is_err()
+        );
+        assert!(validate_answers(&[(id, json!("A"))].into(), &questions).is_ok());
     }
 }

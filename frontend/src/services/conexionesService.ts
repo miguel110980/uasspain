@@ -66,6 +66,8 @@ function createWsSubscription(url: string, onEvent: (event: any) => void, pollMs
   let ws: WebSocket | null = null;
   let poll: ReturnType<typeof setInterval> | null = null;
   let closed = false;
+  let reconnect: ReturnType<typeof setTimeout> | null = null;
+  let failures = 0;
 
   const stopPoll = () => {
     if (poll) {
@@ -85,9 +87,11 @@ function createWsSubscription(url: string, onEvent: (event: any) => void, pollMs
       return;
     }
     try {
-      ws = new WebSocket(url);
-      ws.onopen = () => stopPoll();
-      ws.onmessage = (event) => {
+      const current = new WebSocket(url);
+      ws = current;
+      current.onopen = () => { failures = 0; stopPoll(); onEvent({ type: 'poll' }); };
+      current.onmessage = (event) => {
+        if (closed || current !== ws) return;
         let data = event.data;
         try {
           data = JSON.parse(event.data);
@@ -96,11 +100,15 @@ function createWsSubscription(url: string, onEvent: (event: any) => void, pollMs
         }
         onEvent({ type: 'ws', data });
       };
-      ws.onclose = () => {
+      current.onclose = () => {
+        if (current !== ws) return;
         ws = null;
-        if (!closed) startPoll();
+        if (!closed) {
+          startPoll();
+          reconnect = setTimeout(connectWs, Math.min(30000, 1000 * 2 ** Math.min(failures++, 5)));
+        }
       };
-      ws.onerror = () => ws?.close();
+      current.onerror = () => current.close();
     } catch {
       startPoll();
     }
@@ -110,6 +118,7 @@ function createWsSubscription(url: string, onEvent: (event: any) => void, pollMs
 
   return () => {
     closed = true;
+    if (reconnect) clearTimeout(reconnect);
     stopPoll();
     ws?.close();
   };

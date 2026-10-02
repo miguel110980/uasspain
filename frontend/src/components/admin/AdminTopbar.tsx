@@ -25,6 +25,8 @@ type AdminTopbarProps = {
   notifications?: Array<{ id: string; title: string; description?: string; onSelect?: () => void }>;
   onViewAllNotifications?: () => void;
   viewAllLabel?: string;
+  navigation?: Array<{ id: string; label: string }>;
+  onNavigate?: (id: string) => void;
 };
 
 export default function AdminTopbar({
@@ -37,11 +39,17 @@ export default function AdminTopbar({
   notifications = [],
   onViewAllNotifications,
   viewAllLabel = 'Ver todas las notificaciones',
+  navigation = [],
+  onNavigate,
 }: AdminTopbarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const notifRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const [search, setSearch] = useState('');
+  const matches = search.trim() ? navigation.filter(item => item.label.toLocaleLowerCase('es').includes(search.trim().toLocaleLowerCase('es'))) : [];
+  const navigate = (id: string) => { setSearch(''); onNavigate?.(id); };
 
   const badgeCount = pendingCount > 0 ? pendingCount : notifications.length;
 
@@ -51,7 +59,12 @@ export default function AdminTopbar({
       if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
     };
     const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
       if (e.key === 'Escape') {
+        setSearch('');
         setMenuOpen(false);
         setNotifOpen(false);
       }
@@ -71,19 +84,32 @@ export default function AdminTopbar({
 
   return (
     <header className="sticky top-0 z-30 h-16 flex items-center gap-4 px-4 md:px-6 border-b border-border-subtle bg-background/80 backdrop-blur-xl">
-      <button type="button" onClick={onMenu} className="lg:hidden text-muted-foreground hover:text-foreground">
+      <button type="button" aria-label="Abrir menú" onClick={onMenu} className="lg:hidden text-muted-foreground hover:text-foreground">
         <Menu className="w-5 h-5" />
       </button>
 
       <h1 className="font-heading text-base md:text-lg font-semibold text-foreground truncate">{title}</h1>
 
-      <div className="ml-auto hidden md:flex items-center gap-2 px-3 h-9 w-64 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30 transition-colors">
+      <div className="relative ml-auto hidden md:flex items-center gap-2 px-3 h-9 w-64 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30 transition-colors">
         <Search className="w-4 h-4 text-muted-foreground/60" />
         <input
-          placeholder="Buscar…"
+          ref={searchRef}
+          aria-label="Buscar sección"
+          placeholder="Buscar sección…"
+          value={search}
+          disabled={navigation.length === 0}
+          onChange={event => setSearch(event.target.value)}
+          onKeyDown={event => { if (event.key === 'Enter' && matches[0]) navigate(matches[0].id); }}
           className="bg-transparent text-sm text-foreground placeholder:text-muted-foreground/40 outline-none w-full"
         />
         <kbd className="text-[10px] font-mono text-muted-foreground/40 border border-border-subtle px-1 rounded">⌘K</kbd>
+        {search.trim() && (
+          <div className="absolute left-0 right-0 top-full mt-2 bg-popover border border-border-subtle rounded-md shadow-xl">
+            {matches.length ? matches.map(item => (
+              <button key={item.id} onClick={() => navigate(item.id)} className="block w-full text-left px-3 py-2 text-sm text-foreground hover:bg-primary/10">{item.label}</button>
+            )) : <p className="px-3 py-2 text-xs text-muted-foreground">Sin resultados</p>}
+          </div>
+        )}
       </div>
 
       <div className="relative" ref={notifRef}>
@@ -163,6 +189,7 @@ export default function AdminTopbar({
         <button
           type="button"
           onClick={() => setMenuOpen(!menuOpen)}
+          aria-label="Menú de cuenta"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           className="flex items-center gap-2 pl-1 pr-2 h-9 border border-border-subtle rounded-md hover:border-primary/30 transition-colors"

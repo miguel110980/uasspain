@@ -3,10 +3,14 @@
 .agents
 .codex
 .local-snapshots
+.run
+.pgtest
 .secrets
 .env*
 **/node_modules
 frontend/dist
+frontend/test-results
+frontend/playwright-report
 backend-rust/target
 **/__pycache__
 **/*.py[cod]

@@ -3,13 +3,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import conexionesService from '@/services/conexionesService';
 import { Video, Phone, Loader2, VideoIcon, Bell, User } from 'lucide-react';
 import Videoconferencia from '@/components/videollamada/Videoconferencia';
-import { getVideollamadaRoom, videollamadaRoomId } from '@/lib/videollamada';
 
 export default function AlumnoVideo({ alumnoId, alumnoNombre }) {
   const [llamadaActiva, setLlamadaActiva] = useState(null);
   const [enLlamada, setEnLlamada] = useState(false);
   const [loading, setLoading] = useState(true);
   const [iniciando, setIniciando] = useState(false);
+  const [callError, setCallError] = useState('');
 
   useEffect(() => {
     if (!alumnoId) return;
@@ -30,20 +30,19 @@ export default function AlumnoVideo({ alumnoId, alumnoNombre }) {
     return () => { mounted = false; unsubscribe(); };
   }, [alumnoId]);
 
-  const roomId = videollamadaRoomId(alumnoId);
-
   const handleIniciar = async () => {
     setIniciando(true);
     try {
       const nueva = await conexionesService.videollamadas.create({
         alumno_id: alumnoId,
         alumno_nombre: alumnoNombre,
-        room_id: roomId,
         estado: 'activa',
         iniciada_por: 'alumno',
       });
       setLlamadaActiva(nueva);
       setEnLlamada(true);
+    } catch {
+      setCallError('No se pudo iniciar la llamada. Comprueba tu conexión y contacta con tu instructor.');
     } finally {
       setIniciando(false);
     }
@@ -66,7 +65,7 @@ export default function AlumnoVideo({ alumnoId, alumnoNombre }) {
   if (enLlamada && llamadaActiva) {
     return (
       <Videoconferencia
-        roomName={getVideollamadaRoom(llamadaActiva, alumnoId)}
+        callId={llamadaActiva.id}
         displayName={alumnoNombre}
         onColgar={handleColgar}
       />
@@ -94,6 +93,7 @@ export default function AlumnoVideo({ alumnoId, alumnoNombre }) {
       </div>
 
       {/* Llamada entrante */}
+      {callError && <p role="alert" className="text-sm text-danger mb-4">{callError}</p>}
       <AnimatePresence>
         {llamadaEntrante && (
           <motion.div

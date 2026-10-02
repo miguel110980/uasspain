@@ -1,5 +1,5 @@
 # Runner E2E Rust: pila aislada -> semillas por API -> suite -> teardown.
-param([switch]$Keep)
+param([switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser)
 
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -7,7 +7,10 @@ $ComposeFile = Join-Path $Root 'docker-compose.e2e.yml'
 $BackendContext = Join-Path $Root 'backend-rust'
 $Docker = (Get-Command docker -ErrorAction Stop).Source
 $ExitCode = 1
-$KeyDir = Join-Path ([IO.Path]::GetTempPath()) 'uasspain-e2e-keys'
+$KeyDirName = 'uasspain-e2e-keys-' + [Guid]::NewGuid().ToString('N')
+$KeyDir = Join-Path ([IO.Path]::GetTempPath()) $KeyDirName
+$PreviousKey = $env:E2E_FIELD_ENCRYPTION_KEY
+$PreviousPublicKey = $env:E2E_BACKUP_SSH_PUB
 $EncryptionKeyBytes = [byte[]]::new(32)
 $EncryptionKeyRng = [Security.Cryptography.RandomNumberGenerator]::Create()
 try { $EncryptionKeyRng.GetBytes($EncryptionKeyBytes) }
@@ -34,19 +37,23 @@ function Invoke-E2EJson {
 
 try {
     Write-Host '==> Reconstruyendo backend Rust E2E desde el lockfile'
-    & $Docker build -t uasspain-backend:e2e-local $BackendContext
-    if ($LASTEXITCODE -ne 0) { throw 'build E2E falló' }
+    if (-not $SkipBuild) {
+        & $Docker build -t uasspain-backend:e2e-local $BackendContext
+        if ($LASTEXITCODE -ne 0) { throw 'build E2E falló' }
+    }
 
     $PrivKey = Join-Path $KeyDir 'backup_sftp_ed25519'
     if (-not (Test-Path -LiteralPath $PrivKey)) {
         New-Item -ItemType Directory -Force -Path $KeyDir | Out-Null
-        & ssh-keygen -q -t ed25519 -N '""' -f $PrivKey -C uasspain-e2e-backup
+        $EmptyPassphrase = if ($PSVersionTable.PSVersion.Major -lt 7) { '""' } else { '' }
+        & ssh-keygen -q -t ed25519 -N $EmptyPassphrase -f $PrivKey -C uasspain-e2e-backup
         if ($LASTEXITCODE -ne 0) { throw 'ssh-keygen E2E falló' }
     }
     $env:E2E_BACKUP_SSH_PUB = (Get-Content -LiteralPath "$PrivKey.pub" -Raw).Trim()
 
     Write-Host '==> Recreando pila E2E aislada'
     & $Docker compose -f $ComposeFile down -v --remove-orphans
+    if ($LASTEXITCODE -ne 0) { throw 'teardown E2E inicial falló' }
     & $Docker compose -f $ComposeFile up -d --build --wait --wait-timeout 180
     if ($LASTEXITCODE -ne 0) {
         & $Docker compose -f $ComposeFile logs --no-color backend-e2e
@@ -62,11 +69,11 @@ try {
     Invoke-E2EJson -Method POST -Path '/api/auth/login/' -Session $Session -Body @{
         email = 'e2e-admin@test.local'; password = 'E2eAdmin_2026!'
     } | Out-Null
-    Invoke-E2EJson -Method POST -Path '/api/users/crear-instructor/' -Session $Session -Body @{
+    $Instructor = Invoke-E2EJson -Method POST -Path '/api/users/crear-instructor/' -Session $Session -Body @{
         nombre = 'E2E'; apellidos = 'Instructor'; email = 'instructor.e2e@test.local'
         username = 'instructor.e2e'; dni_nie = '87654321X'; fecha_nacimiento = '1990-01-01'
         password = 'E2eInstr_2026!'; es_admin = $false
-    } | Out-Null
+    }
     $Student = Invoke-E2EJson -Method POST -Path '/api/auth/register/' -Body @{
         nombre = 'E2E'; apellidos = 'Alumno'; email = 'alumno.e2e@test.local'
         username = 'alumno.e2e'; dni_nie = '12345678Z'; fecha_nacimiento = '2000-01-01'
@@ -79,36 +86,106 @@ try {
         psql -U uasspain -d test_e2e_uasspain -v ON_ERROR_STOP=1 -c $ActivateSql | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'activación de alumno E2E falló' }
 
+    $SecondStudent = Invoke-E2EJson -Method POST -Path '/api/auth/register/' -Body @{
+        nombre = 'E2E'; apellidos = 'Segundo'; email = 'segundo.e2e@test.local'
+        username = 'segundo.e2e'; dni_nie = '11111111H'; fecha_nacimiento = '2000-01-01'
+        password = 'E2eSecond_2026!' # pragma: allowlist secret - isolated fixture
+    }
+    $SecondStudentId = [string]$SecondStudent.id
+    if ($SecondStudentId -notmatch '^[0-9a-fA-F-]{36}$') { throw 'ID del segundo alumno E2E no válido' }
+    & $Docker compose -f $ComposeFile exec -T postgres-e2e `
+        psql -U uasspain -d test_e2e_uasspain -v ON_ERROR_STOP=1 `
+        -c "UPDATE accounts_userprofile SET status='activo', otp_verified=TRUE WHERE id='$SecondStudentId'::uuid;" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'activación del segundo alumno E2E falló' }
+    Invoke-E2EJson -Method POST -Path "/api/profiles/$($Instructor.id)/assign-alumnos/" -Session $Session -Body @{
+        student_ids = @($SecondStudentId)
+    } | Out-Null
+
     Write-Host '==> Preparando destinos SFTP E2E'
     $BackendId = (& $Docker compose -f $ComposeFile ps -q backend-e2e).Trim()
     & $Docker cp $PrivKey "${BackendId}:/app/backup_keys/backup_sftp_ed25519"
+    if ($LASTEXITCODE -ne 0) { throw 'copia de clave SFTP E2E falló' }
     foreach ($Service in @('sftp-ext1-e2e', 'sftp-ext2-e2e')) {
         & $Docker compose -f $ComposeFile exec -T -u 0 $Service `
             sh -c 'chown 1000:1000 /backups && chmod 750 /backups'
+        if ($LASTEXITCODE -ne 0) { throw 'preparación del destino SFTP E2E falló' }
     }
     & $Docker compose -f $ComposeFile exec -T -u 0 sftp-ext1-e2e `
         sh -c "printf 'CORRUPT-E2E-BACKUP' > /backups/uasspain_full_20200101_000000.sql.gz.enc"
+    if ($LASTEXITCODE -ne 0) { throw 'preparación de backup corrupto E2E falló' }
 
     $KnownHosts = @()
     foreach ($Service in @('sftp-ext1-e2e', 'sftp-ext2-e2e')) {
         $Public = (& $Docker compose -f $ComposeFile exec -T $Service `
             cat /config/ssh_host_keys/ssh_host_ed25519_key.pub).Trim() -split '\s+'
+        if ($LASTEXITCODE -ne 0 -or $Public.Count -lt 2) { throw 'lectura de clave pública SFTP E2E falló' }
         $KnownHosts += "[$Service]:2222 $($Public[0]) $($Public[1])"
     }
     $KnownHostsPath = Join-Path $KeyDir 'known_hosts'
     [IO.File]::WriteAllText($KnownHostsPath, (($KnownHosts -join "`n") + "`n"))
     & $Docker cp $KnownHostsPath "${BackendId}:/app/backup_keys/known_hosts"
+    if ($LASTEXITCODE -ne 0) { throw 'copia de known_hosts E2E falló' }
     & $Docker exec -u 0 $BackendId sh -c `
         'chown -R uasspain:uasspain /app/backup_keys && chmod 700 /app/backup_keys && chmod 600 /app/backup_keys/backup_sftp_ed25519 && chmod 644 /app/backup_keys/known_hosts'
+    if ($LASTEXITCODE -ne 0) { throw 'permisos de las claves SFTP E2E falló' }
 
     Write-Host '==> Ejecutando suite funcional en Python efímero fijado'
     & $Docker run --rm `
         -v "${Root}:/workspace:ro" `
-        -e E2E_BASE=http://host.docker.internal:8010 `
+        --network uasspain-e2e_e2e_net `
+        -e E2E_BASE=http://backend-e2e:8000 `
         -e E2E_ORIGIN=http://localhost:8010 `
         python:3.13.7-slim-bookworm `
         sh -c 'pip install --disable-pip-version-check --no-cache-dir websockets==15.0.1 && python /workspace/scripts/e2e/e2e_api.py'
     $ExitCode = $LASTEXITCODE
+    if ($ExitCode -ne 0) { throw 'La suite API E2E falló' }
+
+    function Invoke-Operations {
+        param([string]$Mode)
+        & $Docker run --rm -v "${Root}:/workspace:ro" --network uasspain-e2e_e2e_net `
+            -e E2E_BASE=http://backend-e2e:8000 -e E2E_ORIGIN=http://localhost:8010 `
+            python:3.13.7-slim-bookworm python /workspace/scripts/e2e/e2e_operations.py $Mode
+        if ($LASTEXITCODE -ne 0) { throw "Prueba operacional falló: $Mode" }
+    }
+    Write-Host '==> Validando plazo de examen, concurrencia y carga acotada'
+    $ExpiryFixture = (Invoke-Operations 'deadline-prepare') | ConvertFrom-Json
+    $ExpiryId = [string]$ExpiryFixture.attempt_id
+    if ($ExpiryId -notmatch '^[0-9a-fA-F-]{36}$') { throw 'ID del intento de plazo E2E no válido' }
+    & $Docker compose -f $ComposeFile exec -T postgres-e2e psql -U uasspain -d test_e2e_uasspain `
+        -v ON_ERROR_STOP=1 -c "UPDATE examenes_intento SET started_at=NOW()-INTERVAL '41 minutes', expires_at=NOW()-INTERVAL '1 minute' WHERE id='$ExpiryId'::uuid;" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'preparación del plazo E2E falló' }
+    Invoke-Operations 'deadline-verify'
+    Invoke-Operations 'profile-lifecycle'
+    Invoke-Operations 'load'
+    Write-Host '==> Probando caída y recuperación de dependencias aisladas'
+    foreach ($Dependency in @('redis-e2e', 'postgres-e2e')) {
+        try {
+            & $Docker compose -f $ComposeFile stop $Dependency | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'paro de dependencia E2E falló' }
+            Invoke-Operations $(if ($Dependency -eq 'redis-e2e') { 'redis-down' } else { 'db-down' })
+        } finally {
+            & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 $Dependency | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'recuperación de dependencia E2E falló' }
+        }
+        Invoke-Operations 'recovered'
+    }
+    if (-not $SkipBrowser) {
+        Write-Host '==> Verificando reinicio del backend antes de la fase navegador'
+        # Separate test phases so successful fixture logins do not exhaust the
+        # production limit of ten login attempts per identity in five minutes.
+        & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'reinicio del backend E2E falló' }
+        & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'readiness tras reinicio del backend E2E falló' }
+        Write-Host '==> Ejecutando los tres paneles en Chromium'
+        $Npm = if ($env:OS -eq 'Windows_NT') { 'npm.cmd' } else { 'npm' }
+        Push-Location (Join-Path $Root 'frontend')
+        try {
+            & $Npm run test:e2e
+            $ExitCode = $LASTEXITCODE
+            if ($ExitCode -ne 0) { throw 'La suite de navegador E2E falló' }
+        } finally { Pop-Location }
+    }
 }
 finally {
     if (-not $Keep) {
@@ -117,13 +194,14 @@ finally {
     }
     if (Test-Path -LiteralPath $KeyDir) {
         $ResolvedKeyDir = (Resolve-Path -LiteralPath $KeyDir).Path
-        $ResolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
-        if ($ResolvedKeyDir.StartsWith($ResolvedTemp + '\', [StringComparison]::OrdinalIgnoreCase) -and
-            [IO.Path]::GetFileName($ResolvedKeyDir) -eq 'uasspain-e2e-keys') {
+        $ResolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+        if ($ResolvedKeyDir.StartsWith($ResolvedTemp + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -and
+            [IO.Path]::GetFileName($ResolvedKeyDir) -eq $KeyDirName) {
             Remove-Item -LiteralPath $ResolvedKeyDir -Recurse -Force
         }
     }
-    Remove-Item Env:E2E_FIELD_ENCRYPTION_KEY -ErrorAction SilentlyContinue
+    $env:E2E_FIELD_ENCRYPTION_KEY = $PreviousKey
+    $env:E2E_BACKUP_SSH_PUB = $PreviousPublicKey
 }
 
 exit $ExitCode

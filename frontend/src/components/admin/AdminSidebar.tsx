@@ -1,6 +1,6 @@
 ﻿import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ChevronLeft } from 'lucide-react';
+import { X } from 'lucide-react';
 
 export default function AdminSidebar({ groups, section, onSelect, isOpen, onClose, roleLabel = 'Admin' }) {
   const content = (
@@ -15,7 +15,7 @@ export default function AdminSidebar({ groups, section, onSelect, isOpen, onClos
             {roleLabel}
           </span>
         </div>
-         <button onClick={onClose} className="lg:hidden text-copy-muted hover:text-copy-primary">
+         <button aria-label="Cerrar menú" onClick={onClose} className="lg:hidden text-copy-muted hover:text-copy-primary">
           <X className="w-5 h-5" />
         </button>
       </div>
@@ -32,6 +32,8 @@ export default function AdminSidebar({ groups, section, onSelect, isOpen, onClos
                 return (
                   <button
                     key={item.id}
+                    aria-label={item.label}
+                    aria-current={active ? 'page' : undefined}
                     onClick={() => { onSelect(item.id); onClose?.(); }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-md transition-all duration-200 ${
                       active
@@ -54,14 +56,6 @@ export default function AdminSidebar({ groups, section, onSelect, isOpen, onClos
         ))}
       </nav>
 
-      <div className="shrink-0 px-5 py-4 border-t border-border-subtle">
-        <button
-          onClick={onClose}
-          className="hidden lg:flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-copy-muted hover:text-primary transition-colors"
-        >
-          <ChevronLeft className="w-3.5 h-3.5" /> Contraer
-        </button>
-      </div>
     </div>
   );
 

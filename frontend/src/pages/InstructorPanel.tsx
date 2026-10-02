@@ -181,8 +181,7 @@ export default function InstructorPanel() {
     bloqueos.some((b) => b.alumno_id === alumnoId && b.examen_id === examenId && b.bloqueado);
 
   const handleLogout = async () => {
-    window.history.replaceState(null, '', '/');
-    authService.logout('/');
+    await authService.logout('/');
   };
 
   const handleSelect = (id) => {
@@ -329,6 +328,8 @@ export default function InstructorPanel() {
 
       <div className="flex-1 min-w-0 flex flex-col">
         <AdminTopbar
+          navigation={NAV_GROUPS.flatMap(group => group.items)}
+          onNavigate={handleSelect}
           title={TITLES[section] || 'Panel'}
           onMenu={() => setSidebarOpen(true)}
           user={user ? { ...user, full_name: `${authProfile?.nombre || ''} ${authProfile?.apellidos || ''}`.trim() || user.full_name } : null}

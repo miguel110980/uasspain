@@ -638,7 +638,7 @@ export default function AdminBackups() {
               <div className="mt-2 flex flex-wrap gap-4 text-xs">
                 <span>Tamaño: {formatBytes(job.size_bytes)}</span>
                 <span>Duración: {job.duration_seconds || 0}s</span>
-                <span>Checksum: {job.checksum || '—'}</span>
+                <span className="break-all">Checksum: {job.checksum || '—'}</span>
                 <span>Cadena: {job.chain_index || 0}</span>
                 <span>Manifest: {job.manifest_checksum ? 'verificado' : 'no disponible'}</span>
                 <span>Iniciado por: {job.initiated_by || '—'}</span>

@@ -67,7 +67,7 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
           setNewMessageCount((c) => c + 1);
         }
         loadConversaciones();
-      } else if (event.type === 'poll') {
+      } else if (payload?.type === 'mensaje' || event.type === 'poll') {
         loadConversaciones();
         if (alumnoSeleccionadoRef.current) loadMensajes(alumnoSeleccionadoRef.current.id);
       }
@@ -91,7 +91,7 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
           });
           setNewMessageCount((c) => c + 1);
         }
-      } else if (event.type === 'poll') {
+      } else if (payload?.type === 'message' || event.type === 'poll') {
         loadMensajes(alumnoSeleccionado.id);
       }
     });
@@ -360,6 +360,7 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
               />
               <button
                 type="submit"
+                  aria-label="Enviar mensaje"
                 disabled={sending || !texto.trim()}
                 className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 font-bold uppercase tracking-tighter text-xs hover:bg-primary/80 transition-all duration-300 disabled:opacity-50"
               >

@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    auth::{Claims, authenticate, require_role},
+    auth::{Claims, authenticate, require_role, session_is_active},
     error::AppError,
 };
 
@@ -27,6 +27,10 @@ pub struct ListQuery {
     alumno_id: Option<Uuid>,
     peer_id: Option<Uuid>,
     limit: Option<i64>,
+    remitente: Option<String>,
+    leido_alumno: Option<bool>,
+    leido_instructor: Option<bool>,
+    leido_destinatario: Option<bool>,
 }
 #[derive(Debug, Deserialize)]
 pub struct DirectWrite {
@@ -335,8 +339,8 @@ pub async fn list_access_logs(
 ) -> Result<Json<Vec<AccessLogRecord>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin", "instructor"])?;
-    let rows = sqlx::query_as::<_, AccessLogRecord>("SELECT id,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,host(direccion_ip)::text AS direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion::integer,fecha_cierre,created_date FROM conexiones_registroconexion WHERE ($1::text IS NULL OR rol=$1) AND ($2::text IS NULL OR estado_acceso=$2) AND ($3::text IS NULL OR estado_sesion=$3) ORDER BY fecha_hora DESC NULLS LAST,created_date DESC LIMIT $4")
-        .bind(query.rol).bind(query.estado_acceso).bind(query.estado_sesion).bind(query.limit.unwrap_or(200).clamp(1,500)).fetch_all(pool(&state)?).await?;
+    let rows = sqlx::query_as::<_, AccessLogRecord>("SELECT id,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,host(direccion_ip)::text AS direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion::integer,fecha_cierre,created_date FROM conexiones_registroconexion WHERE ($1::text IS NULL OR rol=$1) AND ($2::text IS NULL OR estado_acceso=$2) AND ($3::text IS NULL OR estado_sesion=$3) AND ($5='admin' OR profile_id=$6 OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=profile_id AND p.assigned_instructor_id=$6)) ORDER BY fecha_hora DESC NULLS LAST,created_date DESC LIMIT $4")
+        .bind(query.rol).bind(query.estado_acceso).bind(query.estado_sesion).bind(query.limit.unwrap_or(200).clamp(1,500)).bind(&claims.role).bind(claims.profile_id).fetch_all(pool(&state)?).await?;
     decrypt_access_logs(rows, &state)
 }
 
@@ -347,8 +351,8 @@ pub async fn access_log_detail(
 ) -> Result<Json<AccessLogRecord>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin", "instructor"])?;
-    let row = sqlx::query_as::<_, AccessLogRecord>("SELECT id,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,host(direccion_ip)::text AS direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion::integer,fecha_cierre,created_date FROM conexiones_registroconexion WHERE id=$1")
-        .bind(id).fetch_optional(pool(&state)?).await?.ok_or(AppError::NotFound)?;
+    let row = sqlx::query_as::<_, AccessLogRecord>("SELECT id,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,host(direccion_ip)::text AS direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion::integer,fecha_cierre,created_date FROM conexiones_registroconexion WHERE id=$1 AND ($2='admin' OR profile_id=$3 OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=profile_id AND p.assigned_instructor_id=$3))")
+        .bind(id).bind(&claims.role).bind(claims.profile_id).fetch_optional(pool(&state)?).await?.ok_or(AppError::NotFound)?;
     let row = decrypt_access_logs(vec![row], &state)?
         .0
         .pop()
@@ -503,9 +507,13 @@ pub async fn list_messages(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Vec<DirectMessage>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    let alumno = direct_student(&state, &claims, query.alumno_id).await?;
-    let rows = sqlx::query_as::<_, DirectMessage>("SELECT id,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor,created_date FROM conexiones_mensaje WHERE alumno_id=$1 ORDER BY created_date ASC LIMIT $2")
-        .bind(alumno).bind(query.limit.unwrap_or(500).clamp(1,1000)).fetch_all(pool(&state)?).await?;
+    if query.alumno_id.is_some() {
+        direct_student(&state, &claims, query.alumno_id).await?;
+    }
+    let rows = sqlx::query_as::<_, DirectMessage>("SELECT m.id,m.alumno_id,m.instructor_id,m.conexion_id,m.alumno_nombre,m.remitente,m.contenido,m.leido_alumno,m.leido_instructor,m.created_date FROM conexiones_mensaje m JOIN accounts_userprofile p ON p.id=m.alumno_id WHERE ($1='admin' OR ($1='alumno' AND m.alumno_id=$2) OR ($1='instructor' AND p.assigned_instructor_id=$2)) AND ($3::uuid IS NULL OR m.alumno_id=$3) AND ($4::text IS NULL OR m.remitente=$4) AND ($5::boolean IS NULL OR m.leido_alumno=$5) AND ($6::boolean IS NULL OR m.leido_instructor=$6) ORDER BY m.created_date ASC LIMIT $7")
+        .bind(&claims.role).bind(claims.profile_id).bind(query.alumno_id).bind(query.remitente)
+        .bind(query.leido_alumno).bind(query.leido_instructor).bind(query.limit.unwrap_or(500).clamp(1,1000))
+        .fetch_all(pool(&state)?).await?;
     decrypt_direct(rows, &state)
 }
 
@@ -547,6 +555,10 @@ pub async fn create_message(
             }),
         )
         .await;
+    state
+        .events
+        .publish("connections", json!({"type":"mensaje", "action":"created"}))
+        .await;
     Ok((StatusCode::CREATED, Json(row)))
 }
 
@@ -579,7 +591,12 @@ pub async fn update_message(
             .await?;
     let (student, sender) = current.ok_or(AppError::NotFound)?;
     direct_student(&state, &claims, Some(student)).await?;
-    if claims.role != "admin" && sender != claims.role {
+    if claims.role != "admin" && input.contenido.is_some() && sender != claims.role {
+        return Err(AppError::Forbidden);
+    }
+    if (claims.role == "alumno" && input.leido_instructor.is_some())
+        || (claims.role == "instructor" && input.leido_alumno.is_some())
+    {
         return Err(AppError::Forbidden);
     }
     let content = input
@@ -691,8 +708,8 @@ pub async fn list_staff(
 ) -> Result<Json<Vec<StaffMessage>>, AppError> {
     let claims = staff(&state, &headers)?;
     let peer = query.peer_id;
-    let rows=sqlx::query_as::<_,StaffMessage>("SELECT id,remitente_id,destinatario_id,contenido,sender_role,leido_destinatario,created_date FROM conexiones_mensajestaff WHERE (remitente_id=$1 OR destinatario_id=$1) AND ($2::uuid IS NULL OR (remitente_id=$2 OR destinatario_id=$2)) ORDER BY created_date,id LIMIT $3")
-        .bind(claims.profile_id).bind(peer).bind(query.limit.unwrap_or(500).clamp(1,500)).fetch_all(pool(&state)?).await?;
+    let rows=sqlx::query_as::<_,StaffMessage>("SELECT id,remitente_id,destinatario_id,contenido,sender_role,leido_destinatario,created_date FROM conexiones_mensajestaff WHERE (remitente_id=$1 OR destinatario_id=$1) AND ($2::uuid IS NULL OR (remitente_id=$2 OR destinatario_id=$2)) AND ($4::boolean IS NULL OR (destinatario_id=$1 AND leido_destinatario=$4)) ORDER BY created_date,id LIMIT $3")
+        .bind(claims.profile_id).bind(peer).bind(query.limit.unwrap_or(500).clamp(1,500)).bind(query.leido_destinatario).fetch_all(pool(&state)?).await?;
     decrypt_staff(rows, &state)
 }
 pub async fn create_staff(
@@ -807,14 +824,17 @@ pub async fn connections_socket(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    if !crate::chat::origin_allowed(&headers) {
+        return Err(AppError::Forbidden);
+    }
     let claims = authenticate(&state, &headers, "access")?;
-    require_role(&claims, &["admin", "instructor"])?;
+    require_role(&claims, &["admin", "instructor", "alumno"])?;
     Ok(upgrade
         .max_message_size(16 * 1024)
-        .on_upgrade(move |socket| run_connections_socket(socket, state)))
+        .on_upgrade(move |socket| run_connections_socket(socket, state, claims)))
 }
 
-async fn run_connections_socket(socket: WebSocket, state: Arc<AppState>) {
+async fn run_connections_socket(socket: WebSocket, state: Arc<AppState>, claims: Claims) {
     let (mut output, mut input) = socket.split();
     let mut events = state.events.subscribe();
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(25));
@@ -822,6 +842,7 @@ async fn run_connections_socket(socket: WebSocket, state: Arc<AppState>) {
         tokio::select! {
             incoming = input.next() => match incoming {
                 Some(Ok(Message::Text(text))) if text.len() <= 16 * 1024 => {
+                    if !session_is_active(&state, &claims).await.unwrap_or(false) { break; }
                     if serde_json::from_str::<Value>(&text).ok().and_then(|v| v.get("type").and_then(Value::as_str).map(str::to_owned)).as_deref() == Some("ping")
                         && output.send(Message::Text(json!({"type":"pong"}).to_string().into())).await.is_err() { break; }
                 }
@@ -829,14 +850,25 @@ async fn run_connections_socket(socket: WebSocket, state: Arc<AppState>) {
                 _ => {}
             },
             event = events.recv() => match event {
-                Ok(event) if event.topic == "connections" => if output.send(Message::Text(event.payload.to_string().into())).await.is_err() { break; },
+                Ok(event) if event.topic == "connections" => {
+                    if !session_is_active(&state, &claims).await.unwrap_or(false) { break; }
+                    // Personal data and access logs are only visible to administrators.
+                    // Other roles receive an invalidation notice and re-fetch their scoped API.
+                    let payload = if claims.role == "admin" { event.payload } else {
+                        json!({"type":event.payload.get("type"), "action":event.payload.get("action")})
+                    };
+                    if output.send(Message::Text(payload.to_string().into())).await.is_err() { break; }
+                },
                 Ok(_) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     if output.send(Message::Text(json!({"type":"resync_required"}).to_string().into())).await.is_err() { break; }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             },
-            _ = heartbeat.tick() => if output.send(Message::Ping(Vec::new().into())).await.is_err() { break; },
+            _ = heartbeat.tick() => {
+                if !session_is_active(&state, &claims).await.unwrap_or(false)
+                    || output.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
+            },
         }
     }
 }
@@ -848,10 +880,22 @@ async fn insert_staff(
     content: &str,
 ) -> Result<StaffMessage, AppError> {
     let row=sqlx::query_as::<_,StaffMessage>("INSERT INTO conexiones_mensajestaff (id,created_date,updated_date,remitente_id,destinatario_id,contenido,sender_role,leido_destinatario) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,FALSE) RETURNING id,remitente_id,destinatario_id,contenido,sender_role,leido_destinatario,created_date").bind(Uuid::new_v4()).bind(claims.profile_id).bind(destination).bind(state.cipher.encrypt(content)?).bind(&claims.role).fetch_one(pool(state)?).await?;
-    decrypt_staff(vec![row], state)?
+    let row = decrypt_staff(vec![row], state)?
         .0
         .pop()
-        .ok_or(AppError::Internal)
+        .ok_or(AppError::Internal)?;
+    let room_id = crate::chat::staff_room(claims.profile_id, destination);
+    state.events.publish(format!("chat:{room_id}"), json!({
+        "type": "message", "room_id": room_id, "sender_id": claims.profile_id, "content": content
+    })).await;
+    state
+        .events
+        .publish(
+            "connections",
+            json!({"type":"mensaje_staff", "action":"created"}),
+        )
+        .await;
+    Ok(row)
 }
 async fn direct_student(
     state: &AppState,
@@ -859,7 +903,12 @@ async fn direct_student(
     requested: Option<Uuid>,
 ) -> Result<Uuid, AppError> {
     match claims.role.as_str() {
-        "alumno" => Ok(claims.profile_id),
+        "alumno" => {
+            if requested.is_some_and(|id| id != claims.profile_id) {
+                return Err(AppError::Forbidden);
+            }
+            Ok(claims.profile_id)
+        }
         "instructor" => {
             let id = requested
                 .ok_or_else(|| AppError::Validation("alumno_id es obligatorio.".into()))?;

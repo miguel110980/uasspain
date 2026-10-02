@@ -20,6 +20,31 @@ use crate::{
 
 const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
 
+pub(crate) fn staff_room(first: Uuid, second: Uuid) -> String {
+    let (first, second) = if first < second {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    format!("staff-{first}-{second}")
+}
+
+fn staff_peer(room: &str, member: Uuid) -> Option<Uuid> {
+    let pair = room.strip_prefix("staff-")?;
+    let first: Uuid = pair.get(..36)?.parse().ok()?;
+    let second: Uuid = pair.get(37..)?.parse().ok()?;
+    if first == second || room != staff_room(first, second) {
+        return None;
+    }
+    if member == first {
+        Some(second)
+    } else if member == second {
+        Some(first)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChatEvent {
@@ -84,10 +109,7 @@ async fn authorize_room(
     let Some(pool) = &state.pool else {
         return Err(AppError::Unavailable);
     };
-    let allowed: bool = if let Some(peer) = room_id
-        .strip_prefix("staff-")
-        .and_then(|value| value.parse::<Uuid>().ok())
-    {
+    let allowed: bool = if let Some(peer) = staff_peer(room_id, profile_id) {
         let expected_peer_role = if role == "admin" {
             "instructor"
         } else {
@@ -132,6 +154,8 @@ async fn run_socket(socket: WebSocket, state: Arc<AppState>, room_id: String, cl
                                 if let Ok(payload) = serde_json::to_value(&event) {
                                     state.events.publish(event_topic.clone(), payload).await;
                                 }
+                                let kind = if room_id.starts_with("staff-") { "mensaje_staff" } else { "mensaje" };
+                                state.events.publish("connections", serde_json::json!({"type":kind,"action":"created"})).await;
                                 if send(&mut output, &ChatEvent::Ack { room_id: room_id.clone() }).await.is_err() { break; }
                             }
                             _ => {}
@@ -145,10 +169,17 @@ async fn run_socket(socket: WebSocket, state: Arc<AppState>, room_id: String, cl
                 && event.topic == event_topic
                 && let Ok(chat_event) = serde_json::from_value::<ChatEvent>(event.payload)
                 && !matches!(&chat_event, ChatEvent::Message { sender_id: event_sender, .. } if *event_sender == claims.profile_id)
-                && send(&mut output, &chat_event).await.is_err() { break; },
-            _ = heartbeat.tick() => if output.send(Message::Ping(Vec::new().into())).await.is_err() { break; },
+                && (!session_is_active(&state, &claims).await.unwrap_or(false)
+                    || authorize_room(&state, claims.profile_id, &claims.role, &room_id).await.is_err()
+                    || send(&mut output, &chat_event).await.is_err()) { break; },
+            _ = heartbeat.tick() => {
+                if !session_is_active(&state, &claims).await.unwrap_or(false)
+                    || authorize_room(&state, claims.profile_id, &claims.role, &room_id).await.is_err()
+                    || output.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
+            },
         }
     }
+    let _ = output.close().await;
 }
 
 async fn persist_message(
@@ -160,10 +191,7 @@ async fn persist_message(
 ) -> Result<(), AppError> {
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let encrypted = state.cipher.encrypt(content.trim())?;
-    if let Some(peer_id) = room_id
-        .strip_prefix("staff-")
-        .and_then(|value| value.parse::<Uuid>().ok())
-    {
+    if let Some(peer_id) = staff_peer(room_id, sender_id) {
         if !matches!(sender_role, "admin" | "instructor") {
             return Err(AppError::Forbidden);
         }
@@ -208,7 +236,19 @@ async fn send(
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatEvent, MAX_PAYLOAD_BYTES};
+    use super::{ChatEvent, MAX_PAYLOAD_BYTES, staff_peer, staff_room};
+    use uuid::Uuid;
+    #[test]
+    fn staff_rooms_require_membership_and_canonical_pair() {
+        let first = Uuid::from_u128(1);
+        let second = Uuid::from_u128(2);
+        let room = staff_room(first, second);
+        assert_eq!(staff_peer(&room, first), Some(second));
+        assert_eq!(staff_peer(&room, second), Some(first));
+        assert_eq!(staff_peer(&room, Uuid::from_u128(3)), None);
+        assert_eq!(staff_peer(&format!("staff-{second}-{first}"), first), None);
+        assert_eq!(staff_peer(&format!("staff-{first}"), first), None);
+    }
     #[test]
     fn websocket_payload_is_bounded() {
         assert_eq!(MAX_PAYLOAD_BYTES, 16 * 1024);

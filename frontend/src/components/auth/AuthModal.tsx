@@ -98,7 +98,7 @@ export default function AuthModal({ isOpen, onClose }) {
       }
     } catch (err) {
       const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : '';
-      if (code && authService.getBlockedMessage(code)) {
+      if (['pendiente', 'rechazado', 'bloqueado'].includes(code)) {
         setError(err.message);
         authService.logout();
       } else {
@@ -174,6 +174,7 @@ export default function AuthModal({ isOpen, onClose }) {
       <button
         onClick={handleClose}
         type="button"
+        aria-label="Cerrar acceso"
         className="absolute top-4 right-4 text-muted-foreground hover:text-primary transition-colors"
       >
         <X className="w-5 h-5" />
@@ -191,10 +192,11 @@ export default function AuthModal({ isOpen, onClose }) {
 
       <form onSubmit={handleLogin} className="space-y-5">
         <div className="space-y-1.5">
-          <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+          <label htmlFor="login-email" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
             Correo electrónico *
           </label>
           <input
+            id="login-email"
             type="email"
             required
             autoComplete="email"
@@ -206,11 +208,12 @@ export default function AuthModal({ isOpen, onClose }) {
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+          <label htmlFor="login-password" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
             Contraseña *
           </label>
           <div className="relative">
             <input
+              id="login-password"
               type={showPassword ? 'text' : 'password'}
               required
               autoComplete="current-password"
@@ -221,6 +224,7 @@ export default function AuthModal({ isOpen, onClose }) {
             />
             <button
               type="button"
+              aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors"
             >
@@ -231,10 +235,11 @@ export default function AuthModal({ isOpen, onClose }) {
 
         {requiresOtp && (
           <div className="space-y-1.5">
-            <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+            <label htmlFor="login-otp" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
               Código 2FA *
             </label>
             <input
+              id="login-otp"
               type="text"
               inputMode="numeric"
               maxLength={6}
@@ -264,7 +269,7 @@ export default function AuthModal({ isOpen, onClose }) {
             onCheckedChange={(checked) => setRemember(checked === true)}
           />
           <label htmlFor="remember" className="text-xs text-muted-foreground cursor-pointer select-none">
-            Recordar contraseña
+            Recordar correo
           </label>
         </div>
 

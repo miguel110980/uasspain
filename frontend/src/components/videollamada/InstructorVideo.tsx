@@ -3,7 +3,6 @@ import { motion } from 'framer-motion';
 import conexionesService from '@/services/conexionesService';
 import { Video, Phone, Loader2, VideoIcon, Bell, Search, User } from 'lucide-react';
 import Videoconferencia from '@/components/videollamada/Videoconferencia';
-import { getVideollamadaRoom, videollamadaRoomId } from '@/lib/videollamada';
 
 export default function InstructorVideo({ profiles }) {
   const [llamadas, setLlamadas] = useState([]);
@@ -11,6 +10,8 @@ export default function InstructorVideo({ profiles }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [iniciando, setIniciando] = useState({});
+  const [groupLoading, setGroupLoading] = useState(false);
+  const [callError, setCallError] = useState('');
 
   useEffect(() => {
     let mounted = true;
@@ -39,33 +40,49 @@ export default function InstructorVideo({ profiles }) {
   const getLlamadaActiva = (alumnoId) => llamadas.find((l) => l.alumno_id === alumnoId && l.estado === 'activa');
 
   const handleIniciar = async (profile) => {
-    const roomId = videollamadaRoomId(profile.id);
     const nombre = `${profile.nombre || ''} ${profile.apellidos || ''}`.trim();
     setIniciando((prev) => ({ ...prev, [profile.id]: true }));
     try {
-      const existente = getLlamadaActiva(profile.id);
+      let existente = getLlamadaActiva(profile.id);
       if (!existente) {
-        const nueva = await conexionesService.videollamadas.create({
+        existente = await conexionesService.videollamadas.create({
           alumno_id: profile.id,
           alumno_nombre: nombre,
-          room_id: roomId,
           estado: 'activa',
           iniciada_por: 'instructor',
         });
-        setLlamadas((prev) => [...prev, nueva]);
+        setLlamadas((prev) => [...prev, existente]);
       }
-      setEnLlamada({ room_id: roomId, alumno_id: profile.id, alumno_nombre: nombre });
+      setEnLlamada(existente);
+    } catch {
+      setCallError('No se pudo iniciar la llamada. Comprueba tu conexión y la asignación del alumno.');
     } finally {
       setIniciando((prev) => ({ ...prev, [profile.id]: false }));
     }
   };
 
   const handleUnirse = (llamada) => {
-    setEnLlamada({
-      room_id: getVideollamadaRoom(llamada, llamada.alumno_id),
-      alumno_id: llamada.alumno_id,
-      alumno_nombre: llamada.alumno_nombre,
-    });
+    setEnLlamada(llamada);
+  };
+
+  const handleGroup = async () => {
+    if (groupLoading) return;
+    setGroupLoading(true);
+    setCallError('');
+    try {
+      const invited = [];
+      for (const profile of alumnos) {
+        invited.push(await conexionesService.videollamadas.create({
+          alumno_id: profile.id,
+          alumno_nombre: `${profile.nombre || ''} ${profile.apellidos || ''}`.trim(),
+          estado: 'activa',
+        }));
+      }
+      setLlamadas(invited);
+      if (invited[0]) setEnLlamada(invited[0]);
+    } catch {
+      setCallError('No se pudo invitar a todos los alumnos. Comprueba las llamadas activas y vuelve a intentarlo.');
+    } finally { setGroupLoading(false); }
   };
 
   const handleColgar = async () => {
@@ -77,7 +94,7 @@ export default function InstructorVideo({ profiles }) {
         try {
           await conexionesService.videollamadas.update(activa.id, { estado: 'finalizada' });
           setLlamadas((prev) => prev.filter((l) => l.id !== activa.id));
-        } catch { /* noop */ }
+        } catch { setCallError('No se pudo finalizar la llamada en el servidor. Vuelve a entrar y pulsa Colgar.'); }
       }
     }
     setEnLlamada(null);
@@ -86,7 +103,7 @@ export default function InstructorVideo({ profiles }) {
   if (enLlamada) {
     return (
       <Videoconferencia
-        roomName={getVideollamadaRoom(enLlamada, enLlamada.alumno_id)}
+        callId={enLlamada.id}
         displayName={`Instructor — ${enLlamada.alumno_nombre}`}
         onColgar={handleColgar}
       />
@@ -108,6 +125,11 @@ export default function InstructorVideo({ profiles }) {
       </div>
 
       {/* Llamadas entrantes (iniciadas por alumnos) */}
+      {callError && <p role="alert" className="text-sm text-danger mb-4">{callError}</p>}
+      <button onClick={handleGroup} disabled={groupLoading || alumnos.length === 0}
+        className="mb-6 px-5 py-3 bg-primary text-primary-foreground text-xs font-bold disabled:opacity-50">
+        {groupLoading ? 'Invitando…' : 'Llamar a todos los alumnos'}
+      </button>
       {llamadasEntrantes.length > 0 && (
         <div className="mb-6">
           <h3 className="text-xs font-mono uppercase tracking-widest text-primary mb-3 flex items-center gap-2">

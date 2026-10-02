@@ -1,45 +1,60 @@
-﻿import React from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { PhoneOff, Video } from 'lucide-react';
+import { PhoneOff, Video, Mic, MicOff, VideoOff } from 'lucide-react';
+import { useWebrtc } from '@/hooks/useWebrtc';
 
-export default function Videoconferencia({ roomName, displayName, onColgar }) {
-  const jitsiUrl = `https://meet.jit.si/${roomName}#config.prejoinPageEnabled=false&config.startWithVideoMuted=false&config.startAudioMuted=false&userInfo.displayName=${encodeURIComponent(displayName || 'Usuario')}`;
+function StreamVideo({ stream, muted = false, label }: { stream: MediaStream; muted?: boolean; label: string }) {
+  const video = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    const element = video.current;
+    if (element) element.srcObject = stream;
+    return () => { if (element) element.srcObject = null; };
+  }, [stream]);
+  return <video ref={video} autoPlay playsInline muted={muted} aria-label={label} className="w-full h-full max-h-[70vh] object-contain bg-black" />;
+}
 
+export default function Videoconferencia({ callId, displayName, onColgar }: {
+  callId: string; displayName: string; onColgar: () => void;
+}) {
+  const { localStream, remoteStreams, status, error } = useWebrtc(callId);
+  const [mic, setMic] = useState(true);
+  const [camera, setCamera] = useState(true);
+  const toggleMic = () => {
+    localStream?.getAudioTracks().forEach(track => { track.enabled = !mic; });
+    setMic(!mic);
+  };
+  const toggleCamera = () => {
+    localStream?.getVideoTracks().forEach(track => { track.enabled = !camera; });
+    setCamera(!camera);
+  };
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[60] bg-background/98 backdrop-blur-xl flex flex-col"
-    >
-      {/* Barra superior */}
-      <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-border-subtle bg-card/80">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      role="dialog" aria-modal="true" aria-label="Videollamada UASSPAIN"
+      className="fixed inset-0 z-[60] bg-background/98 backdrop-blur-xl flex flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-border-subtle bg-card/80">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 flex items-center justify-center bg-primary/10 border border-primary/20 rounded-sm">
-            <Video className="w-4 h-4 text-primary" />
-          </div>
+          <Video className="w-5 h-5 text-primary" />
           <div>
-            <h3 className="font-heading text-sm font-bold text-foreground leading-none">Videollamada en curso</h3>
-            <p className="text-[10px] text-muted-foreground font-mono mt-1">Sala: {roomName}</p>
+            <h3 className="font-heading text-sm font-bold text-foreground">Videollamada en curso</h3>
+            <p role="status" className="text-xs text-muted-foreground">{status}</p>
           </div>
         </div>
-        <button
-          onClick={onColgar}
-          className="inline-flex items-center gap-2 bg-danger/90 hover:bg-danger text-white px-4 sm:px-6 py-2 font-bold uppercase tracking-tighter text-xs transition-all duration-200"
-        >
-          <PhoneOff className="w-4 h-4" />
-          Colgar
-        </button>
+        <div className="flex gap-2">
+          <button onClick={toggleMic} disabled={!localStream} aria-label={mic ? 'Silenciar micrófono' : 'Activar micrófono'}
+            className="p-2 border border-border-subtle text-foreground">{mic ? <Mic /> : <MicOff />}</button>
+          <button onClick={toggleCamera} disabled={!localStream} aria-label={camera ? 'Apagar cámara' : 'Activar cámara'}
+            className="p-2 border border-border-subtle text-foreground">{camera ? <Video /> : <VideoOff />}</button>
+          <button onClick={onColgar} className="flex items-center gap-2 bg-danger text-white px-4 py-2 font-bold text-xs">
+            <PhoneOff className="w-4 h-4" /> Colgar
+          </button>
+        </div>
       </div>
-
-      {/* Iframe Jitsi */}
-      <div className="flex-1 bg-black">
-        <iframe
-          src={jitsiUrl}
-          allow="camera; microphone; fullscreen; display-capture; autoplay; clipboard-write"
-          className="w-full h-full border-0"
-          title="Videollamada UASSPAIN"
-        />
+      {error && <p role="alert" className="text-danger px-6 py-3">{error}</p>}
+      <div className="flex-1 overflow-auto p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {localStream && <div><StreamVideo stream={localStream} muted label="Tu cámara" /><p className="text-sm text-foreground">{displayName} (tú)</p></div>}
+        {Object.entries(remoteStreams).map(([id, remote], index) => (
+          <div key={id}><StreamVideo stream={remote} label={`Cámara participante ${index + 1}`} /><p className="text-sm text-foreground">Participante {index + 1}</p></div>
+        ))}
       </div>
     </motion.div>
   );

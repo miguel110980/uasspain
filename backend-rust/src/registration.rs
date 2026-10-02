@@ -202,11 +202,10 @@ pub async fn resend_otp(
     let lookup = state.cipher.blind_index(&email)?;
     let otp = format!("{:06}", rand::rng().random_range(100_000..1_000_000));
     let hash = hash_argon2(&otp)?;
-    let result=sqlx::query("UPDATE accounts_userprofile SET otp_hash=$1,otp_verified=FALSE,updated_date=NOW() WHERE email_lookup=$2").bind(hash).bind(lookup).execute(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound);
+    let result=sqlx::query("UPDATE accounts_userprofile SET otp_hash=$1,updated_date=NOW() WHERE email_lookup=$2 AND otp_verified=FALSE AND status='pendiente'").bind(hash).bind(lookup).execute(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
+    if result.rows_affected() > 0 {
+        deliver_otp(&email, &otp).await?;
     }
-    deliver_otp(&email, &otp).await?;
     Ok(Json(json!({"detail":"Codigo reenviado."})))
 }
 
@@ -252,7 +251,7 @@ pub async fn password_reset_request(
     let uid = URL_SAFE_NO_PAD.encode(user.id.to_string());
     let token = compatible_reset_token(&user, timestamp)?;
     let frontend = std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".into());
-    crate::email::send(&email, "Restablecer contraseña UASSpain", &format!("Use este enlace para restablecer su contraseña: {frontend}/reset-password?uid={uid}&token={token}")).await?;
+    crate::email::send(&email, "Restablecer contraseña UASSpain", &format!("Use este enlace para restablecer su contraseña: {frontend}/restablecer-contrasena?uid={uid}&token={token}")).await?;
     Ok(Json(
         json!({"detail":"Hemos enviado un enlace para restablecer su contraseña."}),
     ))
@@ -314,7 +313,7 @@ pub async fn admin_password_reset(
     let uid = URL_SAFE_NO_PAD.encode(user.id.to_string());
     let token = compatible_reset_token(&user, timestamp)?;
     let frontend = std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".into());
-    crate::email::send(&email, "Restablecer contraseña UASSpain", &format!("Use este enlace para restablecer su contraseña: {frontend}/reset-password?uid={uid}&token={token}")).await?;
+    crate::email::send(&email, "Restablecer contraseña UASSpain", &format!("Use este enlace para restablecer su contraseña: {frontend}/restablecer-contrasena?uid={uid}&token={token}")).await?;
     Ok(Json(
         json!({"detail":format!("Enlace de restablecimiento enviado a {email}." )}),
     ))

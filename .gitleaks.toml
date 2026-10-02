@@ -6,6 +6,8 @@ description = "Artefactos locales y baseline de hashes; no forman parte del codi
 paths = [
   '''(^|/)[.]git/''',
   '''(^|/)[.]local-snapshots/''',
+  '''(^|/)[.]run/''',
+  '''(^|/)frontend/(test-results|playwright-report)/''',
   '''(^|/)(node_modules|target|dist)/''',
   '''(^|/)[.]secrets/''',
   '''(^|/)[.]secrets[.]baseline$''',

@@ -5,7 +5,7 @@ import examenesService from '@/services/examenesService';
 
 const DURACION_TIEMPO = 40 * 60; // 40 minutos en segundos
 
-export default function ExamenActivo({ examen, modalidad, alumnoId, onFinalizar }) {
+export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
   const [preguntas, setPreguntas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -17,20 +17,43 @@ export default function ExamenActivo({ examen, modalidad, alumnoId, onFinalizar 
   const [errorEnvio, setErrorEnvio] = useState(null);
   const [resultado, setResultado] = useState(null);
   const [vistaRevision, setVistaRevision] = useState(false);
+  const [errorGuardado, setErrorGuardado] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startRef = useRef(Date.now());
+  const deadlineRef = useRef<number | null>(null);
+  const attemptRef = useRef<string | null>(null);
+  const submittingRef = useRef(false);
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const handleFinalizarRef = useRef<(automatico?: boolean) => void>(() => {});
 
   useEffect(() => {
-    loadPreguntas();
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const attempt = await examenesService.iniciarIntento(examen.id, modalidad);
+        if (cancelled) return;
+        attemptRef.current = attempt.id;
+        setPreguntas(attempt.preguntas);
+        setRespuestas(attempt.respuestas || {});
+        const serverNow = Date.parse(attempt.server_now);
+        const remainingMs = attempt.expires_at ? Math.max(0, Date.parse(attempt.expires_at) - serverNow) : null;
+        deadlineRef.current = remainingMs === null ? null : performance.now() + remainingMs;
+        setTiempoRestante(remainingMs === null ? DURACION_TIEMPO : Math.ceil(remainingMs / 1000));
+      } catch {
+        if (!cancelled) setError('No se pudo iniciar el examen. Comprueba tu conexión y los permisos con tu instructor.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; if (timerRef.current) clearInterval(timerRef.current); };
+  }, [examen.id, modalidad]);
 
   useEffect(() => {
     if (loading || resultado || modalidad !== 'tiempo') return;
     timerRef.current = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startRef.current) / 1000);
-      const remaining = DURACION_TIEMPO - elapsed;
+      const remaining = Math.ceil(((deadlineRef.current ?? performance.now()) - performance.now()) / 1000);
       if (remaining <= 0) {
         if (timerRef.current) clearInterval(timerRef.current);
         setTiempoRestante(0);
@@ -42,51 +65,33 @@ export default function ExamenActivo({ examen, modalidad, alumnoId, onFinalizar 
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [loading, resultado, modalidad]);
 
-  const loadPreguntas = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await examenesService.preguntas.filter({ examen_id: examen.id });
-      const ordenadas = data.sort((a, b) => (a.orden || 0) - (b.orden || 0));
-      setPreguntas(ordenadas);
-      startRef.current = Date.now();
-      setTiempoRestante(DURACION_TIEMPO);
-      if (ordenadas.length === 0) {
-        setError('Este examen no tiene preguntas configuradas todavía.');
-      }
-    } catch (err) {
-      if (err?.response?.status === 403) {
-        setError('No tienes acceso a este examen. Ha sido bloqueado por tu instructor.');
-      } else {
-        setError('No se pudieron cargar las preguntas. Comprueba tu conexión y vuelve a intentarlo.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    const id = attemptRef.current;
+    if (loading || resultado || finalizando || !id || tiempoRestante <= 0) return;
+    const timer = setTimeout(() => {
+      saveChainRef.current = saveChainRef.current
+        .then(() => examenesService.guardarRespuestas(id, respuestas))
+        .then(() => setErrorGuardado(false))
+        .catch(() => setErrorGuardado(true));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [respuestas, loading, resultado, finalizando, tiempoRestante <= 0]);
 
   const handleRespuesta = (pregId, opcion) => {
-    if (resultado) return;
+    if (resultado || submittingRef.current || (modalidad === 'tiempo' && tiempoRestante <= 0)) return;
     setRespuestas((prev) => ({ ...prev, [pregId]: opcion }));
   };
 
   const handleFinalizar = useCallback(async (_automatico = false) => {
-    clearInterval(timerRef.current);
-    if (finalizando) return;
+    if (submittingRef.current || resultado || !attemptRef.current) return;
+    submittingRef.current = true;
     setFinalizando(true);
     setErrorEnvio(null);
-    const elapsed = Math.floor((Date.now() - startRef.current) / 1000);
-    const fecha = new Date().toISOString();
-
     const payload = {
-      alumno_id: alumnoId,
+      attempt_id: attemptRef.current,
       examen_id: examen.id,
-      examen_nombre: examen.nombre,
-      categoria: examen.categoria,
       modalidad,
       respuestas,
-      tiempo_empleado: elapsed,
-      fecha,
     };
 
     try {
@@ -99,9 +104,10 @@ export default function ExamenActivo({ examen, modalidad, alumnoId, onFinalizar 
         'No se pudo enviar el examen. Tus respuestas siguen en pantalla: inténtalo de nuevo.',
       );
     } finally {
+      submittingRef.current = false;
       setFinalizando(false);
     }
-  }, [respuestas, alumnoId, examen, modalidad, finalizando]);
+  }, [respuestas, examen, modalidad, resultado]);
 
   useEffect(() => {
     handleFinalizarRef.current = handleFinalizar;
@@ -294,6 +300,11 @@ export default function ExamenActivo({ examen, modalidad, alumnoId, onFinalizar 
 
       {/* Progreso */}
       <div className="glass-card px-6 py-4 mb-6">
+        {errorGuardado && (
+          <p role="status" className="text-xs text-warning mb-3">
+            No se han podido guardar las últimas respuestas. Comprueba tu conexión antes de que termine el tiempo.
+          </p>
+        )}
         {errorEnvio && (
           <p className="text-xs text-danger font-mono mb-3 border border-danger-border bg-danger-soft px-3 py-2">
             {errorEnvio}
@@ -335,6 +346,8 @@ export default function ExamenActivo({ examen, modalidad, alumnoId, onFinalizar 
               return (
                 <button
                   key={key}
+                  disabled={finalizando || (modalidad === 'tiempo' && tiempoRestante <= 0)}
+                  aria-pressed={seleccionada}
                   onClick={() => handleRespuesta(pregunta.id, key)}
                   className={`w-full text-left flex items-center gap-3 px-5 py-4 border transition-all duration-200 ${
                     seleccionada

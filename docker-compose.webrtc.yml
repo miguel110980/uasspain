@@ -1,0 +1,11 @@
+# Optional TURN/STUN credentials; the permanent stack still has five services.
+services:
+  backend:
+    environment:
+      WEBRTC_ICE_SERVERS_FILE: /run/secrets/webrtc_ice_servers
+    secrets:
+      - webrtc_ice_servers
+
+secrets:
+  webrtc_ice_servers:
+    file: ${WEBRTC_ICE_SERVERS_FILE:-.secrets/webrtc_ice_servers.json}

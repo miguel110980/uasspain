@@ -19,6 +19,26 @@ Solo Nginx publica `127.0.0.1:80/443`. Compruebe `https://127.0.0.1/healthz` y `
 - SMTP, SFTP y WireGuard: entregue credenciales o claves fuera de Git y montelas desde `.secrets/`.
 - TLS: los certificados internos se generan localmente; las claves privadas nunca se versionan.
 
+## Videollamadas WebRTC
+
+El navegador intercambia audio y video mediante WebRTC. El backend autoriza cada participante y retransmite la señalización por WebSocket. El instructor puede invitar a todos sus alumnos a una misma sala; al finalizarla se cierran sus invitaciones. Las salas se generan en el servidor y no aceptan nombres enviados por el cliente.
+
+En localhost o una LAN compatible funcionan los candidatos ICE locales. Para alumnos en redes distintas configure un servidor TURN accesible desde esas redes. Guarde un array JSON de `RTCIceServer` en `.secrets/webrtc_ice_servers.json`, con `urls`, `username` y `credential` de su proveedor, y arranque con:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.webrtc.yml up -d --wait
+```
+
+Utilice credenciales limitadas y rotables. El archivo se monta como secreto y el endpoint autenticado `/api/videollamadas/ice/` entrega la configuración necesaria al navegador. Verifique con dos redes reales que el servidor TURN transmite medios antes de habilitar llamadas por Internet. La prueba local de Chromium usa dispositivos simulados y comprueba bytes de audio y video recibidos entre tres participantes y la liberación de dispositivos al colgar; no acredita esa conectividad externa.
+
+## Exámenes y validación
+
+La migración `0005_exam_attempts.sql` guarda intentos, preguntas y respuestas. `POST /api/examenes/{id}/intentos/` inicia o recupera un intento; `PUT /api/intentos-examen/{id}/` guarda respuestas. El resultado requiere `attempt_id`: el servidor calcula la nota y el tiempo, aplica prerrequisitos y devuelve el mismo resultado ante reintentos. Pasado el plazo de 40 minutos solo puntúa las respuestas guardadas antes de vencer. La modalidad libre conserva su intento sin fecha límite.
+
+La migración `0006_domain_deletion.sql` define el borrado de preguntas/bloqueos con su examen y conserva resultados históricos sin su referencia al examen. Al eliminar un perfil se borran sus filas dependientes, se mantienen contenidos y auditorías compartidos y se desasignan sus alumnos. La cuenta de autenticación queda inactiva en la misma transacción. El runtime del backend usa Ubuntu 26.04 actualizado y herramientas PostgreSQL 18; la publicación de imágenes requiere que pasen CI y Security, incluidos los escaneos de los cinco servicios.
+
+Antes de ejecutar `scripts/e2e/run-e2e.ps1`, instale `npm ci` y `npx playwright install chromium` en `frontend`. El runner recrea exclusivamente el proyecto `uasspain-e2e`, verifica backups/restauraciones locales y SFTP y recorre los tres paneles en Chromium. `-SkipBrowser` omite únicamente el navegador; `-Keep` conserva la pila aislada para investigar un fallo.
+
 ## Traslado
 
 Conserve el repositorio sin `.env` ni `.secrets`, un backup PostgreSQL verificado, los volumenes de media/backups necesarios y los secretos por un canal independiente. No exporte `node_modules`, `target`, caches, artefactos E2E ni `.local-snapshots`.

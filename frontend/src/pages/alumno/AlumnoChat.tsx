@@ -42,7 +42,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
           });
           setNewMessageCount((c) => c + 1);
         }
-      } else if (event.type === 'poll') {
+      } else if (payload?.type === 'message' || event.type === 'poll') {
         loadMensajes();
       }
     });
@@ -84,8 +84,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
       );
       setMensajes(Array.isArray(data) ? data : []);
       setError('');
-      const noLeidos = data.filter((m) => m.remitente === 'instructor' && !m.leido_alumno);
-      noLeidos.forEach((m) => conexionesService.mensajes.update(m.id, { leido_alumno: true }));
+      await conexionesService.mensajes.markRead(alumnoId);
     } catch {
       setError('No se pudieron cargar los mensajes. Inténtalo de nuevo.');
     } finally {
@@ -243,6 +242,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
             />
             <button
               type="submit"
+                  aria-label="Enviar mensaje"
               disabled={sending || !texto.trim()}
               className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 font-bold uppercase tracking-tighter text-xs hover:bg-primary/80 transition-all duration-300 disabled:opacity-50"
             >

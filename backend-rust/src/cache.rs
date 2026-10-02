@@ -90,13 +90,15 @@ impl EventBus {
             return;
         };
         let mut connection = manager.clone();
-        if redis::cmd("PUBLISH")
-            .arg(EVENT_CHANNEL)
-            .arg(serialized)
-            .query_async::<i64>(&mut connection)
-            .await
-            .is_err()
-        {
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            redis::cmd("PUBLISH")
+                .arg(EVENT_CHANNEL)
+                .arg(serialized)
+                .query_async::<i64>(&mut connection),
+        )
+        .await;
+        if !matches!(result, Ok(Ok(_))) {
             self.connected.store(false, Ordering::Release);
         }
     }

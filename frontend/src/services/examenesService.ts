@@ -77,6 +77,15 @@ export const examenesService = {
   resultadosPractico: crud(endpoints.resultadosPractico),
   bloqueos: crud(endpoints.bloqueosExamen),
 
+  async iniciarIntento(examenId: string, modalidad: string) {
+    const res = await apiClient.post(`${endpoints.examenes}${examenId}/intentos/`, { modalidad });
+    return res.data;
+  },
+
+  async guardarRespuestas(attemptId: string, respuestas: Record<string, string>) {
+    await apiClient.put(`/api/intentos-examen/${attemptId}/`, { respuestas });
+  },
+
   async uploadArchivo(file: File, options: { signal?: AbortSignal } = {}) {
     const formData = new FormData();
     formData.append('file', file);

@@ -653,9 +653,7 @@ pub async fn validate_active_session(
     if claims.session_key.is_empty() {
         return Err(AppError::Unauthorized);
     }
-    let current: Option<String> = sqlx::query_scalar("SELECT p.active_session_key FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active")
-        .bind(claims.profile_id).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
-    if current.as_deref() != Some(&claims.session_key) {
+    if !session_is_active(&state, &claims).await? {
         return Err(AppError::Unauthorized);
     }
     sqlx::query("UPDATE conexiones_registroconexion SET ultima_actividad=NOW(),updated_date=NOW() WHERE profile_id=$1 AND session_id=$2 AND estado_sesion='activa' AND (ultima_actividad IS NULL OR ultima_actividad < NOW()-INTERVAL '60 seconds')")
@@ -664,16 +662,19 @@ pub async fn validate_active_session(
 }
 
 pub async fn session_is_active(state: &AppState, claims: &Claims) -> Result<bool, AppError> {
-    if claims.session_key.is_empty() {
+    if claims.session_key.is_empty() || claims.exp <= Utc::now().timestamp() as usize {
         return Ok(false);
     }
-    let current: Option<String> = sqlx::query_scalar(
-        "SELECT p.active_session_key FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active",
+    let current: Option<(Option<String>, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT p.active_session_key, p.role, p.roles FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active",
     )
     .bind(claims.profile_id)
     .fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?)
     .await?;
-    Ok(current.as_deref() == Some(&claims.session_key))
+    Ok(current.is_some_and(|(session, role, roles)| {
+        session.as_deref() == Some(&claims.session_key)
+            && roles_from_json(&roles, &role).contains(&claims.role)
+    }))
 }
 
 async fn record_login(

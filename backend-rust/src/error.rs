@@ -67,11 +67,25 @@ impl IntoResponse for AppError {
             ),
             Self::Database(error) => {
                 tracing::error!(%correlation_id, error = %error, "database request failed");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal_error",
-                    "Error interno del servicio.".to_owned(),
-                )
+                if matches!(
+                    error,
+                    sqlx::Error::Io(_)
+                        | sqlx::Error::Tls(_)
+                        | sqlx::Error::PoolTimedOut
+                        | sqlx::Error::PoolClosed
+                ) {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "service_unavailable",
+                        "Servicio temporalmente no disponible.".to_owned(),
+                    )
+                } else {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal_error",
+                        "Error interno del servicio.".to_owned(),
+                    )
+                }
             }
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,

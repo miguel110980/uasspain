@@ -313,13 +313,23 @@ pub async fn delete(
         .fetch_optional(pool(&state)?)
         .await?
         .ok_or(AppError::NotFound)?;
-    if claims.role != "admin" && !(claims.role == "instructor" && row.role == "alumno") {
+    if claims.role != "admin"
+        && !(claims.role == "instructor"
+            && row.role == "alumno"
+            && row.assigned_instructor_id == Some(claims.profile_id))
+    {
         return Err(AppError::Forbidden);
     }
+    let mut transaction = pool(&state)?.begin().await?;
+    sqlx::query("UPDATE auth_user SET is_active=FALSE WHERE id=$1")
+        .bind(row.user_id)
+        .execute(&mut *transaction)
+        .await?;
     sqlx::query("DELETE FROM accounts_userprofile WHERE id=$1")
         .bind(id)
-        .execute(pool(&state)?)
+        .execute(&mut *transaction)
         .await?;
+    transaction.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

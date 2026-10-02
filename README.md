@@ -50,7 +50,7 @@ npm.cmd --prefix frontend test -- --run
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/e2e/run-e2e.ps1
 ```
 
-La suite E2E crea un proyecto aislado con `docker-compose.e2e.yml` y cubre API, autorizacion, WebSocket, uploads y recovery.
+La suite E2E crea un proyecto aislado con `docker-compose.e2e.yml` y cubre API, autorizacion, WebSocket, uploads, recovery, los tres paneles en escritorio/movil y medios WebRTC entre tres participantes. Requiere `npm ci` y `npx playwright install chromium` en `frontend`. El gate Rust completo se ejecuta con `docker build --target audit backend-rust`. Consulte el [resultado y alcance de la validación local](docs/LOCAL_VALIDATION.md).
 
 ## Documentacion
 

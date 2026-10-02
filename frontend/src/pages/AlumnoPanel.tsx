@@ -138,8 +138,7 @@ export default function AlumnoPanel() {
         await conexionesService.conexiones.update(conexionId, { fecha_desconexion: new Date().toISOString() });
       }
     } catch {}
-    window.history.replaceState(null, '', '/');
-    authService.logout('/');
+    await authService.logout('/');
   };
 
   const handleIniciarExamen = (examen, modalidad) => {
@@ -206,6 +205,8 @@ export default function AlumnoPanel() {
 
       <div className="flex-1 min-w-0 flex flex-col">
         <AdminTopbar
+          navigation={examenActivo ? [] : NAV_GROUPS.flatMap(group => group.items)}
+          onNavigate={handleSelect}
           title={examenActivo ? 'Examen en curso' : (TITLES[section] || 'Panel')}
           onMenu={() => setSidebarOpen(true)}
           user={topbarUser}
@@ -219,7 +220,6 @@ export default function AlumnoPanel() {
             <ExamenActivo
               examen={examenActivo.examen}
               modalidad={examenActivo.modalidad}
-              alumnoId={profile?.id || user?.id}
               onFinalizar={handleFinalizarExamen}
             />
           ) : (

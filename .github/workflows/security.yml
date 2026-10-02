@@ -4,6 +4,7 @@ permissions:
   contents: read
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
@@ -20,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.98.1
       - uses: taiki-e/install-action@cargo-audit
       - name: Verify the temporary RSA advisory exception is inactive
         working-directory: backend-rust
@@ -58,44 +59,48 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install detect-secrets
+      - run: pip install detect-secrets==1.5.0
       - name: Baseline-aware scan
         run: |
-          detect-secrets scan \
+          detect-secrets scan --no-verify \
             --exclude-files '\.secrets\.baseline$' \
             --exclude-files 'package-lock\.json$' \
-            --exclude-files 'node_modules|frontend/dist|backend-rust/target|\.local-snapshots' \
+            --exclude-files '\.(png|jpe?g|webp|ico|woff2?|ttf)$' \
+            --exclude-files 'node_modules|frontend/dist|frontend/test-results|frontend/playwright-report|backend-rust/target|\.local-snapshots|(^|/)\.run/' \
             > .secrets-results.json
           python scripts/compare_secrets.py
 
   container-scan:
     name: Container security
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            dockerfile: backend-rust/Dockerfile
+            context: backend-rust
+          - name: frontend
+            dockerfile: frontend/Dockerfile
+            context: .
+          - name: nginx
+            dockerfile: nginx/Dockerfile
+            context: nginx
+          - name: postgres
+            dockerfile: infra/postgres/Dockerfile
+            context: .
+          - name: redis
+            dockerfile: infra/redis/Dockerfile
+            context: infra/redis
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - run: docker build -t uasspain-backend:scan backend-rust
-      - run: docker build -t uasspain-frontend:scan -f frontend/Dockerfile .
+      - run: docker build -t uasspain-${{ matrix.name }}:scan -f ${{ matrix.dockerfile }} ${{ matrix.context }}
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: uasspain-backend:scan
+          image-ref: uasspain-${{ matrix.name }}:scan
           format: table
           exit-code: 1
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-      - name: Report backend upstream vulnerabilities without a fix
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: uasspain-backend:scan
-          format: table
-          exit-code: 0
           severity: CRITICAL,HIGH
           ignore-unfixed: false
-      - uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: uasspain-frontend:scan
-          format: table
-          exit-code: 1
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true

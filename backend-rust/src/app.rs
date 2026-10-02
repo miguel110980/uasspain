@@ -196,6 +196,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .patch(exam_admin::update_exam)
                 .delete(exam_admin::delete_exam),
         )
+        .route("/api/examenes/{id}/intentos/", post(exams::start_attempt))
+        .route(
+            "/api/intentos-examen/{id}/",
+            axum::routing::put(exams::save_answers),
+        )
         .route(
             "/api/examenes/importar-pdf/",
             post(crate::exam_import::import),
@@ -401,6 +406,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(crate::video::delete),
         )
         .route("/ws/videollamada/{id}/", get(crate::video::socket))
+        .route("/api/videollamadas/ice/", get(crate::video::ice_config))
         .route(
             "/api/uploads/",
             post(crate::uploads::general).layer(DefaultBodyLimit::max(20 * 1024 * 1024)),
