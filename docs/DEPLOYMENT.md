@@ -50,28 +50,6 @@ Workspace). No es un flujo de autorización con intercambio de códigos/PKCE.
 Si la cuenta exige OTP local, Google no crea sesión: acceda con correo, contraseña y código temporal. La caché y el registro de nonces usados corresponden a la única instancia del
 backend; al escalar a varias instancias, compartalos antes de habilitar el flujo.
 
-## Diagnóstico de GitHub Actions
-
-```powershell
-powershell -NoProfile -File scripts/check-github-actions.ps1 -CheckAccount
-```
-
-Utiliza la credencial Git ya configurada solo en memoria y muestra permisos,
-workflows, ejecuciones, número de jobs y anotaciones. El workflow manual
-`Actions diagnostics` prueba la asignación de un runner con un único `echo`, sin
-checkout, acciones externas, secrets ni código del proyecto. Si también falla
-con `startup_failure` y cero jobs, revise el estado de la cuenta/facturación o
-traslade esa evidencia a soporte de GitHub. Esa firma no demuestra por sí sola
-un problema de pago; no cambie presupuestos, visibilidad ni controles de
-seguridad para intentar desbloquearlo.
-
-`-CheckAccount` añade estado del repositorio, permisos por defecto, número de
-runners propios y disponibilidad de la API de uso de facturación. La credencial
-de Git con scopes `repo`/`workflow` no demuestra acceso a facturación: sus
-endpoints de usuario requieren el permiso `Plan: read` y acceso a la plataforma
-de facturación compatible. Un 404 no prueba un problema de pago. Cero runners
-propios es normal al usar `ubuntu-latest`, que solicita un runner de GitHub.
-
 ## Videollamadas WebRTC
 
 El navegador intercambia audio y video mediante WebRTC. El backend autoriza cada participante y retransmite la señalización por WebSocket. El instructor puede invitar a todos sus alumnos a una misma sala; al finalizarla se cierran sus invitaciones. Las salas se generan en el servidor y no aceptan nombres enviados por el cliente.
@@ -88,7 +66,7 @@ Utilice credenciales limitadas y rotables. El archivo se monta como secreto y el
 
 La migración `0005_exam_attempts.sql` guarda intentos, preguntas y respuestas. `POST /api/examenes/{id}/intentos/` inicia o recupera un intento; `PUT /api/intentos-examen/{id}/` guarda respuestas. El resultado requiere `attempt_id`: el servidor calcula la nota y el tiempo, aplica prerrequisitos y devuelve el mismo resultado ante reintentos. Pasado el plazo de 40 minutos solo puntúa las respuestas guardadas antes de vencer. La modalidad libre conserva su intento sin fecha límite.
 
-La migración `0006_domain_deletion.sql` define el borrado de preguntas/bloqueos con su examen y conserva resultados históricos sin su referencia al examen. Al eliminar un perfil se borran sus filas dependientes, se mantienen contenidos y auditorías compartidos y se desasignan sus alumnos. La cuenta de autenticación queda inactiva en la misma transacción. El runtime del backend usa Ubuntu 26.04 actualizado y herramientas PostgreSQL 18; la publicación de imágenes requiere que pasen CI y Security, incluidos los escaneos de los cinco servicios.
+La migración `0006_domain_deletion.sql` define el borrado de preguntas/bloqueos con su examen y conserva resultados históricos sin su referencia al examen. Al eliminar un perfil se borran sus filas dependientes, se mantienen contenidos y auditorías compartidos y se desasignan sus alumnos. La cuenta de autenticación queda inactiva en la misma transacción. El runtime del backend usa Ubuntu 26.04 actualizado y herramientas PostgreSQL 18; los builds y las comprobaciones se ejecutan localmente con los comandos de README y los escaneos de los cinco servicios.
 
 Antes de ejecutar `scripts/e2e/run-e2e.ps1`, instale `npm ci` y `npx playwright install chromium` en `frontend`. El runner recrea exclusivamente el proyecto `uasspain-e2e`, verifica backups/restauraciones locales y SFTP y recorre los tres paneles en Chromium. `-SkipBrowser` omite únicamente el navegador; `-Keep` conserva la pila aislada para investigar un fallo.
 

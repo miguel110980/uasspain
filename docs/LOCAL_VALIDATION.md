@@ -10,7 +10,7 @@ La validación utiliza el entorno disponible en este equipo. La pila principal y
 - Videollamadas: audio/vídeo WebRTC, salas autorizadas por el servidor, llamadas de grupo, controles de cámara/micrófono, reconexión de señalización y liberación de dispositivos. Configuración TURN opcional mediante secreto.
 - Persistencia: migraciones 0005/0006 para intentos y borrado transaccional de perfiles/exámenes, conservando contenido compartido y resultados históricos cuando corresponde.
 - Operación: readiness acotado, tolerancia a caída de Redis, respuestas 503 ante fallos de conexión PostgreSQL, proxy sin query strings/referer en logs y protección contra cabeceras IP suministradas por el cliente.
-- Seguridad y reproducibilidad: dependencias corregidas, runtime Ubuntu 26.04 actualizado, compilaciones desde lockfiles, publicación de imágenes condicionada a CI/Security y scripts Bash normalizados a LF.
+- Seguridad y reproducibilidad: dependencias corregidas, runtime Ubuntu 26.04 actualizado, builds locales desde lockfiles y scripts Bash normalizados a LF.
 
 ## Evidencia ejecutada
 
@@ -29,7 +29,7 @@ La validación utiliza el entorno disponible en este equipo. La pila principal y
 | Dependencias | npm audit: cero vulnerabilidades; cargo-audit pasa con la excepción documentada de RSA no activa en el árbol seleccionado |
 | Imágenes backend/frontend/nginx/postgres/redis | Trivy: cero HIGH/CRITICAL, incluyendo vulnerabilidades sin parche; escaneo por archivos de imagen, sin socket Docker |
 | Secretos | Gitleaks pasa en árbol e historial; detect-secrets pasa incluyendo archivos nuevos y baseline; excepciones puntuales exclusivamente para fixtures ficticios |
-| Scripts y workflows | Sintaxis PowerShell/Python/Bash y actionlint pasan; 4 tests del comparador de secretos verifican reubicación, duplicados, valores nuevos y cambio de archivo |
+| Scripts locales | Sintaxis PowerShell/Python/Bash pasa; 4 tests del comparador de secretos verifican reubicación, duplicados, valores nuevos y cambio de archivo |
 
 Los logs, JSON de escaneo y capturas locales se conservan en `.run/`, excluido de Git. Los archivos de imágenes exportadas y la pila E2E se retiran al finalizar. Los comandos reproducibles de validación figuran en README y en `DEPLOYMENT.md`; la suite completa es `scripts/e2e/run-e2e.ps1`.
 
@@ -49,7 +49,7 @@ los datos de la pila principal:
 | Lighthouse 13.5.0 móvil, HTTPS local | Inicio: performance 86, accesibilidad 100, buenas prácticas 96, SEO 100; formación con cursos publicados/pendientes: 94/100/96/100. CLS 0 en ambas |
 | Seguridad | npm audit 0; Gitleaks árbol 0; detect-secrets sin valores nuevos. Cargo.toml/Cargo.lock no cambian: se conserva el cargo-audit y árbol RSA no activo ya verificados en la baseline |
 | Imágenes exactas de la pila final | Backend, frontend, Nginx, PostgreSQL y Redis: Trivy 0 HIGH/CRITICAL, sin `ignore-unfixed`, por archivos de imagen sin socket Docker |
-| Scripts/workflows | actionlint y parseo PowerShell pasan; 4 tests del comparador de secretos pasan |
+| Scripts locales | Parseo PowerShell pasa; 4 tests del comparador de secretos pasan |
 
 Inicio queda por debajo del objetivo orientativo de rendimiento 90: LCP móvil
 simulado de 3,9 s y FCP de 2,0 s. El HTML inicial permanece visible mientras carga
@@ -69,47 +69,30 @@ contra el proveedor. El email se normaliza en servidor y el cambio actualiza
 perfil y cuenta de autenticación en una transacción; las contraseñas conservan
 sus caracteres. Google rechaza el acceso cuando la política local exige OTP y dirige al flujo de correo, contraseña y código, evitando omitir la segunda verificación. Se mantienen los límites de intentos y la revocación existentes.
 
-GitHub Actions permanece **BLOCKED** en la evidencia disponible: Actions
-habilitado, acciones permitidas, CI/Docker/Security activos y dispatch manual
-aceptado, pero `startup_failure` sin jobs ni anotaciones. Reproducción:
-[CI 37055442307](https://github.com/miguel110980/uasspain/actions/runs/37055442307).
-El registro sintético `BuildFailed` no es un archivo del repositorio. El estado
-global de Actions figuraba operativo en
-[GitHub Status](https://www.githubstatus.com/api/v2/summary.json) al comprobarlo.
-Los endpoints de facturación consultados responden 404 y el titular no puede
-comprobar ahora la interfaz de pago; una restricción de cuenta/pago es una
-hipótesis, no un diagnóstico confirmado. Se incorpora un workflow manual mínimo
-para comprobar la asignación de runner tras publicar y un script reproducible
-de lectura de evidencias; no se cambian pagos, visibilidad ni políticas.
+## Retirada de GitHub Actions
 
-La prueba mínima ya publicada también termina en `startup_failure` con cero
-jobs: [Actions diagnostics 37065510966](https://github.com/miguel110980/uasspain/actions/runs/37065510966),
-sobre el commit `39fa91df4348ddaf15b6bc0fc22e06f3a501eb66`. Solo contiene un
-`echo`, sin acciones, dependencias ni checkout. El bloqueo precede a los pasos
-del proyecto y no queda resuelto con esta implementación. Hace falta consultar
-el estado de la cuenta o soporte de GitHub; no hay anotaciones que identifiquen
-la causa y no se puede afirmar que sea facturación.
+Por petición del usuario se retiran los cuatro workflows, el script de
+diagnóstico y la actualización de dependencias del ecosistema `github-actions`.
+Se elimina la documentación operativa de CI y publicación automática de imágenes.
+La compilación, los tests y los escaneos se mantienen como herramientas locales;
+Docker Compose construye frontend/backend desde el código del repositorio.
+Las actualizaciones de dependencias Cargo, npm y Docker de Dependabot no
+contienen workflows y se conservan.
 
-En la revisión posterior se ha reaplicado la misma política de Actions mediante
-la API, sin cambiar sus valores. La nueva
-[prueba 37066153715](https://github.com/miguel110980/uasspain/actions/runs/37066153715)
-vuelve a terminar en `startup_failure`, cero jobs y cero anotaciones. La
-credencial tiene administración del repositorio; este no está archivado ni
-deshabilitado. Los scopes disponibles son `gist`, `repo` y `workflow`; los
-endpoints de uso de facturación siguen devolviendo 404 incluso con la versión
-REST `2026-03-10`. No acreditan un permiso `Plan: read`, exigido por los
-[endpoints oficiales de facturación](https://docs.github.com/en/rest/billing/usage).
-El script admite `-CheckAccount` para reproducir todas estas comprobaciones.
+No se ha ejecutado la prueba de una rama temporal ni se ha instalado un runner.
+No se crean repositorios públicos ni se cambia la visibilidad de UASSpain.
 
-Una prueba pública con únicamente un workflow `echo` puede ayudar a que GitHub
-muestre una anotación de cuenta que omite en repositorios privados, como en este
-[caso reportado por su autor](https://github.com/orgs/community/discussions/208287).
-No se ha creado un repositorio público ni se ha publicado contenido de UASSpain
-para realizarla. La credencial actual tampoco tiene `delete_repo`, por lo que
-la eliminación de un eventual repositorio de diagnóstico requeriría al titular.
+La API confirma `enabled: false` para Actions en `miguel110980/uasspain`, que
+permanece privado. No hay secrets, variables, runners ni entornos asociados.
+La retirada pasa typecheck, lint y los cuatro tests frontend; Compose valida y
+`up --no-build --no-recreate --wait` confirma los cinco contenedores saludables.
+El YAML de Dependabot valida y Gitleaks pasa en árbol e historial. `/healthz` y `/readyz`
+responden 200 por HTTPS con CA y hostname verificados; readiness confirma
+PostgreSQL y Redis disponibles. No cambia código de aplicación, imágenes,
+volúmenes ni datos.
 
 ## Integraciones externas pendientes
 
 El usuario indica que no hay un entorno externo de pruebas configurado y pide validar lo local disponible. **SMTP_FUNCTIONAL, OAUTH_E2E, TURN_RELAY_E2E y VPN_BACKUP_TRANSPORT = BLOCKED**: faltan cuenta/destinatario SMTP autorizado, cliente y cuenta Google de prueba, credenciales TURN y peer/rutas VPN autorizados. El OTP de los fixtures se activa únicamente en la base aislada; la prueba no demuestra entrega de correo. La carga es una muestra local y no certifica capacidad de producción. Los dispositivos WebRTC son simulados, con intercambio real de medios en localhost. Los dos destinos SFTP aislados prueban transporte/restauración, no una VPN real.
 
-La validación local no acredita un despliegue público ni sustituye los resultados de GitHub Actions. El cierre autorizado incluye commit y push normal a `origin/main`, sin reescritura del historial. El despliegue remoto permanece fuera del alcance.
+La validación local no acredita un despliegue público. El cierre autorizado incluye commit y push normal a `origin/main`, sin reescritura del historial. El despliegue remoto permanece fuera del alcance.

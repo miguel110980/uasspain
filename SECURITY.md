@@ -6,7 +6,7 @@
 - Edge a backend/frontend, backend a PostgreSQL y backend a Redis usan TLS verificado.
 - Cookies seguras, sesiones rotadas, RBAC deny-by-default, autorizacion por recurso y validacion Origin protegen HTTP/WS.
 - Contenedores usan rootfs de solo lectura, `no-new-privileges`, capacidades minimas y usuarios no root cuando el entrypoint lo permite.
-- Secrets se montan desde `.secrets/`; Gitleaks y detect-secrets protegen pre-commit/CI.
+- Secrets se montan desde `.secrets/`; Gitleaks y detect-secrets protegen el pre-commit y las comprobaciones locales.
 - Backups se cifran, verifican y auditan. Consulte [backup y recovery](docs/BACKUP_RESTORE.md).
 
 ## Riesgos abiertos

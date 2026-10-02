@@ -13,6 +13,8 @@ Plataforma de formacion UAS con frontend React 19/TypeScript, API Rust con Axum,
 
 Requisitos: Docker Desktop con Compose v2 y secretos locales en `.secrets/`. Los `.env*` reales, claves y secretos estan excluidos de Git.
 
+El build, arranque y validacion se realizan localmente con Docker Desktop. No requieren GitHub Actions ni imagenes publicadas en un registro de GitHub.
+
 ```powershell
 docker compose build --pull
 docker compose up -d --wait
