@@ -82,6 +82,14 @@ hipótesis, no un diagnóstico confirmado. Se incorpora un workflow manual míni
 para comprobar la asignación de runner tras publicar y un script reproducible
 de lectura de evidencias; no se cambian pagos, visibilidad ni políticas.
 
+La prueba mínima ya publicada también termina en `startup_failure` con cero
+jobs: [Actions diagnostics 37065510966](https://github.com/miguel110980/uasspain/actions/runs/37065510966),
+sobre el commit `39fa91df4348ddaf15b6bc0fc22e06f3a501eb66`. Solo contiene un
+`echo`, sin acciones, dependencias ni checkout. El bloqueo precede a los pasos
+del proyecto y no queda resuelto con esta implementación. Hace falta consultar
+el estado de la cuenta o soporte de GitHub; no hay anotaciones que identifiquen
+la causa y no se puede afirmar que sea facturación.
+
 ## Integraciones externas pendientes
 
 El usuario indica que no hay un entorno externo de pruebas configurado y pide validar lo local disponible. **SMTP_FUNCTIONAL, OAUTH_E2E, TURN_RELAY_E2E y VPN_BACKUP_TRANSPORT = BLOCKED**: faltan cuenta/destinatario SMTP autorizado, cliente y cuenta Google de prueba, credenciales TURN y peer/rutas VPN autorizados. El OTP de los fixtures se activa únicamente en la base aislada; la prueba no demuestra entrega de correo. La carga es una muestra local y no certifica capacidad de producción. Los dispositivos WebRTC son simulados, con intercambio real de medios en localhost. Los dos destinos SFTP aislados prueban transporte/restauración, no una VPN real.
