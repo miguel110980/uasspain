@@ -53,7 +53,7 @@ backend; al escalar a varias instancias, compartalos antes de habilitar el flujo
 ## Diagnóstico de GitHub Actions
 
 ```powershell
-powershell -NoProfile -File scripts/check-github-actions.ps1
+powershell -NoProfile -File scripts/check-github-actions.ps1 -CheckAccount
 ```
 
 Utiliza la credencial Git ya configurada solo en memoria y muestra permisos,
@@ -64,6 +64,13 @@ con `startup_failure` y cero jobs, revise el estado de la cuenta/facturación o
 traslade esa evidencia a soporte de GitHub. Esa firma no demuestra por sí sola
 un problema de pago; no cambie presupuestos, visibilidad ni controles de
 seguridad para intentar desbloquearlo.
+
+`-CheckAccount` añade estado del repositorio, permisos por defecto, número de
+runners propios y disponibilidad de la API de uso de facturación. La credencial
+de Git con scopes `repo`/`workflow` no demuestra acceso a facturación: sus
+endpoints de usuario requieren el permiso `Plan: read` y acceso a la plataforma
+de facturación compatible. Un 404 no prueba un problema de pago. Cero runners
+propios es normal al usar `ubuntu-latest`, que solicita un runner de GitHub.
 
 ## Videollamadas WebRTC
 

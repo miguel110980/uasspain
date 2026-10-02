@@ -90,6 +90,24 @@ del proyecto y no queda resuelto con esta implementación. Hace falta consultar
 el estado de la cuenta o soporte de GitHub; no hay anotaciones que identifiquen
 la causa y no se puede afirmar que sea facturación.
 
+En la revisión posterior se ha reaplicado la misma política de Actions mediante
+la API, sin cambiar sus valores. La nueva
+[prueba 37066153715](https://github.com/miguel110980/uasspain/actions/runs/37066153715)
+vuelve a terminar en `startup_failure`, cero jobs y cero anotaciones. La
+credencial tiene administración del repositorio; este no está archivado ni
+deshabilitado. Los scopes disponibles son `gist`, `repo` y `workflow`; los
+endpoints de uso de facturación siguen devolviendo 404 incluso con la versión
+REST `2026-03-10`. No acreditan un permiso `Plan: read`, exigido por los
+[endpoints oficiales de facturación](https://docs.github.com/en/rest/billing/usage).
+El script admite `-CheckAccount` para reproducir todas estas comprobaciones.
+
+Una prueba pública con únicamente un workflow `echo` puede ayudar a que GitHub
+muestre una anotación de cuenta que omite en repositorios privados, como en este
+[caso reportado por su autor](https://github.com/orgs/community/discussions/208287).
+No se ha creado un repositorio público ni se ha publicado contenido de UASSpain
+para realizarla. La credencial actual tampoco tiene `delete_repo`, por lo que
+la eliminación de un eventual repositorio de diagnóstico requeriría al titular.
+
 ## Integraciones externas pendientes
 
 El usuario indica que no hay un entorno externo de pruebas configurado y pide validar lo local disponible. **SMTP_FUNCTIONAL, OAUTH_E2E, TURN_RELAY_E2E y VPN_BACKUP_TRANSPORT = BLOCKED**: faltan cuenta/destinatario SMTP autorizado, cliente y cuenta Google de prueba, credenciales TURN y peer/rutas VPN autorizados. El OTP de los fixtures se activa únicamente en la base aislada; la prueba no demuestra entrega de correo. La carga es una muestra local y no certifica capacidad de producción. Los dispositivos WebRTC son simulados, con intercambio real de medios en localhost. Los dos destinos SFTP aislados prueban transporte/restauración, no una VPN real.
