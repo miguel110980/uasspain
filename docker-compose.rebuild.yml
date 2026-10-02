@@ -1,0 +1,31 @@
+# Pila temporal de reconstrucción; requiere un proyecto distinto de uasspain.
+# Ejemplo: docker compose -p uasspain-rebuild-20261003 -f docker-compose.yml
+#          -f docker-compose.rebuild.yml up -d --build --wait
+services:
+  postgres:
+    container_name: ${COMPOSE_PROJECT_NAME}-postgres
+    image: uasspain-postgres:rebuild
+  redis:
+    container_name: ${COMPOSE_PROJECT_NAME}-redis
+  backend:
+    container_name: ${COMPOSE_PROJECT_NAME}-backend
+    image: uasspain-backend:rebuild
+    environment:
+      BOOTSTRAP_ADMIN_ENABLED: "false"
+      BACKUP_SCHEDULER_ENABLED: "false"
+      CORS_ALLOWED_ORIGINS: https://localhost:8447
+      FRONTEND_URL: https://localhost:8447
+  frontend:
+    container_name: ${COMPOSE_PROJECT_NAME}-frontend
+    image: uasspain-frontend:latest
+  nginx:
+    container_name: ${COMPOSE_PROJECT_NAME}-nginx
+    image: uasspain-nginx:latest
+    ports: !override
+      - 127.0.0.1:8087:8080
+      - 127.0.0.1:8447:8443
+volumes:
+  postgres_data:
+    name: ${COMPOSE_PROJECT_NAME}_postgres_data
+  postgres_varlib:
+    name: ${COMPOSE_PROJECT_NAME}_postgres_varlib

@@ -1,0 +1,67 @@
+param(
+    [ValidatePattern('^uasspain-rebuild-[a-z0-9_-]+$')]
+    [string]$Project = 'uasspain-rebuild-20261003',
+    [string]$DockerDataPath = "$env:LOCALAPPDATA\Docker\wsl\disk\docker_data.vhdx"
+)
+
+$ErrorActionPreference = 'Stop'
+$workspace = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+Set-Location -LiteralPath $workspace
+foreach ($variable in @('POSTGRES_DATA_VOLUME_NAME','POSTGRES_VARLIB_VOLUME_NAME')) {
+    if ([Environment]::GetEnvironmentVariable($variable, 'Process')) {
+        throw "Retire el override $variable de esta sesion: la activacion controla esos nombres mediante .env."
+    }
+}
+# Este gate es anterior a cualquier cambio en la instalacion activa.
+& (Join-Path $PSScriptRoot 'verify-docker-storage-encryption.ps1') -DockerDataPath $DockerDataPath
+$applicationReport = Get-Content -LiteralPath ".run/$Project/application-verification.json" -Raw | ConvertFrom-Json
+foreach ($check in @('https_ca_hostname','real_admin_login','personal_fields_match','unassigned_role_denied','multirole_session_switch','admin_api_isolation','roles_restored_admin_only','chromium_login_admin')) {
+    if ($applicationReport.$check -ne $true) { throw "Falta validacion real de aplicacion: $check" }
+}
+& node tools/postgres-rebuild.mjs verify $Project
+if ($LASTEXITCODE -ne 0) { throw 'La verificacion PostgreSQL ha fallado.' }
+
+# Construir primero; hasta este punto la pila principal sigue intacta.
+& docker compose -p uasspain -f docker-compose.yml build backend postgres
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar la imagen principal.' }
+& docker compose -p uasspain -f docker-compose.yml config --format json | Out-String -OutVariable originalModelJson | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo leer el modelo principal.' }
+$originalModel = $originalModelJson | ConvertFrom-Json
+$previousData = $originalModel.volumes.postgres_data.name
+$previousVarlib = $originalModel.volumes.postgres_varlib.name
+$newData = "${Project}_postgres_data"
+$newVarlib = "${Project}_postgres_varlib"
+if ($previousData -eq $newData -or $previousVarlib -eq $newVarlib) { throw 'La reconstruccion ya es el destino activo.' }
+$environmentPath = Join-Path $workspace '.env'
+$environmentExisted = Test-Path -LiteralPath $environmentPath
+$previousEnvironment = if ($environmentExisted) { [System.IO.File]::ReadAllText($environmentPath) } else { '' }
+$nextEnvironment = [regex]::Replace($previousEnvironment, '(?m)^POSTGRES_(DATA|VARLIB)_VOLUME_NAME=.*\r?\n?', '')
+$nextEnvironment = $nextEnvironment.TrimEnd() + "`nPOSTGRES_DATA_VOLUME_NAME=$newData`nPOSTGRES_VARLIB_VOLUME_NAME=$newVarlib`n"
+
+try {
+    & docker compose -p $Project -f docker-compose.yml -f docker-compose.rebuild.yml stop
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo detener el candidato.' }
+    & docker compose -p uasspain -f docker-compose.yml stop backend postgres
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo detener PostgreSQL principal.' }
+    [System.IO.File]::WriteAllText($environmentPath, $nextEnvironment, [System.Text.UTF8Encoding]::new($false))
+    & docker compose -p uasspain -f docker-compose.yml up -d --no-build --wait --wait-timeout 180
+    if ($LASTEXITCODE -ne 0) { throw 'La pila reconstruida no supera los healthchecks.' }
+} catch {
+    # Evitar dos servidores sobre el mismo PGDATA y recuperar el destino anterior.
+    & docker compose -p uasspain -f docker-compose.yml stop backend postgres
+    if ($environmentExisted) {
+        [System.IO.File]::WriteAllText($environmentPath, $previousEnvironment, [System.Text.UTF8Encoding]::new($false))
+    } else {
+        Remove-Item -LiteralPath $environmentPath
+    }
+    & docker compose -p uasspain -f docker-compose.yml up -d --no-build --wait --wait-timeout 180
+    throw 'Activacion fallida. Se ha solicitado recuperar los volumenes anteriores; compruebe los healthchecks. Ningun volumen se ha eliminado.'
+}
+[pscustomobject]@{
+    Activated = $true
+    PostgresData = $newData
+    PostgresVarlib = $newVarlib
+    RollbackPostgresData = $previousData
+    RollbackPostgresVarlib = $previousVarlib
+    EncryptedBackup = ".run/$Project/original-database.pgcustom.enc"
+} | ConvertTo-Json

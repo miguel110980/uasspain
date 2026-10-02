@@ -100,6 +100,14 @@ $$;
 SELECT format('ALTER DATABASE %I OWNER TO uasspain_migrator', :'database_name') \gexec
 ALTER SCHEMA public OWNER TO uasspain_migrator;
 
+REVOKE ALL ON DATABASE :"database_name" FROM PUBLIC;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE uasspain_migrator IN SCHEMA public
+    REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE uasspain_restore IN SCHEMA public
+    REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
 GRANT CONNECT ON DATABASE :"database_name" TO uasspain_app, uasspain_backup, uasspain_restore, uasspain_monitor;
 GRANT USAGE ON SCHEMA public TO uasspain_app, uasspain_backup, uasspain_restore;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO uasspain_app;
@@ -124,6 +132,17 @@ ALTER DEFAULT PRIVILEGES FOR ROLE uasspain_restore IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO uasspain_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE uasspain_restore IN SCHEMA public
     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO uasspain_app;
+
+-- El runtime puede consultar la versión para los manifiestos de backup, pero
+-- no alterar el registro de migraciones. En un cluster nuevo aún no existe;
+-- el backend aplica la misma restricción inmediatamente después de SQLx.
+DO $$
+BEGIN
+    IF to_regclass('public._sqlx_migrations') IS NOT NULL THEN
+        REVOKE INSERT, UPDATE, DELETE ON public._sqlx_migrations FROM uasspain_app;
+    END IF;
+END
+$$;
 SQL
 
 unset UASSPAIN_APP_PASSWORD UASSPAIN_MIGRATION_PASSWORD UASSPAIN_BACKUP_PASSWORD \

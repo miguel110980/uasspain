@@ -27,6 +27,15 @@ La topología E2E usa dos peers SFTP aislados en una red Docker y establece expl
 
 ## Antes de restaurar
 
+Para una reconstruccion completa desde las migraciones Rust, consulte
+[el procedimiento de reconstruccion](DEPLOYMENT.md#reconstruccion-postgresql-desde-migraciones).
+`tools/postgres-rebuild.mjs` conserva una copia custom completa cifrada con el
+formato AES-256-GCM v2 y verifica su restauracion en una base aislada. Solo copia
+el administrador autorizado al esquema nuevo; la copia completa conserva el
+estado anterior para recuperacion. PGDATA y sus volumenes anteriores no se
+eliminan. El cambio a la nueva base exige acreditar primero el cifrado del disco
+Docker; el cifrado de este backup no satisface por si solo ese requisito.
+
 1. Confirme origen, checksum, antiguedad y ventana de perdida.
 2. Verifique que existe una copia independiente utilizable.
 3. Preserve un snapshot de seguridad del estado actual.

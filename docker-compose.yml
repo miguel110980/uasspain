@@ -419,8 +419,10 @@ networks:
 # ─── Volumes ────────────────────────────────────────────────────────
 volumes:
   postgres_data:
+    name: ${POSTGRES_DATA_VOLUME_NAME:-${COMPOSE_PROJECT_NAME}_postgres_data}
     driver: local
   postgres_varlib:
+    name: ${POSTGRES_VARLIB_VOLUME_NAME:-${COMPOSE_PROJECT_NAME}_postgres_varlib}
     driver: local
   redis_data:
     driver: local

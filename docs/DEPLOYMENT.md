@@ -70,7 +70,60 @@ La migración `0006_domain_deletion.sql` define el borrado de preguntas/bloqueos
 
 Antes de ejecutar `scripts/e2e/run-e2e.ps1`, instale `npm ci` y `npx playwright install chromium` en `frontend`. El runner recrea exclusivamente el proyecto `uasspain-e2e`, verifica backups/restauraciones locales y SFTP y recorre los tres paneles en Chromium. `-SkipBrowser` omite únicamente el navegador; `-Keep` conserva la pila aislada para investigar un fallo.
 
-## Traslado
+## Reconstruccion PostgreSQL desde migraciones
+
+La reconstruccion usa exclusivamente las siete migraciones de
+`backend-rust/migrations/`, ejecutadas por SQLx en orden. No restaura un esquema
+alternativo. `docker-compose.rebuild.yml` crea una pila independiente en
+HTTPS `localhost:8447`; use siempre un proyecto `uasspain-rebuild-*`.
+
+```powershell
+node tools/postgres-rebuild.mjs backup uasspain-rebuild-20261003
+docker compose -p uasspain-rebuild-20261003 -f docker-compose.yml -f docker-compose.rebuild.yml up -d --build --wait --wait-timeout 180
+node tools/postgres-rebuild.mjs restore-admin uasspain-rebuild-20261003
+node tools/postgres-rebuild.mjs verify uasspain-rebuild-20261003
+```
+
+Este procedimiento requiere exactamente un administrador existente. Conserva
+su UUID, hash Argon2id, indices ciegos y campos AES-256-GCM; no crea cuentas de
+prueba ni cambia la contrasena. La copia completa se cifra en memoria antes de
+escribirse en `.run/<proyecto>/original-database.pgcustom.enc`. Mantenga la clave
+de campos por un canal independiente: perderla impide descifrar datos y backup.
+El verificador compara columnas, PK/FK/UNIQUE/CHECK e indices, checksums SQLx,
+privilegios y TLS y restaura el backup completo en una base temporal aislada.
+No sobrescribe copias existentes: para repetir la reconstruccion use otro
+nombre de proyecto y conserve sus evidencias en el directorio correspondiente.
+
+TLS PostgreSQL exige `verify-full`, CA y hostname, y rechaza conexiones sin TLS.
+Los roles de runtime no tienen privilegios DDL; backup solo lee y SQLx solo
+puede ser modificado por el migrador. Los secretos quedan fuera de Git.
+
+El cifrado de campos y backups no cifra por si mismo PGDATA, WAL ni archivos
+temporales. En Docker Desktop el cifrado en reposo se acredita sobre la unidad
+que contiene el VHDX de Docker, con BitLocker completamente cifrado y proteccion
+activa. Desde PowerShell como administrador:
+
+```powershell
+.\scripts\verify-docker-storage-encryption.ps1
+```
+
+El comprobador es de solo lectura y no muestra claves de recuperacion. Si Docker
+se ha trasladado, pase `-DockerDataPath` con su VHDX real. Antes de activar deben
+pasar tambien login, datos personales, panel admin y aislamiento multirrol desde
+la aplicacion real; conserve su evidencia local sin credenciales en
+`application-verification.json`. La activacion comprueba esa evidencia y vuelve
+a verificar PostgreSQL antes de cambiar los volumenes:
+
+```powershell
+.\scripts\activate-postgres-rebuild.ps1 -Project uasspain-rebuild-20261003
+```
+
+La activacion conserva los volumenes anteriores y recupera su configuracion si
+fallan los healthchecks. No arranque simultaneamente dos servidores sobre el
+mismo PGDATA. Para rollback pare backend/PostgreSQL, restaure los dos nombres de
+volumen anteriores en `.env` y arranque de nuevo. Nunca use `down -v`.
+
+## Traslado de la instalacion
 
 Conserve el repositorio sin `.env` ni `.secrets`, un backup PostgreSQL verificado, los volumenes de media/backups necesarios y los secretos por un canal independiente. No exporte `node_modules`, `target`, caches, artefactos E2E ni `.local-snapshots`.
 

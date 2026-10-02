@@ -131,7 +131,52 @@ se retiran los datos personales del archivo de entorno y se reemplaza la
 credencial temporal de bootstrap por una aleatoria sin modificar el hash de la
 cuenta. Los scripts temporales de validación no forman parte del repositorio.
 
-## Integraciones externas pendientes
+## Reconstruccion PostgreSQL: candidato validado, activacion pendiente
+
+Se crea una base desde cero en el proyecto aislado
+`uasspain-rebuild-20261003`, usando sin modificar las migraciones SQLx 1–7.
+La comparacion literal con la base original confirma 40 tablas, 411 columnas,
+492 restricciones de catalogo y 194 indices, con los mismos checksums de
+migracion. No se simplifica el esquema. El administrador real se recupera de
+la copia cifrada, conservando UUID, hash y campos cifrados; no se crean usuarios
+adicionales ni se resetean contrasenas.
+
+La copia completa usa pg_dump custom y AES-256-GCM, sin archivo intermedio
+en claro. Se verifica autenticacion/checksums y se restaura realmente en otra
+base temporal. pg_restore reescribe de forma equivalente dos CHECK de estado
+con ANY y casts de arrays; la comparacion del drill normaliza exclusivamente
+esas dos formas. La base creada por migraciones coincide literalmente.
+
+Pasan PII con prefijo `v1:`, password Argon2id, credenciales PostgreSQL SCRAM,
+runtime sin privilegios elevados, SQLx de solo lectura para runtime, backup sin
+DML y rechazo real de DDL/DML prohibido. Se revocan privilegios PUBLIC de base,
+esquema y funciones. Backend/PostgreSQL usan TLS y una conexion real
+`verify-full` pasa; la misma conexion con TLS deshabilitado es rechazada.
+
+Login HTTPS con CA y hostname verificados y login Chromium pasan contra el
+candidato. Se comprueban los datos personales sin publicarlos. Una asignacion
+temporal de los tres roles sobre la copia aislada demuestra cambio de sesion y
+403 del endpoint administrativo de politica de autenticacion para
+instructor/alumno. Al terminar, el perfil vuelve a tener unicamente admin y se
+cierra la sesion. `/api/system/status/` es un endpoint de estado publico y no
+se usa como evidencia de aislamiento administrativo.
+
+El build audit Rust pasa 52 tests, fmt, check y clippy con warnings denegados.
+Compose y la sintaxis Node/PowerShell validan; Gitleaks no encuentra secretos
+en el arbol distribuible.
+Los cinco servicios originales y los cinco del candidato estan saludables.
+La instalacion principal conserva su base y volumenes originales.
+
+**STORAGE_ENCRYPTION = UNVERIFIED; ACTIVATION = BLOCKED.** El VHDX de Docker
+esta en C:, pero `Get-BitLockerVolume` devuelve acceso denegado sin un token
+Windows elevado. TLS/cifrado de campos no acreditan cifrado de PGDATA/WAL/temp.
+Se entrega un comprobador de solo lectura y una activacion que exige BitLocker
+FullyEncrypted/On/100% antes de modificar la pila principal. Quedan conservados
+el candidato validado, el backup cifrado y los volumenes originales para
+continuar sin reconstruir ni perder datos. Falta el resultado del comprobador
+ejecutado por el propietario desde PowerShell como administrador.
+
+## Integraciones externas pendientes y alcance
 
 El usuario indica que no hay un entorno externo de pruebas configurado y pide validar lo local disponible. **SMTP_FUNCTIONAL, OAUTH_E2E, TURN_RELAY_E2E y VPN_BACKUP_TRANSPORT = BLOCKED**: faltan cuenta/destinatario SMTP autorizado, cliente y cuenta Google de prueba, credenciales TURN y peer/rutas VPN autorizados. El OTP de los fixtures se activa únicamente en la base aislada; la prueba no demuestra entrega de correo. La carga es una muestra local y no certifica capacidad de producción. Los dispositivos WebRTC son simulados, con intercambio real de medios en localhost. Los dos destinos SFTP aislados prueban transporte/restauración, no una VPN real.
 

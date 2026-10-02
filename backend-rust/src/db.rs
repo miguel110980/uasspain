@@ -65,7 +65,19 @@ async fn run_migrations(pool: &PgPool) -> Result<(), AppError> {
     MIGRATOR.run(pool).await.map_err(|error| {
         tracing::error!(%error, "database migration failed");
         AppError::Unavailable
-    })
+    })?;
+    // Los privilegios por defecto conceden CRUD al runtime sobre tablas de
+    // dominio. SQLx es una tabla de mantenimiento y solo necesita lectura.
+    let app_role_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='uasspain_app')")
+            .fetch_one(pool)
+            .await?;
+    if app_role_exists {
+        sqlx::query("REVOKE INSERT, UPDATE, DELETE ON public._sqlx_migrations FROM uasspain_app")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
 }
 
 async fn baseline_existing_schema(pool: &PgPool) -> Result<(), AppError> {
