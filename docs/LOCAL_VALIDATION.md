@@ -99,8 +99,8 @@ La inspección de solo lectura confirma que el backend `uasspain-backend` usa
 La otra base, `postgres`, no contiene tablas de usuarios de la aplicación.
 Los dos contextos Docker locales muestran la misma pila y el volumen de backups
 está vacío. `BOOTSTRAP_ADMIN_ENABLED=false`; no se crean cuentas para completar
-la auditoría. Identificación, login y aislamiento de los tres usuarios reales
-quedan BLOCKED hasta localizar su base o copia original. No se puede verificar
+la auditoría. En esa inspección, identificación, login y aislamiento de los tres usuarios reales
+quedaron BLOCKED hasta localizar su base o copia original. No se puede verificar
 el algoritmo de una contraseña existente cuando no hay filas; el código genera
 Argon2id y la base conserva el índice UNIQUE sobre `email_lookup`.
 
@@ -110,6 +110,26 @@ lint y build Docker pasan. Chromium contra HTTPS de la instalación real, sin
 mocks ni envío de login, demuestra `ABC → abc` antes y `ABC → ABC` después.
 Se actualiza únicamente el frontend; backend y PostgreSQL conservan sus
 contenedores. No se cambian usuarios, roles, emails, contraseñas ni datos.
+
+### Aprovisionamiento posterior autorizado
+
+El usuario confirma que las cuentas no existían y autoriza crear únicamente
+su administrador. Se utiliza el bootstrap oficial del backend, con la
+contraseña solicitada en un archivo local de secretos durante la creación.
+El backend se reconstruye y aplica las migraciones 1–7. La base contiene ahora
+un único usuario y perfil: activo, verificado, rol/roles `admin`, flags staff y
+superuser, contraseña Argon2id. DNI y fecha de nacimiento se comprueban desde
+el perfil autenticado; los datos personales y la contraseña no se versionan.
+
+Cuatro logins reales — minúsculas, mayúsculas, mixto y espacios exteriores —
+resuelven el mismo ID. La API administrativa responde 200 y Chromium accede a
+`/admin` mediante el login real. Solicitar sesión como instructor o alumno con
+esta cuenta devuelve 403. No se crean cuentas para esos dos roles.
+
+Tras crear la cuenta se deshabilita el bootstrap en configuración y runtime,
+se retiran los datos personales del archivo de entorno y se reemplaza la
+credencial temporal de bootstrap por una aleatoria sin modificar el hash de la
+cuenta. Los scripts temporales de validación no forman parte del repositorio.
 
 ## Integraciones externas pendientes
 
