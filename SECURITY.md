@@ -8,6 +8,12 @@
 - Contenedores usan rootfs de solo lectura, `no-new-privileges`, capacidades minimas y usuarios no root cuando el entrypoint lo permite.
 - Secrets se montan desde `.secrets/`; Gitleaks y detect-secrets protegen el pre-commit y las comprobaciones locales.
 - Backups se cifran, verifican y auditan. Consulte [backup y recovery](docs/BACKUP_RESTORE.md).
+- PostgreSQL exige cifrado completo de archivos y nombres con gocryptfs
+  AES-256-GCM, incluidos WAL, temporales y logs. Su clave aleatoria se protege
+  con DPAPI CurrentUser y se entrega solo a tmpfs; el arranque sin clave queda
+  bloqueado. No depende de BitLocker. WSL debe tener swap desactivado y el
+  postmaster funciona sin capacidades Linux efectivas. Consulte el
+  [procedimiento cifrado](docs/DEPLOYMENT.md#reconstruccion-postgresql-desde-migraciones).
 
 ## Riesgos abiertos
 
@@ -17,6 +23,10 @@ Al 2026-10-02:
 - El historial local anterior, conservado solo en el rollback externo, contenia 14 senales y no se importo en la baseline publica.
 - Credenciales operativas pendientes de demostrar como rotadas o revocadas: PostgreSQL migracion, PostgreSQL aplicacion, Redis aplicacion y bootstrap de administrador legado.
 - Trivy 0.75.0: las cinco imágenes validadas tienen 0 HIGH/CRITICAL, incluyendo vulnerabilidades sin parche. El runtime del backend se ha trasladado a Ubuntu 26.04 actualizado, conservando SFTP y herramientas PostgreSQL 18; el antiguo hallazgo de OpenSSH en Debian no describe la imagen actual. La evidencia y límites locales figuran en [validación](docs/LOCAL_VALIDATION.md). Reescanee cada build.
+- El 2026-10-03 se escanea la nueva imagen PostgreSQL con gocryptfs: 0
+  HIGH/CRITICAL, incluidos hallazgos sin parche. El cifrado del volumen activo
+  no cifra todo Windows ni acredita borrado forense del VHDX; conserve el perfil
+  DPAPI y una recuperacion de claves independiente antes de reinstalar el equipo.
 - `RUSTSEC-2023-0071` permanece solo en lockfile; condiciones y fecha de revision en [excepciones Rust](backend-rust/SECURITY_ADVISORY_EXCEPTIONS.md).
 
 El gate de publicacion Git de la baseline limpia es independiente. El gate de despliegue con credenciales operativas permanece `FAIL` hasta demostrar su rotacion o revocacion; no se debe convertir un bloqueo externo en PASS.

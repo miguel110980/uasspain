@@ -6,6 +6,13 @@
 # al final (FOWNER sí cubre chmod del dir, pero NO el traversing hacia dentro).
 set -e
 
+# Production never falls back to an unencrypted PGDATA. Legacy recovery can
+# inspect preserved data offline; normal startup requires the encrypted mount.
+if [ ! -f /run/postgres-storage/mounted ] || ! grep -qs ' /var/lib/postgresql/data .* - fuse.gocryptfs ' /proc/self/mountinfo; then
+    echo 'FATAL: full PostgreSQL storage encryption is mandatory; encrypted mount absent.' >&2
+    exit 1
+fi
+
 TLS_DIR=/run/pgtls
 
 if [ ! -f /run/secrets/pg_tls_key ] || [ ! -f /run/secrets/pg_tls_cert ] || [ ! -f /run/secrets/pg_tls_ca ]; then

@@ -1,0 +1,47 @@
+# Dedicated encrypted PostgreSQL filesystem; no dependency on host BitLocker.
+# Start postgres, deliver its DPAPI-protected key, then start the other services.
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: infra/postgres/Dockerfile
+      target: postgres-encrypted
+    image: uasspain-postgres:encrypted
+    entrypoint: ["/usr/local/bin/encrypted-postgres-entrypoint.sh"]
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/pgtls/server.crt
+      - -c
+      - ssl_key_file=/run/pgtls/server.key
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
+      - hba_file=/run/pgtls/pg_hba.conf
+      - -c
+      - logging_collector=on
+      - -c
+      - log_directory=log
+    volumes: !override
+      - postgres_ciphertext:/encrypted-postgres
+      - ./infra/postgres/docker-entrypoint-tls.sh:/tls-entrypoint.sh:ro
+      - ./infra/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./infra/postgres/10-provision-roles.sh:/docker-entrypoint-initdb.d/10-provision-roles.sh:ro
+    tmpfs: !override
+      - /var/lib/postgresql:mode=0700
+      - /run/postgres-storage:mode=0700
+      - /run/pgtls
+      - /var/run/postgresql
+      - /tmp
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      # Only the encrypted filesystem startup needs SYS_ADMIN to mount FUSE;
+      # it is removed from the PostgreSQL process before running the server.
+      - SYS_ADMIN
+volumes:
+  postgres_ciphertext:
+    name: ${POSTGRES_CIPHERTEXT_VOLUME_NAME:-${COMPOSE_PROJECT_NAME}_postgres_ciphertext}
+    external: ${POSTGRES_CIPHERTEXT_EXTERNAL:-false}

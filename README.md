@@ -11,13 +11,16 @@ Plataforma de formacion UAS con frontend React 19/TypeScript, API Rust con Axum,
 
 ## Arranque local
 
-Requisitos: Docker Desktop con Compose v2 y secretos locales en `.secrets/`. Los `.env*` reales, claves y secretos estan excluidos de Git.
+Requisitos: Docker Desktop con Compose v2, FUSE y secretos locales en `.secrets/`.
+PostgreSQL exige un volumen gocryptfs cifrado; en WSL configure `swap=0`.
+Los `.env*` reales, claves y secretos estan excluidos de Git. La clave de
+almacenamiento se protege con DPAPI del usuario Windows y se entrega solo a
+tmpfs; conserve ese perfil y la recuperacion de claves fuera de Git.
 
 El build, arranque y validacion se realizan localmente con Docker Desktop. No requieren GitHub Actions ni imagenes publicadas en un registro de GitHub.
 
 ```powershell
-docker compose build --pull
-docker compose up -d --wait
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-encrypted-stack.ps1 -Build
 docker compose ps
 ```
 
@@ -27,6 +30,11 @@ Entrada unica:
 - `https://127.0.0.1` sirve SPA, API y WebSocket.
 - PostgreSQL, Redis, frontend y backend no publican puertos al host.
 
+En una instalacion nueva, con volumen vacio y sin clave existente, añada
+`-InitializeKey`. En cada reinicio de PostgreSQL ejecute el mismo script; hasta
+recibir la clave protegida permanece bloqueado. Las migraciones Rust siguen
+siendo la unica fuente del esquema. Consulte [despliegue](docs/DEPLOYMENT.md).
+
 ## Arquitectura
 
 | Servicio | Implementacion | Exposicion |
@@ -34,17 +42,18 @@ Entrada unica:
 | `nginx` | Edge TLS y reverse proxy | `127.0.0.1:80/443` |
 | `frontend` | React compilado y Nginx interno TLS | Red `edge` |
 | `backend` | Rust/Axum con TLS interno | Redes `edge` y `data` |
-| `postgres` | PostgreSQL 18, TLS y roles separados | Red interna `data` |
+| `postgres` | PostgreSQL 18, volumen cifrado, TLS y roles separados | Red interna `data` |
 | `redis` | Redis 8, TLS y ACL | Red interna `data` |
 
-Persistencia: `postgres_data`, `redis_data`, `uasspain_media_data`, `backups_data` y `backup_keys`.
+Persistencia: `postgres_ciphertext`, `redis_data`, `uasspain_media_data`,
+`backups_data` y `backup_keys`. El volumen PostgreSQL cifra PGDATA, WAL,
+temporales y logs, incluidos los nombres de archivo.
 
 ## Validacion
 
 ```powershell
 docker compose config --quiet
-docker compose build
-docker compose up -d --wait --wait-timeout 180
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-encrypted-stack.ps1 -Build
 npm.cmd --prefix frontend run typecheck
 npm.cmd --prefix frontend run lint
 npm.cmd --prefix frontend run build

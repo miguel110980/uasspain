@@ -6,8 +6,7 @@ UASSpain se despliega con `docker-compose.yml`. No se soportan Django, `manage.p
 
 ```powershell
 docker compose config --quiet
-docker compose build --pull
-docker compose up -d --wait --wait-timeout 180
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-encrypted-stack.ps1 -Build
 docker compose ps
 ```
 
@@ -74,13 +73,18 @@ Antes de ejecutar `scripts/e2e/run-e2e.ps1`, instale `npm ci` y `npx playwright 
 
 La reconstruccion usa exclusivamente las siete migraciones de
 `backend-rust/migrations/`, ejecutadas por SQLx en orden. No restaura un esquema
-alternativo. `docker-compose.rebuild.yml` crea una pila independiente en
-HTTPS `localhost:8447`; use siempre un proyecto `uasspain-rebuild-*`.
+alternativo. `docker-compose.encrypted.yml` monta un volumen gocryptfs dedicado;
+`docker-compose.rebuild.yml`, aplicado al final, crea una pila independiente
+en HTTPS `localhost:8447`. Use siempre un proyecto `uasspain-rebuild-*`.
 
 ```powershell
 node tools/postgres-rebuild.mjs backup uasspain-rebuild-20261003
-docker compose -p uasspain-rebuild-20261003 -f docker-compose.yml -f docker-compose.rebuild.yml up -d --build --wait --wait-timeout 180
+docker compose -p uasspain-rebuild-20261003 -f docker-compose.yml -f docker-compose.encrypted.yml -f docker-compose.rebuild.yml build
+docker compose -p uasspain-rebuild-20261003 -f docker-compose.yml -f docker-compose.encrypted.yml -f docker-compose.rebuild.yml up -d postgres
+.\scripts\unlock-postgres-storage.ps1 -Project uasspain-rebuild-20261003
+docker compose -p uasspain-rebuild-20261003 -f docker-compose.yml -f docker-compose.encrypted.yml -f docker-compose.rebuild.yml up -d --no-build --wait --wait-timeout 180
 node tools/postgres-rebuild.mjs restore-admin uasspain-rebuild-20261003
+node tools/verify-postgres-storage.mjs uasspain-rebuild-20261003
 node tools/postgres-rebuild.mjs verify uasspain-rebuild-20261003
 ```
 
@@ -98,18 +102,42 @@ TLS PostgreSQL exige `verify-full`, CA y hostname, y rechaza conexiones sin TLS.
 Los roles de runtime no tienen privilegios DDL; backup solo lee y SQLx solo
 puede ser modificado por el migrador. Los secretos quedan fuera de Git.
 
-El cifrado de campos y backups no cifra por si mismo PGDATA, WAL ni archivos
-temporales. En Docker Desktop el cifrado en reposo se acredita sobre la unidad
-que contiene el VHDX de Docker, con BitLocker completamente cifrado y proteccion
-activa. Desde PowerShell como administrador:
+PGDATA, WAL, archivos temporales y logs PostgreSQL persisten exclusivamente en
+`postgres_ciphertext`, con contenido AES-256-GCM y nombres cifrados. La vista
+descifrada es un montaje FUSE dentro del contenedor; el directorio padre y la
+entrega de clave usan tmpfs. No se admite un arranque de produccion sin ese
+montaje. Se mantiene TLS `verify-full` y el cifrado independiente de campos.
+
+La clave de almacenamiento es aleatoria de 32 bytes y se guarda solo como blob
+DPAPI CurrentUser en `.secrets/postgres-storage-key.dpapi`. En una instalacion
+nueva sin datos cifrados ni clave, use `-InitializeKey` al primer desbloqueo.
+No se sobrescribe una clave existente ni se genera un reemplazo para un volumen
+ya cifrado. Se entrega por stdin a tmpfs y se elimina despues del montaje;
+nunca se incorpora al entorno, argv, imagen ni log. El usuario Windows debe ser
+el propietario del perfil DPAPI; conserve ese perfil y una estrategia de
+recuperacion de claves antes de reinstalar o trasladar el equipo.
+
+BitLocker esta desactivado en esta instalacion y no es dependencia de PostgreSQL.
+Se configura `%UserProfile%/.wslconfig` con `[wsl2]` y `swap=0`, aplicado tras
+reiniciar WSL/Docker Desktop. El gate lee `/proc/swaps` y rechaza la activacion
+si queda swap. La desactivacion afecta a la VM WSL 2, no solo a este contenedor.
+El cifrado protege los archivos activos de PostgreSQL; no cifra todo Windows
+ni acredita borrado forense de bloques historicos del VHDX.
+
+Para el arranque habitual y la verificacion:
 
 ```powershell
-.\scripts\verify-docker-storage-encryption.ps1
+.\scripts\start-encrypted-stack.ps1
+node tools/verify-postgres-storage.mjs uasspain
 ```
 
-El comprobador es de solo lectura y no muestra claves de recuperacion. Si Docker
-se ha trasladado, pase `-DockerDataPath` con su VHDX real. Antes de activar deben
-pasar tambien login, datos personales, panel admin y aislamiento multirrol desde
+El desbloqueo se requiere tras cada reinicio de PostgreSQL; sin clave no arranca
+ni crea un cluster en claro. FUSE necesita `/dev/fuse` y SYS_ADMIN en el arranque,
+pero el proceso PostgreSQL pierde esa capacidad y funciona con CapEff cero.
+No se usa `privileged`, el socket Docker ni dispositivos de disco del host.
+El verificador comprueba montaje, flags criptograficos, cobertura, ausencia de
+clave persistente y rechazo de clave incorrecta desde una vista raw sin FUSE.
+Antes de activar deben pasar tambien login, datos personales, panel admin y aislamiento multirrol desde
 la aplicacion real; conserve su evidencia local sin credenciales en
 `application-verification.json`. La activacion comprueba esa evidencia y vuelve
 a verificar PostgreSQL antes de cambiar los volumenes:
@@ -118,10 +146,22 @@ a verificar PostgreSQL antes de cambiar los volumenes:
 .\scripts\activate-postgres-rebuild.ps1 -Project uasspain-rebuild-20261003
 ```
 
-La activacion conserva los volumenes anteriores y recupera su configuracion si
-fallan los healthchecks. No arranque simultaneamente dos servidores sobre el
-mismo PGDATA. Para rollback pare backend/PostgreSQL, restaure los dos nombres de
-volumen anteriores en `.env` y arranque de nuevo. Nunca use `down -v`.
+La activacion configura los dos archivos Compose en `.env` y marca el volumen
+cifrado promovido como externo para protegerlo de la eliminacion por Compose.
+Los proyectos nuevos conservan nombres independientes incluso con esa `.env`.
+El desbloqueo rechaza dos servidores activos que compartan el mismo volumen.
+Si falla la activacion, conserva la configuracion y datos anteriores y solo
+recupera automaticamente un destino anterior ya cifrado; no permite volver a
+produccion en claro.
+
+Los cuatro volumenes anteriores se han retirado con autorizacion expresa tras
+crear archivos AES-256-GCM en `.run/uasspain/retired-postgres/` y comprobar una
+restauracion fisica con PostgreSQL. Estos archivos usan una subclave de archivo
+derivada de la clave DPAPI de almacenamiento; conserve tambien ese blob/perfil.
+`tools/archive-postgres-volumes.mjs` crea/verifica los archivos y realiza el drill;
+no elimina volumenes. El rollback actual se realiza restaurando el archivo
+cifrado en otro volumen cifrado, nunca reactivando copias en claro. Nunca use
+`down -v` sobre la instalacion real.
 
 ## Traslado de la instalacion
 

@@ -131,7 +131,7 @@ se retiran los datos personales del archivo de entorno y se reemplaza la
 credencial temporal de bootstrap por una aleatoria sin modificar el hash de la
 cuenta. Los scripts temporales de validación no forman parte del repositorio.
 
-## Reconstruccion PostgreSQL: candidato validado, activacion pendiente
+## Reconstruccion PostgreSQL cifrada: instalacion activa
 
 Se crea una base desde cero en el proyecto aislado
 `uasspain-rebuild-20261003`, usando sin modificar las migraciones SQLx 1–7.
@@ -164,17 +164,48 @@ se usa como evidencia de aislamiento administrativo.
 El build audit Rust pasa 52 tests, fmt, check y clippy con warnings denegados.
 Compose y la sintaxis Node/PowerShell validan; Gitleaks no encuentra secretos
 en el arbol distribuible.
-Los cinco servicios originales y los cinco del candidato estan saludables.
-La instalacion principal conserva su base y volumenes originales.
+El usuario confirma BitLocker desactivado y mantiene obligatorio el cifrado
+completo de PostgreSQL. Se implementa gocryptfs 2.6.1-r6 dentro del contenedor
+PostgreSQL, con AES-256-GCM, HKDF y nombres cifrados. Se conserva la imagen base
+PostgreSQL 18.6 y las siete migraciones, sin modificar su contenido.
 
-**STORAGE_ENCRYPTION = UNVERIFIED; ACTIVATION = BLOCKED.** El VHDX de Docker
-esta en C:, pero `Get-BitLockerVolume` devuelve acceso denegado sin un token
-Windows elevado. TLS/cifrado de campos no acreditan cifrado de PGDATA/WAL/temp.
-Se entrega un comprobador de solo lectura y una activacion que exige BitLocker
-FullyEncrypted/On/100% antes de modificar la pila principal. Quedan conservados
-el candidato validado, el backup cifrado y los volumenes originales para
-continuar sin reconstruir ni perder datos. Falta el resultado del comprobador
-ejecutado por el propietario desde PowerShell como administrador.
+La instalacion principal ya usa exclusivamente
+`uasspain-rebuild-20261003_postgres_ciphertext`. No hay volumen persistente bajo
+PGDATA: la imagen cifrada elimina VOLUME heredado y monta solo ciphertext;
+la vista descifrada, su padre y la entrega de clave son FUSE/tmpfs. WAL,
+temporales, tablespaces por defecto y logs quedan dentro del montaje cifrado.
+La clave aleatoria de 32 bytes se protege con DPAPI CurrentUser, se entrega
+por stdin y se borra de tmpfs tras montar. No aparece en env, argv ni logs.
+El postmaster tiene CapEff cero; SYS_ADMIN se usa solo para montar FUSE.
+
+Se detecta swap WSL sin cifrar y se guarda `[wsl2] swap=0` en la configuracion
+del usuario. Solo Docker Desktop estaba activo en WSL; se detienen ordenadamente
+las dos pilas antes de reiniciarlo. `/proc/swaps` confirma ausencia de swap.
+Los nuevos proyectos conservan volumen independiente incluso despues de
+configurar el volumen promovido en `.env`.
+
+**POSTGRES_ACTIVE_STORAGE_ENCRYPTION = PASS; ACTIVATION = PASS.** Se confirma
+lectura raw de archivos con nombres cifrados sin clave, rechazo de clave
+incorrecta, PGDATA sobre fuse.gocryptfs, clave temporal ausente y TLS verificado.
+Un reinicio real sin clave mantiene PostgreSQL inaccesible y no crea PGDATA en
+claro; al entregar la clave DPAPI recupera los mismos datos y los cinco servicios
+quedan saludables. El entrypoint TLS tambien rechaza un montaje ausente.
+Chromium y HTTPS con CA/hostname pasan en `https://localhost`, con el mismo
+administrador, sus datos y password, y rechazo de sesiones instructor/alumno.
+El test multirrol se realiza exclusivamente sobre la copia aislada y se restaura
+admin como unico rol antes de promover. No se crean otras cuentas.
+
+Los cuatro volumenes PostgreSQL antiguos se archivan con AES-256-GCM y una
+subclave de la raiz DPAPI de almacenamiento. Pasa roundtrip autenticado de los
+cuatro y restauracion fisica real con PostgreSQL y el administrador original.
+La revision automatica rechazo inicialmente eliminar las copias originales;
+tras autorizacion expresa del usuario se eliminan solo esos cuatro volumenes
+desconectados. Se conservan los archivos cifrados y el backup logico original.
+Los contenedores/redes temporales se retiran; quedan exactamente cinco servicios.
+Trivy sobre la nueva imagen PostgreSQL cifrada detecta 0 HIGH/CRITICAL,
+incluyendo hallazgos sin parche. No se certifica cifrado de todo Windows ni
+borrado forense de bloques historicos del VHDX; el perfil DPAPI debe preservarse
+para recuperar la clave. Validacion realizada el 2026-10-03, Europe/Madrid.
 
 ## Integraciones externas pendientes y alcance
 

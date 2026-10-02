@@ -21,7 +21,7 @@ RUN --mount=from=postgres-base,source=/,target=/source,ro \
     && cp -a /source/. /assembled/ \
     && cp /gosu /assembled/usr/local/bin/gosu
 
-FROM scratch
+FROM scratch AS postgres-runtime
 
 COPY --from=assembler /assembled/ /
 
@@ -38,4 +38,21 @@ VOLUME /var/lib/postgresql
 EXPOSE 5432
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["postgres"]
+STOPSIGNAL SIGINT
+
+FROM postgres-runtime AS postgres-encrypted-build
+RUN apk add --no-cache gocryptfs=2.6.1-r6 fuse3=3.18.3-r0 setpriv=2.42.3-r1 findmnt=2.42.3-r1 \
+    && printf 'user_allow_other\n' > /etc/fuse.conf
+COPY infra/postgres/encrypted-entrypoint.sh /usr/local/bin/encrypted-postgres-entrypoint.sh
+RUN chmod 755 /usr/local/bin/encrypted-postgres-entrypoint.sh
+
+# No inherited VOLUME: only the explicitly mounted ciphertext is persistent.
+FROM scratch AS postgres-encrypted
+COPY --from=postgres-encrypted-build / /
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LANG=en_US.utf8 PG_MAJOR=18 PG_VERSION=18.6 \
+    PGDATA=/var/lib/postgresql/data/pgdata
+ENTRYPOINT ["/usr/local/bin/encrypted-postgres-entrypoint.sh"]
+CMD ["postgres"]
+EXPOSE 5432
 STOPSIGNAL SIGINT

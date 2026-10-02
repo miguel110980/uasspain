@@ -32,9 +32,16 @@ Para una reconstruccion completa desde las migraciones Rust, consulte
 `tools/postgres-rebuild.mjs` conserva una copia custom completa cifrada con el
 formato AES-256-GCM v2 y verifica su restauracion en una base aislada. Solo copia
 el administrador autorizado al esquema nuevo; la copia completa conserva el
-estado anterior para recuperacion. PGDATA y sus volumenes anteriores no se
-eliminan. El cambio a la nueva base exige acreditar primero el cifrado del disco
-Docker; el cifrado de este backup no satisface por si solo ese requisito.
+estado anterior para recuperacion. La activacion exige montaje gocryptfs y
+ausencia de swap; el cifrado del backup no satisface por si solo ese requisito.
+Los cuatro volumenes PostgreSQL anteriores se han archivado aparte con
+AES-256-GCM y una subclave de la raiz de almacenamiento protegida por DPAPI.
+Se comprueban checksums/autenticacion y una restauracion fisica con PostgreSQL,
+migraciones y administrador originales. Tras autorizacion expresa del usuario
+se eliminan las copias antiguas en claro. Los archivos de recuperacion quedan
+en `.run/uasspain/retired-postgres/`; requieren el blob de clave de almacenamiento
+y el perfil Windows DPAPI originales. Copie artefactos y claves protegidas a
+un destino independiente para una recuperacion ante perdida del equipo.
 
 1. Confirme origen, checksum, antiguedad y ventana de perdida.
 2. Verifique que existe una copia independiente utilizable.

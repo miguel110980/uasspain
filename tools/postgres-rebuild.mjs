@@ -18,7 +18,7 @@ const master = Buffer.from(readFileSync(resolve(root, '.secrets/field_encryption
 assert.equal(master.length, 32, 'Expected current field encryption key');
 const key = createHash('sha256').update(master).update('|uasspain|backup-encryption|v2').digest();
 const compose = target => target === 'uasspain' ? ['compose', '-p', 'uasspain', '-f', 'docker-compose.yml']
-  : ['compose', '-p', target, '-f', 'docker-compose.yml', '-f', 'docker-compose.rebuild.yml'];
+  : ['compose', '-p', target, '-f', 'docker-compose.yml', '-f', 'docker-compose.encrypted.yml', '-f', 'docker-compose.rebuild.yml'];
 function docker(args, input) {
   const result = spawnSync('docker', args, { cwd: root, input, maxBuffer: 256 * 1024 * 1024 });
   // Never print pg_dump/COPY output, authentication material or failed SQL payloads.
@@ -55,8 +55,9 @@ try {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     assert.equal(manifest.target_project, project);
     const model = JSON.parse(docker([...compose(project), 'config', '--format', 'json']).toString());
-    const current = JSON.parse(docker([...compose('uasspain'), 'config', '--format', 'json']).toString());
-    assert.notEqual(model.volumes.postgres_data.name, current.volumes.postgres_data.name, 'Target would overwrite active data');
+    const sourceMounts = JSON.parse(docker(['inspect','uasspain-postgres','--format','{{json .Mounts}}']).toString());
+    assert.ok(model.volumes.postgres_ciphertext, 'Target must use encrypted storage');
+    assert.ok(!sourceMounts.some(mount=>mount.Name===model.volumes.postgres_ciphertext.name), 'Target would overwrite active data');
     assert.equal(sql(project, 'SELECT count(*) FROM auth_user'), '0', 'Target must be empty');
     assert.equal(sql(project, 'SELECT count(*) FROM accounts_userprofile'), '0');
     const encrypted = readFileSync(encryptedPath);
@@ -124,7 +125,9 @@ try {
     } finally {
       docker(['exec',candidate,'dropdb','-U','uasspain',recoveryDatabase]);
     }
-    const report = {verified_utc:new Date().toISOString(),state,tables:new Set(original.columns.map(c=>c.table_name)).size,columns:original.columns.length,constraints:original.constraints.length,indexes:original.indexes.length,migrations:original.migrations.length,schema_equal:true,administrator_preserved:true,tls_verify_full:true,unencrypted_connection_denied:true,forbidden_sql_denied:true,full_encrypted_backup_restore:true,storage_encryption:'UNVERIFIED'};
+    const storagePath = resolve(artifactRoot,'storage-verification.json');
+    const storage = existsSync(storagePath) ? JSON.parse(readFileSync(storagePath,'utf8')) : null;
+    const report = {verified_utc:new Date().toISOString(),state,tables:new Set(original.columns.map(c=>c.table_name)).size,columns:original.columns.length,constraints:original.constraints.length,indexes:original.indexes.length,migrations:original.migrations.length,schema_equal:true,administrator_preserved:true,tls_verify_full:true,unencrypted_connection_denied:true,forbidden_sql_denied:true,full_encrypted_backup_restore:true,storage_encryption:storage?.storage_encryption || 'UNVERIFIED',storage_activation_allowed:storage?.activation_allowed || false};
     writeFileSync(resolve(artifactRoot,'database-verification.json'), `${JSON.stringify(report,null,2)}\n`);
     console.log(JSON.stringify(report));
   }
