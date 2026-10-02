@@ -115,12 +115,12 @@ export default function ContactSection({ skipReveal = false }) {
           <div className="inline-flex items-center gap-2 mb-6 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">
             Contacto
           </div>
-          <h2 className="font-heading text-4xl md:text-5xl font-bold text-foreground tracking-tight mb-4">
+          <h1 className="font-heading text-4xl md:text-5xl font-bold text-foreground tracking-tight mb-4">
             Hablemos de tu{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-500">
               Proyecto
             </span>
-          </h2>
+          </h1>
           <p className="text-muted-foreground max-w-xl mx-auto">
             Cuéntanos qué necesitas y diseñaremos una solución aérea a medida para tu operación.
           </p>

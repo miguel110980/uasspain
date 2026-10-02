@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from 'next-themes';
@@ -8,7 +8,7 @@ import {
   SprayCan, ScanLine, Thermometer, GraduationCap, Plane,
   RadioTower, Sun, Moon, LogOut, UserRound,
 } from 'lucide-react';
-import AuthModal from '@/components/auth/AuthModal';
+const AuthModal = lazy(() => import('@/components/auth/AuthModal'));
 import Logo from '@/components/layout/Logo';
 import styles from './Navbar.module.css';
 import contentService from '@/services/contentService';
@@ -141,11 +141,11 @@ export default function Navbar() {
           nav.style.borderColor = `rgba(255,255,255,${borderAlpha})`;
           nav.style.boxShadow = p > 0 ? '0 1px 3px rgba(0,0,0,0.15)' : 'none';
         } else {
-          nav.style.backgroundColor = `rgba(255,255,255,${alpha})`;
+          nav.style.backgroundColor = 'rgb(245,247,250)';
           nav.style.borderColor = `rgba(0,0,0,${borderAlpha})`;
           nav.style.boxShadow = p > 0 ? '0 1px 3px rgba(0,0,0,0.06)' : 'none';
         }
-        nav.style.backdropFilter = p > 0 ? `blur(${blur}px)` : 'none';
+        nav.style.backdropFilter = isDark && p > 0 ? `blur(${blur}px)` : 'none';
         nav.style.webkitBackdropFilter = nav.style.backdropFilter;
 
         rafRef.current = null;
@@ -157,7 +157,7 @@ export default function Navbar() {
       window.removeEventListener('scroll', onScroll);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, []);
+  }, [resolvedTheme]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -188,6 +188,19 @@ export default function Navbar() {
     });
     const onKeyDown = (event) => {
       if (event.key === 'Escape') closeMobileMenu(true);
+      if (event.key === 'Tab') {
+        const items = [mobileTriggerRef.current, ...Array.from(mobileMenuRef.current?.querySelectorAll('a[href], button:not([disabled])') || [])]
+          .filter((item) => item && item.getClientRects().length);
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !items.includes(document.activeElement))) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !items.includes(document.activeElement))) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
     };
     const onPointerDown = (event) => {
       if (navRef.current && !navRef.current.contains(event.target)) {
@@ -283,7 +296,7 @@ export default function Navbar() {
               exit={{ opacity: 0, y: 8 }}
               transition={{ duration: 0.2 }}
               id={`desktop-menu-${link.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
-              className="absolute top-full left-1/2 -translate-x-1/2 mt-3 w-56 rounded-lg overflow-hidden shadow-2xl border border-border bg-popover backdrop-blur-xl z-50"
+              className={`${styles.desktopMenu} absolute top-full left-1/2 -translate-x-1/2 mt-3 w-56 rounded-lg shadow-2xl border border-border bg-popover z-50`}
             >
               <div className="p-2">
                 {groups
@@ -406,16 +419,16 @@ export default function Navbar() {
         {mobileOpen && (
           <motion.div
             ref={mobileMenuRef}
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
             id="main-mobile-menu"
             role="dialog"
             aria-label="Menú de navegación"
-            className={`${styles.mobileMenu} overflow-hidden backdrop-blur-xl border-t`}
+            className={`${styles.mobileMenu} border-t`}
             style={{
-              backgroundColor: isDark ? '#02070a' : '#ffffff',
+              backgroundColor: isDark ? '#02070a' : '#F5F7FA',
               borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
             }}
           >
@@ -448,9 +461,9 @@ export default function Navbar() {
                     <AnimatePresence>
                       {mobileDropdownOpen === link.label && (
                         <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
                           transition={{ duration: 0.2 }}
                           className="pl-4 space-y-1 overflow-hidden"
                         >
@@ -501,7 +514,7 @@ export default function Navbar() {
         )}
       </AnimatePresence>
 
-      <AuthModal isOpen={authOpen} onClose={handleAuthClose} />
+      {authOpen && <Suspense fallback={null}><AuthModal isOpen={authOpen} onClose={handleAuthClose} /></Suspense>}
     </nav>
   );
 }

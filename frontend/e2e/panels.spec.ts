@@ -29,6 +29,7 @@ async function login(page: Page, account: typeof roles[number]) {
 for (const account of roles) {
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
     test(`${account.role}: navigation, persistence and logout at ${viewport.width}px`, async ({ page }, testInfo) => {
+      test.setTimeout(180_000);
       await page.setViewportSize(viewport);
       const errors: string[] = [];
       let authenticated = false;
@@ -43,6 +44,13 @@ for (const account of roles) {
         await page.locator('aside:visible nav').getByRole('button', { name: section, exact: true }).click();
         await expect(page.locator('header h1')).toHaveText(section);
         await expect(page.getByText('Se ha producido un error', { exact: false })).toHaveCount(0);
+        if (viewport.width === 1440) {
+          for (const width of [320, 360, 375, 390, 412, 480, 768, 820, 1024, 1280, 1366, 1440, 1920, 2560]) {
+            await page.setViewportSize({ width, height: 900 });
+            await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), { message: `${section} at ${width}px` }).toBe(true);
+          }
+          await page.setViewportSize(viewport);
+        }
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
         expect(overflow, `${section}: horizontal overflow`).toBe(false);
       }

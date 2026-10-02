@@ -116,6 +116,13 @@
   box-shadow: 0 20px 40px hsl(var(--background) / 0.4);
 }
 
+.desktopMenu {
+  max-height: calc(100dvh - clamp(72px, 7.3vw, 104px) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 @media (min-width: 1440px) {
   .nav {
     display: flex;

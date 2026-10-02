@@ -15,9 +15,55 @@ Solo Nginx publica `127.0.0.1:80/443`. Compruebe `https://127.0.0.1/healthz` y `
 
 ## Configuracion externa
 
+Configure `SITE_URL` con el origen HTTPS público definitivo. Compose usa ese
+valor tanto en el build del frontend (`VITE_SITE_URL`) como en el backend:
+canonical, Open Graph, robots y sitemaps deben coincidir. Cambiarlo exige
+reconstruir el frontend. El build prerenderiza los componentes de las 30 rutas
+públicas; 27 se incluyen en `sitemap-static.xml`. El índice `sitemap.xml`
+incluye también `sitemap-courses.xml`, actualizado desde los cursos publicados.
+Nginx valida la existencia del curso y compone su HTML público con SSI; los
+cursos pendientes/inexistentes responden 404. Conserve esta configuración al
+poner otro proxy delante; las rutas privadas y el API llevan `noindex`.
+
+Para comprobar el sitio compilado por HTTPS con una CA autorizada:
+
+```powershell
+$env:SITE_TEST_URL='https://localhost:8445'
+$env:SITE_TEST_CA='.secrets/tls/ca.crt'
+node scripts/e2e/verify-public-site.mjs
+```
+
+El script comprueba todas las páginas del sitemap, títulos únicos, contenido
+sin JavaScript, cursos publicados, 404 y noindex. Requiere una pila ya levantada;
+no cambia datos ni omite la verificación TLS.
+
 - Google OAuth: configure la URL HTTPS publica y `GOOGLE_CLIENT_ID`. El backend valida el ID token; no guarde un secreto de cliente en el frontend.
 - SMTP, SFTP y WireGuard: entregue credenciales o claves fuera de Git y montelas desde `.secrets/`.
 - TLS: los certificados internos se generan localmente; las claves privadas nunca se versionan.
+
+Google Identity Services utiliza ID tokens RS256 verificados con JWKS de Google,
+audience/issuer/expiry/nbf y nonce firmado en cookie HttpOnly de cinco minutos, de un
+solo uso. La migración `0007_google_subject.sql` añade un índice de sujeto Google
+para vincular la identidad estable del proveedor. Solo se vinculan cuentas
+activas ya verificadas y correos sobre los que Google es autoridad (Gmail o
+Workspace). No es un flujo de autorización con intercambio de códigos/PKCE.
+Si la cuenta exige OTP local, Google no crea sesión: acceda con correo, contraseña y código temporal. La caché y el registro de nonces usados corresponden a la única instancia del
+backend; al escalar a varias instancias, compartalos antes de habilitar el flujo.
+
+## Diagnóstico de GitHub Actions
+
+```powershell
+powershell -NoProfile -File scripts/check-github-actions.ps1
+```
+
+Utiliza la credencial Git ya configurada solo en memoria y muestra permisos,
+workflows, ejecuciones, número de jobs y anotaciones. El workflow manual
+`Actions diagnostics` prueba la asignación de un runner con un único `echo`, sin
+checkout, acciones externas, secrets ni código del proyecto. Si también falla
+con `startup_failure` y cero jobs, revise el estado de la cuenta/facturación o
+traslade esa evidencia a soporte de GitHub. Esa firma no demuestra por sí sola
+un problema de pago; no cambie presupuestos, visibilidad ni controles de
+seguridad para intentar desbloquearlo.
 
 ## Videollamadas WebRTC
 

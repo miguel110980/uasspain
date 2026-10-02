@@ -16,6 +16,7 @@ export default defineConfig({
     },
   },
   build: {
+    manifest: true,
     // Las rutas lazy conservan code splitting automatico. No forzar chunks por
     // nombre de paquete: puede crear ciclos vendor <-> React y romper el arranque.
   },

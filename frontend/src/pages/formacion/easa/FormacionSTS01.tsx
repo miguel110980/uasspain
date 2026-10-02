@@ -36,6 +36,7 @@ export default function FormacionSTS01() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Navbar />
+      <main className="public-content">
 
       <section className="relative min-h-[55vh] flex items-center justify-center overflow-hidden bg-background pt-24">
         <div className="absolute inset-0 pointer-events-none">
@@ -142,6 +143,7 @@ export default function FormacionSTS01() {
         </div>
       </section>
 
+      </main>
       <Footer />
     </div>
   );

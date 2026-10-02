@@ -119,10 +119,10 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.05 }}
-                      className={`glass-card p-6 flex flex-col gap-4 ${(ex.bloqueado || bloqueadoPorRequisito) ? 'opacity-60' : ''}`}
+                      className={`glass-card min-w-0 break-words p-6 flex flex-col gap-4 ${(ex.bloqueado || bloqueadoPorRequisito) ? 'opacity-60' : ''}`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <div>
+                        <div className="min-w-0">
                           <p className="font-heading text-sm font-semibold text-foreground">{ex.nombre}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{ex.num_preguntas || 40} preguntas</p>
                         </div>

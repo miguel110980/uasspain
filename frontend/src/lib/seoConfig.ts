@@ -1,15 +1,13 @@
 export const SITE = {
   name: 'UASSPAIN',
-  legalName: 'UASSPAIN — Formación de Pilotos de Drones',
-  url: import.meta.env.VITE_SITE_URL || 'https://uas-spain.com',
+  url: (import.meta.env.VITE_SITE_URL || 'https://uas-spain.com').replace(/\/+$/, ''),
   locale: 'es_ES',
-  twitter: '@uasspain',
   defaultTitle: 'UASSPAIN — Formación de Pilotos de Drones y Servicios UAS',
   defaultDescription:
     'Centro de formación certificado AESA para pilotos de drones (A1/A3, A2, STS). Cursos teóricos y prácticos, operaciones profesionales, inspección, termografía y emergencias con UAS en toda España.',
   defaultKeywords:
     'drones, UAS, RPAS, formación drones, piloto drones, AESA, certificado A1 A3, A2, STS, inspección drones, termografía, UASSPAIN',
-  ogImage: '/images/logo.png?v=3',
+  ogImage: '/images/hero_claro.webp',
 };
 
 /** Metadatos SEO por ruta pública */
@@ -22,6 +20,10 @@ export const ROUTE_SEO = {
   '/nosotros': {
     title: 'Nosotros | UASSPAIN — Expertos en Formación y Operaciones con Drones',
     description: 'Conoce UASSPAIN: equipo instructor certificado, experiencia operativa y compromiso con la seguridad aérea y la excelencia en formación UAS.',
+  },
+  '/formacion': {
+    title: 'Cursos disponibles | UASSPAIN — Formación UAS',
+    description: 'Programas publicados y próximas convocatorias de formación UAS administrados desde UASSpain.',
   },
   '/tecnologia': {
     title: 'Tecnología UAS | UASSPAIN — Drones, RTK y Sistemas Avanzados',
@@ -90,13 +92,16 @@ export const ROUTE_SEO = {
 };
 
 export function getSeoForPath(pathname) {
+  pathname = pathname === '/' ? pathname : pathname.replace(/\/+$/, '');
   const base = ROUTE_SEO[pathname] || {};
+  const course = /^\/formacion\/(easa|no-easa|instructor)\/(.+)$/.exec(pathname);
+  const courseName = course?.[2].replace(/-/g, ' ').toUpperCase();
   return {
-    title: base.title || SITE.defaultTitle,
-    description: base.description || SITE.defaultDescription,
+    title: base.title || (courseName ? `Formación ${courseName} | UASSPAIN` : SITE.defaultTitle),
+    description: base.description || (courseName ? `Información del programa de formación ${courseName} de UASSPAIN.` : SITE.defaultDescription),
     keywords: base.keywords || SITE.defaultKeywords,
-    noindex: base.noindex || false,
-    canonical: `${SITE.url}${pathname === '/' ? '' : pathname}`,
+    noindex: base.noindex || (!ROUTE_SEO[pathname] && !course),
+    canonical: `${SITE.url}${pathname}`,
   };
 }
 
@@ -105,9 +110,8 @@ export function organizationJsonLd() {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: SITE.name,
-    legalName: SITE.legalName,
     url: SITE.url,
-    logo: `${SITE.url}${SITE.ogImage}`,
+    logo: `${SITE.url}/images/logo.webp?v=4`,
     description: SITE.defaultDescription,
     areaServed: 'ES',
     sameAs: [],

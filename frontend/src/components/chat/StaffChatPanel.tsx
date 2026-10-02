@@ -482,8 +482,8 @@ export default function StaffChatPanel({
           onSend={(ids, contenido) => conexionesService.mensajesStaff.broadcast(ids, contenido)}
         />
       )}
-    <div className="grid md:grid-cols-3 gap-6 h-[65vh]">
-      <div className="glass-card overflow-y-auto flex flex-col">
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[65vh]">
+      <div className="glass-card min-w-0 overflow-y-auto flex flex-col">
         <div className="p-3 border-b border-border-subtle">
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
             {peerRoleLabel} ({contactos.length})
@@ -495,7 +495,7 @@ export default function StaffChatPanel({
         {renderSidebar()}
       </div>
 
-      <div className="md:col-span-2 glass-card flex flex-col">
+      <div className="md:col-span-2 min-w-0 glass-card flex flex-col">
         {error && <p className="text-sm text-destructive px-4 pt-3">{error}</p>}
         {!peerSeleccionado ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
@@ -616,7 +616,7 @@ export default function StaffChatPanel({
                 value={texto}
                 onChange={(e) => setTexto(e.target.value)}
                 placeholder="Escribe un mensaje..."
-                className="flex-1 bg-surface-muted border border-border-subtle focus:border-transparent text-foreground placeholder:text-muted-foreground/40 px-4 py-2.5 text-sm outline-none transition-colors rounded-sm"
+                className="flex-1 min-w-0 bg-surface-muted border border-border-subtle focus:border-transparent text-foreground placeholder:text-muted-foreground/40 px-4 py-2.5 text-sm outline-none transition-colors rounded-sm"
               />
               <button
                 type="submit"

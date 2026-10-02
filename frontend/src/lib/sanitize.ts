@@ -21,6 +21,8 @@ const MAX_LENGTH = {
  */
 export function sanitizeInput(value: unknown, kind: SanitizeKind = 'text') {
   if (value == null) return '';
+  // Passwords are opaque credentials; never normalize or remove characters.
+  if (kind === 'password') return String(value).slice(0, MAX_LENGTH.password);
   let out = String(value).replace(CONTROL_CHARS, '').replace(DANGEROUS, '');
 
   switch (kind) {
@@ -41,8 +43,6 @@ export function sanitizeInput(value: unknown, kind: SanitizeKind = 'text') {
       break;
     case 'otp':
       out = out.replace(/\D/g, '');
-      break;
-    case 'password':
       break;
     default:
       out = out.trimStart();

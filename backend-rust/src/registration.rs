@@ -537,9 +537,14 @@ pub(crate) fn hash_argon2(value: &str) -> Result<String, AppError> {
         .map_err(|_| AppError::Internal)?;
     Ok(format!("argon2{hash}"))
 }
-fn normalize_email(value: &str) -> Result<String, AppError> {
+pub(crate) fn normalize_email(value: &str) -> Result<String, AppError> {
     let value = value.trim().to_lowercase();
-    if value.len() > 254 || !value.contains('@') || value.starts_with('@') || value.ends_with('@') {
+    if value.len() > 254
+        || value.chars().any(char::is_whitespace)
+        || value.chars().filter(|c| *c == '@').count() != 1
+        || value.starts_with('@')
+        || value.ends_with('@')
+    {
         Err(AppError::Validation("Email no valido.".to_owned()))
     } else {
         Ok(value)

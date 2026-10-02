@@ -12,13 +12,13 @@ const badges = [
 
 export default function HeroSection({ bgImageLight, bgImageDark }) {
   const { resolvedTheme } = useTheme();
-  const bgImage = resolvedTheme === 'dark' ? bgImageDark : bgImageLight;
+  const bgImage = (resolvedTheme || 'dark') === 'dark' ? bgImageDark : bgImageLight;
   return (
     <section id="inicio" className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-background">
       <div className="absolute inset-0">
-        <img src={bgImage} alt="Drone aéreo profesional" className="w-full h-full object-cover opacity-55 dark:opacity-65" />
-        <div className="absolute inset-0 bg-gradient-to-b from-background/45 via-background/15 to-background" />
-        <div className="absolute inset-0 bg-gradient-to-r from-background/40 via-transparent to-background/40" />
+        <img src={bgImage} alt="Drone aéreo profesional" fetchPriority="high" className="hero-image w-full h-full object-cover opacity-55 dark:opacity-65" />
+        <div className="hero-shade absolute inset-0 bg-gradient-to-b from-background/45 via-background/15 to-background" />
+        <div className="hero-side-shade absolute inset-0 bg-gradient-to-r from-background/40 via-transparent to-background/40" />
       </div>
 
       <div className="absolute inset-0 pointer-events-none overflow-hidden flex items-center justify-center">
@@ -30,9 +30,10 @@ export default function HeroSection({ bgImageLight, bgImageDark }) {
 
       <div className="relative z-10 w-full max-w-7xl mx-auto px-6 pt-28 pb-16 flex flex-col items-center text-center">
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="hero-copy"
         >
           <h1 className="font-heading text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-foreground leading-[1] tracking-tighter mb-5">
             SOLUCIONES{' '}

@@ -185,7 +185,7 @@ export default function InstructorMaterial() {
   return (
     <div>
       {/* Tabs */}
-      <div className="flex gap-2 mb-8">
+      <div className="flex flex-wrap gap-2 mb-8">
         {[
           { id: 'material', label: 'Material de Estudio', icon: Upload },
           { id: 'boe', label: 'Publicaciones BOE', icon: FileText },

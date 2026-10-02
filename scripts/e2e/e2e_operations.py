@@ -89,7 +89,9 @@ def probe(mode):
     live, _ = session.call("GET", "/api/health/live/")
     started = time.perf_counter()
     ready, details = session.call("GET", "/api/health/ready/")
-    while mode != "recovered" and ready == 200 and time.perf_counter() - started < 3:
+    # Container health can precede the backend subscriber's reconnect cycle.
+    limit = 30 if mode == "recovered" else 3
+    while (ready != 200 if mode == "recovered" else ready == 200) and time.perf_counter() - started < limit:
         time.sleep(.2)
         ready, details = session.call("GET", "/api/health/ready/")
     assert live == 200
@@ -142,11 +144,36 @@ def profile_lifecycle():
     print("PASS profile lifecycle: foreign instructor denied, dependent rows deleted, students/content retained, session revoked")
 
 
+def auth_case():
+    expected_id = None
+    for email in [INSTR_EMAIL.upper(), INSTR_EMAIL.title(), f"  {INSTR_EMAIL}  "]:
+        account = authenticated(email, INSTR_PASSWORD)
+        status, profile = account.call("GET", "/api/auth/me/")
+        assert status == 200 and profile["email"] == INSTR_EMAIL.lower()
+        expected_id = expected_id or profile["id"]
+        assert profile["id"] == expected_id
+    admin = authenticated(ADMIN_EMAIL, ADMIN_PASSWORD)
+    student = authenticated(ALUM_EMAIL, ALUM_PASSWORD)
+    status, profile = student.call("GET", "/api/auth/me/")
+    assert status == 200
+    status, _ = admin.call("PATCH", f"/api/profiles/{profile['id']}/", {"email": INSTR_EMAIL.upper()})
+    assert status == 409, "Case variant bypassed email uniqueness"
+    status, unchanged = admin.call("GET", f"/api/profiles/{profile['id']}/")
+    assert status == 200 and unchanged["email"] == ALUM_EMAIL
+    status, updated = admin.call("PATCH", f"/api/profiles/{profile['id']}/", {"email": f"  {ALUM_EMAIL.upper()}  "})
+    assert status == 200 and updated["email"] == ALUM_EMAIL
+    status, _ = admin.call("PATCH", f"/api/profiles/{profile['id']}/", {"email": "invalid@@example.com"})
+    assert status == 400
+    print("PASS email normalization, stable identity, unique collision rejection and profile update")
+
+
 mode = sys.argv[1]
 if mode == "load":
     load()
 elif mode == "profile-lifecycle":
     profile_lifecycle()
+elif mode == "auth-case":
+    auth_case()
 elif mode.startswith("deadline-"):
     deadline(mode == "deadline-prepare")
 else:

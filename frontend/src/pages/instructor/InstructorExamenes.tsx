@@ -411,7 +411,7 @@ export default function InstructorExamenes() {
             <p className="text-sm text-muted-foreground">No hay simulacros creados aún.</p>
           </div>
         ) : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {examenes.filter((ex) => archivosExamen.some((a) => examenIdInArchivo(a, ex.id))).map((ex) => {
               const conteo = preguntas.filter((p) => p.examen_id === ex.id).length;
               const tieneArchivos = archivosExamen.some((a) => examenIdInArchivo(a, ex.id));
@@ -421,7 +421,7 @@ export default function InstructorExamenes() {
                   onClick={() => setSelectedExamen(ex)}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className={`glass-card p-5 cursor-pointer transition-all duration-200 ${
+                  className={`glass-card min-w-0 break-words p-5 cursor-pointer transition-all duration-200 ${
                     selectedExamen?.id === ex.id ? 'border border-primary/50 bg-primary/10' : 'border border-border-subtle hover:border-primary/30'
                   }`}
                 >

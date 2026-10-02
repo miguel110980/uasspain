@@ -69,12 +69,12 @@ function GraficaExamen({ resultados, categoria }) {
       className="glass-card p-6 mb-6"
     >
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
         <div>
           <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-1">Categoría</p>
           <h3 className="font-heading text-lg font-bold text-foreground">{categoria}</h3>
         </div>
-        <div className="flex items-center gap-6 text-right">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-6 text-right">
           <div>
             <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Media</p>
             <p className="font-heading text-xl font-bold text-primary">{media}/10</p>

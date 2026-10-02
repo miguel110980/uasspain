@@ -2,9 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url('/fonts/inter.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk'; font-style: normal; font-weight: 300 700; font-display: swap;
+  src: url('/fonts/space-grotesk.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 100 800; font-display: swap;
+  src: url('/fonts/jetbrains-mono.woff2') format('woff2');
+}
+
 @layer base {
   :root {
-    --background: 210 40% 98%;
+    --background: 216 33% 97%;
     --foreground: 222 47% 11%;
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
@@ -15,7 +28,7 @@
     --secondary: 213 36% 95%;
     --secondary-foreground: 222 35% 20%;
     --muted: 214 32% 91%;
-    --muted-foreground: 215 16% 47%;
+    --muted-foreground: 215 20% 39%;
     --accent: 191 100% 50%;
     --accent-foreground: 222 47% 11%;
     --destructive: 0 84% 55%;
@@ -25,7 +38,7 @@
     --border-strong: 213 27% 84%;
     --input: var(--border-subtle);
     --ring: 191 100% 50%;
-    --ring-offset: 210 40% 98%;
+    --ring-offset: 216 33% 97%;
     --chart-1: 191 100% 50%;
     --chart-2: 15 100% 50%;
     --chart-3: 221 83% 53%;
@@ -38,7 +51,7 @@
     --font-mono: 'JetBrains Mono', monospace;
 
     --brand-cyan: 191 100% 50%;
-    --brand-cyan-text: 192 100% 31%;
+    --brand-cyan-text: 192 100% 27%;
 
     --surface-subtle: 213 36% 95%;
     --surface-muted: 214 32% 91%;
@@ -70,7 +83,7 @@
     --success-soft: 152 58% 92%;
     --success-border: 152 44% 78%;
 
-    --warning: 35 100% 49%;
+    --warning: 32 95% 30%;
     --warning-foreground: 35 100% 14%;
     --warning-soft: 35 95% 94%;
     --warning-border: 35 82% 78%;
@@ -151,6 +164,7 @@
 
     --success-soft: 152 64% 16%;
     --success-border: 152 40% 36%;
+    --warning: 38 92% 60%;
     --warning-soft: 38 92% 18%;
     --warning-border: 38 70% 36%;
     --info-soft: 205 90% 18%;
@@ -273,19 +287,29 @@
   }
   .glass-card {
     background: hsl(var(--surface));
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
     border: 1px solid hsl(var(--border));
     box-shadow:
       0 1px 2px hsl(var(--shadow-color) / 0.04),
       0 8px 24px hsl(var(--shadow-color) / 0.04);
   }
   .dark .glass-card {
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
     background: hsl(var(--surface) / 0.65);
     border: 1px solid hsl(var(--border-strong));
     box-shadow: none;
   }
 }
+
+.light .text-primary { color: hsl(var(--brand-cyan-text)); }
+.light .bg-clip-text { color: hsl(var(--brand-cyan-text)); background: none; }
+.light [class*="text-muted-foreground/"] { color: hsl(var(--muted-foreground)); }
+.light .hero-image { opacity: 1; }
+.light .hero-shade { background: linear-gradient(to bottom, transparent 65%, hsl(var(--background))); }
+.light .hero-side-shade { display: none; }
+.light .hero-copy { background: hsl(var(--background)); padding: 1.5rem; border-radius: var(--radius); }
+.light .text-glow-cyan { text-shadow: none; color: hsl(var(--brand-cyan-text)); background: none; }
+.light [class*="backdrop-blur"] { backdrop-filter: none; -webkit-backdrop-filter: none; }
 
 .no-scrollbar {
   scrollbar-width: none;
@@ -309,3 +333,6 @@
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--brand-cyan) / 0.5);
 }
+
+.public-content { overflow-x: clip; }
+.public-content h1, .public-content h2 { overflow-wrap: anywhere; }

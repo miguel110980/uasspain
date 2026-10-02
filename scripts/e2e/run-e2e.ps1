@@ -148,6 +148,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Prueba operacional falló: $Mode" }
     }
     Write-Host '==> Validando plazo de examen, concurrencia y carga acotada'
+    Invoke-Operations 'auth-case'
     $ExpiryFixture = (Invoke-Operations 'deadline-prepare') | ConvertFrom-Json
     $ExpiryId = [string]$ExpiryFixture.attempt_id
     if ($ExpiryId -notmatch '^[0-9a-fA-F-]{36}$') { throw 'ID del intento de plazo E2E no válido' }

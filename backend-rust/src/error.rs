@@ -66,8 +66,18 @@ impl IntoResponse for AppError {
                 "Demasiados intentos. Espere un minuto antes de reintentar.".to_owned(),
             ),
             Self::Database(error) => {
-                tracing::error!(%correlation_id, error = %error, "database request failed");
-                if matches!(
+                // Avoid logging constraint details containing personal values.
+                tracing::error!(%correlation_id, "database request failed");
+                if error
+                    .as_database_error()
+                    .is_some_and(|error| error.is_unique_violation())
+                {
+                    (
+                        StatusCode::CONFLICT,
+                        "conflict",
+                        "El valor ya está registrado.".to_owned(),
+                    )
+                } else if matches!(
                     error,
                     sqlx::Error::Io(_)
                         | sqlx::Error::Tls(_)

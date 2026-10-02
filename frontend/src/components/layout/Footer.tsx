@@ -72,7 +72,7 @@ export default function Footer() {
             <p className="text-sm text-muted-foreground leading-relaxed mb-2">
               Servicios aéreos profesionales con drones. Tecnología, seguridad y precisión al servicio de tu operación.
             </p>
-            <p className="text-xs text-muted-foreground/60 leading-relaxed mb-6">
+            <p className="text-xs text-muted-foreground leading-relaxed mb-6">
               Patio de Empresas, Calle Cipriano Alhambra 18<br />23440 Baeza, Jaén, España<br />+34 607 95 17 41 · info@uasspain.com
             </p>
             <div className="flex gap-3">
@@ -93,9 +93,9 @@ export default function Footer() {
 
           {/* Quick Links */}
           <div>
-            <h4 className="font-heading text-xs font-bold uppercase tracking-widest text-foreground mb-4">
+            <h2 className="font-heading text-xs font-bold uppercase tracking-widest text-foreground mb-4">
               Navegación
-            </h4>
+            </h2>
             <ul className="space-y-3">
               {quickLinks.map((link) => (
                 <li key={link.label}>
@@ -109,9 +109,9 @@ export default function Footer() {
 
           {/* Services */}
           <div>
-            <h4 className="font-heading text-xs font-bold uppercase tracking-widest text-foreground mb-4">
+            <h2 className="font-heading text-xs font-bold uppercase tracking-widest text-foreground mb-4">
               Servicios
-            </h4>
+            </h2>
             <ul className="space-y-3">
               {serviceLinks.map((s) => (
                 <li key={s.label}>
@@ -125,9 +125,9 @@ export default function Footer() {
 
           {/* Formación */}
           <div>
-            <h4 className="font-heading text-xs font-bold uppercase tracking-widest text-foreground mb-4">
+            <h2 className="font-heading text-xs font-bold uppercase tracking-widest text-foreground mb-4">
               Formación
-            </h4>
+            </h2>
             <ul className="space-y-3">
               {formacionLinks.map((f) => (
                 <li key={f.label}>
@@ -141,9 +141,9 @@ export default function Footer() {
 
           {/* Legal */}
           <div>
-            <h4 className="font-heading text-xs font-bold uppercase tracking-widest text-foreground mb-4">
+            <h2 className="font-heading text-xs font-bold uppercase tracking-widest text-foreground mb-4">
               Legal
-            </h4>
+            </h2>
             <ul className="space-y-3">
               {legalLinks.map((link) => (
                 <li key={link.label}>
@@ -158,7 +158,7 @@ export default function Footer() {
 
         {/* Bottom bar */}
         <div className="pt-8 border-t border-border-subtle flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-muted-foreground/60 font-mono">
+          <p className="text-xs text-muted-foreground font-mono">
             © {new Date().getFullYear()} UASSPAIN. Todos los derechos reservados.
           </p>
           <button

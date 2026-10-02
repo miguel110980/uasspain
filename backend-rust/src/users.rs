@@ -277,6 +277,11 @@ pub async fn update(
         .as_deref()
         .map(|v| state.cipher.encrypt(v.trim()))
         .transpose()?;
+    input.email = input
+        .email
+        .as_deref()
+        .map(crate::registration::normalize_email)
+        .transpose()?;
     let email = input
         .email
         .as_deref()
@@ -297,8 +302,17 @@ pub async fn update(
         .as_deref()
         .map(|v| state.cipher.blind_index(&v.trim().to_lowercase()))
         .transpose()?;
+    let mut tx = pool(&state)?.begin().await?;
     sqlx::query("UPDATE accounts_userprofile SET nombre=COALESCE($2,nombre),apellidos=COALESCE($3,apellidos),email=COALESCE($4,email),username=COALESCE($5,username),dni_nie=COALESCE($6,dni_nie),fecha_nacimiento=COALESCE($7,fecha_nacimiento),foto_perfil=COALESCE($8,foto_perfil),status=COALESCE($9,status),role=COALESCE($10,role),roles=COALESCE($11,roles),login_2fa_enabled_override=CASE WHEN $12 THEN $13 ELSE login_2fa_enabled_override END,username_lookup=COALESCE($14,username_lookup),email_lookup=COALESCE($15,email_lookup),dni_lookup=COALESCE($16,dni_lookup),updated_date=NOW() WHERE id=$1")
-        .bind(id).bind(nombre).bind(apellidos).bind(email).bind(username).bind(dni).bind(date).bind(photo).bind(input.status).bind(input.role).bind(input.roles.map(|v|serde_json::to_value(v).unwrap_or_default())).bind(input.login_2fa_enabled_override.is_some()).bind(input.login_2fa_enabled_override).bind(username_lookup).bind(email_lookup).bind(dni_lookup).execute(pool(&state)?).await?;
+        .bind(id).bind(nombre).bind(apellidos).bind(email.clone()).bind(username).bind(dni).bind(date).bind(photo).bind(input.status).bind(input.role).bind(input.roles.map(|v|serde_json::to_value(v).unwrap_or_default())).bind(input.login_2fa_enabled_override.is_some()).bind(input.login_2fa_enabled_override).bind(username_lookup).bind(email_lookup).bind(dni_lookup).execute(&mut *tx).await?;
+    if let Some(email) = email {
+        sqlx::query("UPDATE auth_user SET email=$1 WHERE id=$2")
+            .bind(email)
+            .bind(current.user_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     detail(State(state), headers, Path(id)).await
 }
 

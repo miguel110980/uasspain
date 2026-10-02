@@ -1,6 +1,12 @@
 (function () {
   'use strict'
 
+  try {
+    var theme = window.localStorage.getItem('theme')
+    document.documentElement.classList.toggle('dark', theme !== 'light')
+    document.documentElement.classList.toggle('light', theme === 'light')
+  } catch (_) { document.documentElement.classList.add('dark') }
+
   var failed = false
   var timeoutId
 

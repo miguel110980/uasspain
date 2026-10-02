@@ -6,5 +6,8 @@ Disallow: /alumno
 Disallow: /auth-redirect
 Disallow: /restablecer-contrasena
 Disallow: /api/
+Disallow: /ws/
+Disallow: /elegir-panel
+Disallow: /*?auth=
 
 Sitemap: https://uas-spain.com/sitemap.xml

@@ -4,9 +4,13 @@ FROM node:22.23.2-alpine3.24@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586
 WORKDIR /app
 
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund --prefer-offline --maxsockets=5 \
+    --fetch-retries=4 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=10000
 
 COPY frontend/ ./
+ARG VITE_SITE_URL=https://uas-spain.com
+ENV VITE_SITE_URL=${VITE_SITE_URL}
 RUN npm run build
 
 # ─── Stage 2: Production (nginx) ─────────────────────────────────
@@ -20,6 +24,7 @@ RUN addgroup -g 1001 -S frontend && \
     adduser -u 1001 -S frontend -G frontend
 
 COPY frontend/nginx.conf /etc/nginx/nginx.conf
+COPY frontend/security-headers.conf /etc/nginx/security-headers.conf
 COPY frontend/docker-entrypoint-tls.sh /usr/local/bin/frontend-tls-entrypoint
 COPY --from=builder /app/dist /usr/share/nginx/html
 

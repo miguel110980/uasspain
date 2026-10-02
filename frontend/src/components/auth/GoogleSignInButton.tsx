@@ -1,5 +1,8 @@
 ﻿import { GoogleLogin } from '@react-oauth/google';
 
+import { useEffect, useState } from 'react';
+import apiClient from '@/api/apiClient';
+
 /**
  * Botón visual propio con capa transparente del widget oficial de Google (id_token).
  *
@@ -16,6 +19,16 @@ export default function GoogleSignInButton({
   onError,
   children,
 }) {
+  const [nonce, setNonce] = useState('');
+  useEffect(() => {
+    if (disabled) return;
+    let active = true;
+    setNonce('');
+    apiClient.post('/api/auth/google/challenge/', {}).then(({ data }) => {
+      if (active) setNonce(data.nonce);
+    }).catch(() => { if (active) onError?.(); });
+    return () => { active = false; };
+  }, [disabled]);
   return (
     <div className="relative w-full">
       <div
@@ -24,12 +37,13 @@ export default function GoogleSignInButton({
       >
         {children}
       </div>
-      {!disabled && (
+      {!disabled && nonce && (
         <div
           className="absolute inset-0 z-10 cursor-pointer overflow-hidden opacity-[0.015] [&>div]:flex [&>div]:h-full [&>div]:w-full [&>div]:items-stretch [&>div]:justify-stretch [&_iframe]:!min-w-full [&_iframe]:!w-full [&_iframe]:!h-full"
           title="Continuar con Google"
         >
           <GoogleLogin
+            nonce={nonce}
             onSuccess={onSuccess}
             onError={onError}
             useOneTap={false}

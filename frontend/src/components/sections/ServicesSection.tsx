@@ -86,7 +86,7 @@ function ServiceCard({ service, index, isVisible }) {
         </p>
 
         <Link to={service.href} className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-primary group-hover:gap-3 transition-all duration-300">
-          Más Información
+          Ver {service.title}
           <ArrowRight className="w-3.5 h-3.5" />
         </Link>
       </div>

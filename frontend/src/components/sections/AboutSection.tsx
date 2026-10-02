@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { motion } from 'framer-motion';
 import useScrollReveal from '@/hooks/useScrollReveal';
 import { ShieldCheck, Award, Users, Target } from 'lucide-react';
@@ -30,6 +30,9 @@ export default function AboutSection({ aboutImage }) {
             <div className="relative overflow-hidden">
               <img
                 src={aboutImage}
+                loading="lazy"
+                width={1280}
+                height={720}
                 alt="Centro de operaciones UASSPAIN"
                 className="w-full aspect-video object-cover"
               />
@@ -75,7 +78,7 @@ export default function AboutSection({ aboutImage }) {
                   className="group p-4 border border-border-subtle hover:border-primary/20 bg-surface-subtle hover:bg-primary/5 transition-all duration-300"
                 >
                   <f.icon className="w-5 h-5 text-primary mb-3 group-hover:scale-110 transition-transform" />
-                  <h4 className="font-heading text-sm font-semibold text-foreground mb-1">{f.title}</h4>
+                  <h3 className="font-heading text-sm font-semibold text-foreground mb-1">{f.title}</h3>
                   <p className="text-xs text-muted-foreground leading-relaxed">{f.desc}</p>
                 </motion.div>
               ))}

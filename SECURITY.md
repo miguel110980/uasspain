@@ -11,12 +11,12 @@
 
 ## Riesgos abiertos
 
-Al 2026-09-30:
+Al 2026-10-02:
 
 - Baseline publica: Gitleaks 0 en el arbol y 0 en su unico commit raiz.
 - El historial local anterior, conservado solo en el rollback externo, contenia 14 senales y no se importo en la baseline publica.
 - Credenciales operativas pendientes de demostrar como rotadas o revocadas: PostgreSQL migracion, PostgreSQL aplicacion, Redis aplicacion y bootstrap de administrador legado.
-- Trivy 0.74.0: 0 hallazgos HIGH/CRITICAL corregibles en las cinco imágenes. Sin aplicar `ignore-unfixed`, el backend Debian contiene 46 apariciones (11 CVE únicas) todavía sin versión corregida: 45 HIGH y 1 CRITICAL. La crítica es `CVE-2026-60002` en `openssh-client`, requerido por el transporte SFTP de backups; se mantiene como bloqueo upstream y debe reescanearse en cada build.
+- Trivy 0.75.0: las cinco imágenes validadas tienen 0 HIGH/CRITICAL, incluyendo vulnerabilidades sin parche. El runtime del backend se ha trasladado a Ubuntu 26.04 actualizado, conservando SFTP y herramientas PostgreSQL 18; el antiguo hallazgo de OpenSSH en Debian no describe la imagen actual. La evidencia y límites locales figuran en [validación](docs/LOCAL_VALIDATION.md). Reescanee cada build.
 - `RUSTSEC-2023-0071` permanece solo en lockfile; condiciones y fecha de revision en [excepciones Rust](backend-rust/SECURITY_ADVISORY_EXCEPTIONS.md).
 
 El gate de publicacion Git de la baseline limpia es independiente. El gate de despliegue con credenciales operativas permanece `FAIL` hasta demostrar su rotacion o revocacion; no se debe convertir un bloqueo externo en PASS.

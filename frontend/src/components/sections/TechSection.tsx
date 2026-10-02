@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { motion } from 'framer-motion';
 import useScrollReveal from '@/hooks/useScrollReveal';
 import { Brain, Satellite, Navigation, Cpu, Thermometer, Radio, Wifi, Eye } from 'lucide-react';
@@ -46,7 +46,7 @@ export default function TechSection({ techImage }) {
               garantizando resultados de máxima calidad y fiabilidad operacional.
             </p>
             <div className="relative overflow-hidden hidden lg:block">
-              <img src={techImage} alt="Drone profesional con sensores avanzados" className="w-full aspect-video object-cover" />
+              <img src={techImage} loading="lazy" width={1280} height={720} alt="Drone profesional con sensores avanzados" className="w-full aspect-video object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-card via-card/20 to-transparent" />
               <div className="absolute inset-0 border border-primary/10" />
             </div>
@@ -67,7 +67,7 @@ export default function TechSection({ techImage }) {
                     <tech.icon className="w-4 h-4 text-primary" />
                   </div>
                   <div>
-                    <h4 className="font-heading text-sm font-semibold text-foreground mb-1">{tech.title}</h4>
+                    <h3 className="font-heading text-sm font-semibold text-foreground mb-1">{tech.title}</h3>
                     <p className="text-xs text-muted-foreground leading-relaxed">{tech.desc}</p>
                   </div>
                 </div>

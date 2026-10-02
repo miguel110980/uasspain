@@ -238,7 +238,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
               placeholder="Escribe un mensaje..."
-              className="flex-1 bg-surface-muted border border-border-subtle focus:border-transparent text-foreground placeholder:text-muted-foreground/40 px-4 py-2.5 text-sm outline-none transition-colors rounded-sm"
+              className="flex-1 min-w-0 bg-surface-muted border border-border-subtle focus:border-transparent text-foreground placeholder:text-muted-foreground/40 px-4 py-2.5 text-sm outline-none transition-colors rounded-sm"
             />
             <button
               type="submit"

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Eye, EyeOff, Loader2 } from 'lucide-react';
 import authService from '@/services/authService';
 import { extractErrorMessage } from '@/lib/errors';
@@ -26,6 +26,7 @@ export default function AuthModal({ isOpen, onClose }) {
   const [view, setView] = useState('login'); // login | register | forgot
   const [availableRoles, setAvailableRoles] = useState([]);
   const [selectedRole, setSelectedRole] = useState('');
+  const submission = useRef(false);
 
   const reset = () => {
     setEmail('');
@@ -71,6 +72,8 @@ export default function AuthModal({ isOpen, onClose }) {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (submission.current) return;
+    submission.current = true;
     setError('');
     setLoading(true);
     const cleanEmail = sanitizeInput(email, 'email');
@@ -110,11 +113,14 @@ export default function AuthModal({ isOpen, onClose }) {
         }
       }
     } finally {
+      submission.current = false;
       setLoading(false);
     }
   };
 
   const handleResendLoginOtp = async () => {
+    if (submission.current) return;
+    submission.current = true;
     setLoading(true);
     setError('');
     try {
@@ -127,11 +133,14 @@ export default function AuthModal({ isOpen, onClose }) {
     } catch (err) {
       setError(extractErrorMessage(err, 'No se pudo reenviar el código 2FA.'));
     } finally {
+      submission.current = false;
       setLoading(false);
     }
   };
 
   const handleGoogleSuccess = async (credentialResponse) => {
+    if (submission.current) return;
+    submission.current = true;
     setError('');
     setLoading(true);
     try {
@@ -145,13 +154,14 @@ export default function AuthModal({ isOpen, onClose }) {
       const code = err?.response?.data?.code;
       let message = extractErrorMessage(err, 'No se pudo completar el acceso con Google.');
       if (code === 'not_configured') {
-        message = 'Define GOOGLE_CLIENT_ID en el .env raíz (ver docs/DEPLOYMENT.md).';
+        message = 'El acceso con Google no está disponible. Usa tu correo y contraseña.';
       } else if (code === 'no_account') {
         message =
           'No hay cuenta UASSPAIN con ese email de Google. Regístrate primero o usa email y contraseña.';
       }
       setError(message);
     } finally {
+      submission.current = false;
       setLoading(false);
     }
   };
@@ -199,7 +209,9 @@ export default function AuthModal({ isOpen, onClose }) {
             id="login-email"
             type="email"
             required
-            autoComplete="email"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
             value={email}
             onChange={(e) => setEmail(sanitizeInput(e.target.value, 'email'))}
             placeholder="tu@email.com"
@@ -242,6 +254,8 @@ export default function AuthModal({ isOpen, onClose }) {
               id="login-otp"
               type="text"
               inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
               maxLength={6}
               required
               value={otpCode}
@@ -274,7 +288,7 @@ export default function AuthModal({ isOpen, onClose }) {
         </div>
 
         {error && (
-          <p className="text-xs text-danger bg-danger-soft border border-danger-border px-3 py-2 rounded-sm">
+          <p role="alert" className="text-xs text-danger bg-danger-soft border border-danger-border px-3 py-2 rounded-sm">
             {error}
           </p>
         )}

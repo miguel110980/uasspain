@@ -12,10 +12,12 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Navbar />
+      <main className="public-content">
       <HeroSection bgImageLight={IMAGES.heroLight} bgImageDark={IMAGES.heroDark} />
       <AboutSection aboutImage={IMAGES.about} />
       <ServicesSection />
       <TechSection techImage={IMAGES.tech} />
+      </main>
       <Footer />
     </div>
   );

@@ -1,8 +1,8 @@
 /** Rutas locales de imágenes estáticas (public/images). */
 export const IMAGES = {
-  logo: '/images/logo.png?v=3',
-  heroLight: '/images/hero_claro.png',
-  heroDark: '/images/hero_oscuro.png',
+  logo: '/images/logo.webp?v=4',
+  heroLight: '/images/hero_claro.webp',
+  heroDark: '/images/hero_oscuro.webp',
   about: '/images/about.jpg',
   tech: '/images/tech.jpg',
   blog1: '/images/blog1.jpg',

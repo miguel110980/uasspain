@@ -23,6 +23,7 @@ export default function Emergencias() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Navbar />
+      <main className="public-content">
 
       {/* Hero */}
       <section className="relative min-h-[55vh] flex items-center justify-center overflow-hidden bg-background pt-24">
@@ -110,6 +111,7 @@ export default function Emergencias() {
         </div>
       </section>
 
+      </main>
       <Footer />
     </div>
   );

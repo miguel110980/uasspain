@@ -1,5 +1,6 @@
 ﻿import { Link, useLocation } from 'react-router-dom';
 import { Home, AlertTriangle } from 'lucide-react';
+import SeoHead from '@/components/seo/SeoHead';
 
 export default function PageNotFound() {
   const location = useLocation();
@@ -7,6 +8,7 @@ export default function PageNotFound() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-background">
+      <SeoHead title="Página no encontrada | UASSPAIN" description="La página solicitada no existe." noindex />
       <div className="max-w-md w-full glass-card p-8 text-center">
         <p className="font-heading text-6xl font-bold text-primary/30 mb-2">404</p>
         <div className="h-px w-16 bg-primary/20 mx-auto mb-6" />

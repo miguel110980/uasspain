@@ -77,6 +77,22 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/courses", get(crate::content::public_courses))
         .route("/api/courses/{slug}", get(crate::content::public_course))
         .route(
+            "/api/public/seo/course-route/{slug}",
+            get(crate::seo::course_route),
+        )
+        .route(
+            "/api/public/seo/course-head/{slug}",
+            get(crate::seo::course_head),
+        )
+        .route(
+            "/api/public/seo/course-body/{slug}",
+            get(crate::seo::course_body),
+        )
+        .route(
+            "/api/public/seo/sitemap-courses.xml",
+            get(crate::seo::course_sitemap),
+        )
+        .route(
             "/api/admin/blog/posts",
             get(crate::content::admin_posts).post(crate::content::create_post),
         )
@@ -124,6 +140,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/auth/login/", post(auth::login))
         .route("/api/auth/google/", post(auth::google_login))
+        .route("/api/auth/google/challenge/", post(auth::google_challenge))
         .route("/api/auth/refresh/", post(auth::refresh))
         .route("/api/auth/logout/", post(auth::logout))
         .route("/api/auth/me/", get(auth::me))
@@ -509,6 +526,10 @@ async fn security_headers(request: Request<axum::body::Body>, next: Next) -> Res
         HeaderValue::from_static("nosniff"),
     );
     headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    headers.insert(
+        "x-robots-tag",
+        HeaderValue::from_static("noindex, nofollow"),
+    );
     headers.insert(
         "referrer-policy",
         HeaderValue::from_static("strict-origin-when-cross-origin"),

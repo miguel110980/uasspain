@@ -3,11 +3,11 @@ import { useLocation } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import { getSeoForPath, organizationJsonLd, SITE } from '@/lib/seoConfig';
 
-const PRIVATE_PREFIXES = ['/admin', '/instructor', '/alumno', '/elegir-panel'];
+const PRIVATE_PREFIXES = ['/admin', '/instructor', '/alumno', '/elegir-panel', '/auth-redirect', '/restablecer-contrasena'];
 
 function upsertMeta(attr, key, content) {
-  if (!content) return;
   let el = document.querySelector(`meta[${attr}="${key}"]`);
+  if (!content) { el?.remove(); return; }
   if (!el) {
     el = document.createElement('meta');
     el.setAttribute(attr, key);
@@ -17,8 +17,8 @@ function upsertMeta(attr, key, content) {
 }
 
 function upsertLink(rel, href) {
-  if (!href) return;
   let el = document.querySelector(`link[rel="${rel}"]`);
+  if (!href) { el?.remove(); return; }
   if (!el) {
     el = document.createElement('link');
     el.setAttribute('rel', rel);
@@ -45,16 +45,16 @@ function upsertJsonLd(id, data) {
 type SeoHeadProps = { title?: string; description?: string; keywords?: string; canonical?: string; noindex?: boolean; jsonLd?: object };
 
 export default function SeoHead({ title, description, keywords, canonical, noindex, jsonLd }: SeoHeadProps = {}) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const { theme } = useTheme();
-  const isPrivate = PRIVATE_PREFIXES.some((p) => pathname.startsWith(p));
+  const isPrivate = PRIVATE_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
   const routeSeo = getSeoForPath(pathname);
 
   const finalTitle = title || routeSeo.title;
   const finalDescription = description || routeSeo.description;
   const finalKeywords = keywords || routeSeo.keywords;
   const finalCanonical = canonical || routeSeo.canonical;
-  const blockIndex = noindex ?? routeSeo.noindex ?? isPrivate;
+  const blockIndex = isPrivate || new URLSearchParams(search).has('auth') || (noindex ?? routeSeo.noindex);
 
   useEffect(() => {
     document.title = finalTitle;
@@ -62,7 +62,7 @@ export default function SeoHead({ title, description, keywords, canonical, noind
     upsertMeta('name', 'keywords', finalKeywords);
     upsertMeta('name', 'robots', blockIndex ? 'noindex, nofollow' : 'index, follow, max-image-preview:large');
     upsertMeta('name', 'author', SITE.name);
-    upsertMeta('name', 'theme-color', theme === 'dark' ? '#0a0a0a' : '#F8FAFC');
+    upsertMeta('name', 'theme-color', theme === 'dark' ? '#0a0a0a' : '#F5F7FA');
 
     upsertMeta('property', 'og:type', 'website');
     upsertMeta('property', 'og:site_name', SITE.name);
@@ -73,15 +73,17 @@ export default function SeoHead({ title, description, keywords, canonical, noind
     upsertMeta('property', 'og:image', `${SITE.url}${SITE.ogImage}`);
 
     upsertMeta('name', 'twitter:card', 'summary_large_image');
-    upsertMeta('name', 'twitter:site', SITE.twitter);
+    upsertMeta('name', 'twitter:site', '');
     upsertMeta('name', 'twitter:title', finalTitle);
     upsertMeta('name', 'twitter:description', finalDescription);
     upsertMeta('name', 'twitter:image', `${SITE.url}${SITE.ogImage}`);
 
     upsertLink('canonical', finalCanonical);
 
-    if (!isPrivate) {
+    if (!blockIndex) {
       upsertJsonLd('seo-org-jsonld', jsonLd || organizationJsonLd());
+    } else {
+      document.getElementById('seo-org-jsonld')?.remove();
     }
   }, [finalTitle, finalDescription, finalKeywords, finalCanonical, blockIndex, isPrivate, jsonLd, theme]);
 

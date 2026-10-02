@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { motion } from 'framer-motion';
 import { ShieldCheck, Award, Users, Target, Plane, Shield, Zap, AlertTriangle, Radio } from 'lucide-react';
 import Navbar from '@/components/layout/Navbar';
@@ -38,6 +38,7 @@ export default function Nosotros() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Navbar />
+      <main className="public-content">
 
       <section className="relative min-h-[50vh] flex items-center justify-center overflow-hidden bg-background pt-24">
         <div className="absolute inset-0 pointer-events-none">
@@ -187,6 +188,7 @@ export default function Nosotros() {
         </div>
       </section>
 
+      </main>
       <Footer />
     </div>
   );
