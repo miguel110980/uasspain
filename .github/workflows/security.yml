@@ -56,7 +56,7 @@ jobs:
             dir /repo --config=/repo/.gitleaks.toml --redact --no-banner --no-color
           docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.28.0 \
             git /repo --config=/repo/.gitleaks.toml --redact --no-banner --no-color
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: pip install detect-secrets==1.5.0
