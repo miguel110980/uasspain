@@ -179,7 +179,7 @@ export default function AdminPanel() {
     usuarios: <AdminUsuarios />,
     instructores: <AdminInstructores />,
     blog: <AdminBlog />,
-    cursos: <AdminCursos />,
+    cursos: <AdminCursos active={section === 'cursos'} />,
     monitorizacion: <AdminMonitorizacion />,
     notificaciones: <AdminNotificaciones />,
     backups: <AdminBackups />,

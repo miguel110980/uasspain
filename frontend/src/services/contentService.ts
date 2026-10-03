@@ -4,6 +4,7 @@ import { queryClientInstance } from '@/lib/query-client';
 import type { CourseCategory } from '@/lib/courseCategories';
 
 export function refreshCourseQueries() {
+  void queryClientInstance.invalidateQueries({ queryKey: ['admin', 'courses'] });
   void queryClientInstance.invalidateQueries({ queryKey: ['public', 'courses'] });
   void queryClientInstance.invalidateQueries({ queryKey: ['public', 'course'] });
 }

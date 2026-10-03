@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { ArrowDown, ArrowUp, BookOpen, Edit3, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import contentService, { type Course, type CourseStatus } from '@/services/contentService';
@@ -11,11 +12,15 @@ const emptyForm = (): CourseForm => ({ name: '', description: '', category: 'oth
 const fieldClass = 'w-full min-w-0 mt-2 bg-surface-muted border border-border rounded px-3 py-2 text-sm focus-visible:outline-primary';
 const errorText = (error: unknown, fallback: string) => (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail || fallback;
 
-export default function AdminCursos() {
-  const [courses, setCourses] = useState<Course[]>([]);
+export default function AdminCursos({ active = true }: { active?: boolean }) {
+  const queryClient = useQueryClient();
+  const { data: courses = [], isPending: loading, isFetching, isError, error: loadError, refetch } = useQuery({
+    queryKey: ['admin', 'courses'], queryFn: contentService.adminCourses, enabled: active,
+    staleTime: 0, refetchOnWindowFocus: true, refetchInterval: 30_000, retry: false,
+  });
+  const setCourses = (update: (current: Course[]) => Course[]) => queryClient.setQueryData<Course[]>(['admin', 'courses'], current => update(current || []));
   const [form, setForm] = useState<CourseForm>(emptyForm);
   const [editing, setEditing] = useState<Course | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -24,12 +29,10 @@ export default function AdminCursos() {
   const savingLock = useRef(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const load = async () => {
-    setLoading(true);
-    try { setCourses(await contentService.adminCourses()); setError(''); }
-    catch (err) { setError(errorText(err, 'No se pudieron cargar los cursos.')); }
-    finally { setLoading(false); }
+    const result = await refetch();
+    if (!result.isError) setError('');
   };
-  useEffect(() => { void load(); }, []);
+  const displayError = error || (isError ? errorText(loadError, 'No se pudieron cargar los cursos.') : '');
   const reset = () => { setEditing(null); setForm(emptyForm()); };
   const selectCourse = (course: Course) => {
     const description = [...new Set([course.introduction?.trim(), course.description?.trim() || course.short_description?.trim()].filter(Boolean))].join('\n\n');
@@ -71,7 +74,7 @@ export default function AdminCursos() {
   };
   return <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 min-w-0 break-words">
     <div><h2 className="font-heading text-xl font-bold flex items-center gap-2"><BookOpen className="w-5 h-5 text-primary shrink-0" />Formación / Cursos</h2><p className="text-xs text-muted-foreground mt-1">Gestiona el contenido y la publicación de tus cursos.</p></div>
-    {error && <div role="alert" className="border border-danger/30 bg-danger/10 text-danger text-sm p-3 rounded">{error}{!saving && <button type="button" onClick={load} className="underline ml-2">Actualizar listado</button>}</div>}
+    {displayError && <div role="alert" className="border border-danger/30 bg-danger/10 text-danger text-sm p-3 rounded">{displayError}{!saving && <button type="button" onClick={load} className="underline ml-2">Actualizar listado</button>}</div>}
     {notice && <p role="status" className="text-sm text-success">{notice}</p>}
     <form onSubmit={saveCourse} className="glass-card p-5 space-y-5" aria-label={editing ? 'Editar curso' : 'Nuevo curso'}>
       <div className="flex flex-wrap justify-between gap-3"><h3 className="font-heading font-bold">{editing ? `Editar ${editing.name}` : 'Nuevo curso'}</h3>{editing && <button type="button" disabled={saving} onClick={reset} className="text-xs text-muted-foreground hover:text-primary">Cancelar edición</button>}</div>
@@ -97,7 +100,8 @@ export default function AdminCursos() {
       </fieldset>
       <button disabled={saving || loading} className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-xs font-bold uppercase rounded disabled:opacity-50">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}Guardar</button>
     </form>
-    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4" aria-busy={loading}>{loading ? <Loader2 aria-label="Cargando cursos" className="animate-spin text-primary" /> : courses.length === 0 ? <p className="text-sm text-muted-foreground">Todavía no hay cursos guardados.</p> : courses.map(course => <article key={course.id} className="glass-card p-5 min-w-0 space-y-3">
+    <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-heading font-bold">Cursos guardados ({courses.length})</h3><button type="button" disabled={isFetching || saving} onClick={() => void load()} className="inline-flex items-center gap-2 px-3 py-2 border border-border rounded text-xs disabled:opacity-50">{isFetching && <Loader2 className="w-3.5 h-3.5 animate-spin" />}Actualizar cursos</button></div>
+    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4" aria-busy={isFetching}>{loading ? <Loader2 aria-label="Cargando cursos" className="animate-spin text-primary" /> : courses.length === 0 ? <p className="text-sm text-muted-foreground">Todavía no hay cursos guardados.</p> : courses.map(course => <article key={course.id} className="glass-card p-5 min-w-0 space-y-3">
       <h3 className="font-heading font-bold">{course.name}</h3><p className="text-sm text-muted-foreground line-clamp-3">{course.description || course.short_description}</p>
       <dl className="text-xs space-y-2"><div><dt className="inline text-muted-foreground">Categoría: </dt><dd className="inline">{courseCategoryLabel(course.category)}</dd></div><div><dt className="inline text-muted-foreground">Modalidad: </dt><dd className="inline">{course.modality === 'presencial' ? 'Presencial' : 'Online'}</dd></div><div><dt className="inline text-muted-foreground">Duración: </dt><dd className="inline">{course.duration || 'Sin especificar'}</dd></div><div><dt className="inline text-muted-foreground">Estado: </dt><dd className={`inline font-bold ${course.status === 'published' ? 'text-success' : 'text-warning'}`}>{course.status === 'published' ? 'Publicado' : 'Próximamente'}</dd></div></dl>
       <div className="flex flex-wrap gap-2"><button disabled={saving} onClick={() => selectCourse(course)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-border rounded text-xs"><Edit3 className="w-3.5 h-3.5" />Editar</button><button disabled={saving || deleting} onClick={() => setPendingDelete(course)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-danger/30 text-danger rounded text-xs"><Trash2 className="w-3.5 h-3.5" />Eliminar</button></div>
