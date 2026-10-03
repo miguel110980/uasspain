@@ -21,6 +21,12 @@ chown -R frontend:frontend "$tls_dir"
 # la clave permanece 0600 y solo pertenece a frontend.
 chmod 755 "$tls_dir"
 
+# Publish the entire release before Nginx can serve its HTML. The named volume
+# survives image/container replacement and keeps previous hashed chunks usable.
+mkdir -p /var/lib/frontend-static/assets
+chown frontend:frontend /var/lib/frontend-static /var/lib/frontend-static/assets
+/sbin/su-exec frontend sh /usr/local/bin/publish-assets /usr/share/nginx/html/assets
+
 # Docker Desktop crea los pipes de logging 0600/root. El worker no privilegiado
 # solo necesita escribir en ellos para conservar access/error logs en `docker logs`.
 chmod 0622 /proc/self/fd/1 /proc/self/fd/2

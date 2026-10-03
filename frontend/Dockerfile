@@ -26,6 +26,7 @@ RUN addgroup -g 1001 -S frontend && \
 COPY frontend/nginx.conf /etc/nginx/nginx.conf
 COPY frontend/security-headers.conf /etc/nginx/security-headers.conf
 COPY frontend/docker-entrypoint-tls.sh /usr/local/bin/frontend-tls-entrypoint
+COPY frontend/publish-assets.sh /usr/local/bin/publish-assets
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 RUN chown -R frontend:frontend /usr/share/nginx/html \

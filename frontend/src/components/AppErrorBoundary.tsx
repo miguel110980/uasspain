@@ -1,12 +1,13 @@
 import React from 'react';
+import { recoverAssetLoad } from '@/lib/assetRecovery';
 
-type Props = React.PropsWithChildren;
+type Props = React.PropsWithChildren<{ initialError?: Error }>;
 type State = { error: Error | null };
 
 export default class AppErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: props.initialError ?? null };
   }
 
   static getDerivedStateFromError(error: Error): State {
@@ -15,6 +16,7 @@ export default class AppErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[UASSPAIN] Error de renderizado:', error, info);
+    void recoverAssetLoad(error);
   }
 
   render() {
@@ -29,18 +31,15 @@ export default class AppErrorBoundary extends React.Component<Props, State> {
               No se pudo cargar la aplicación
             </h1>
             <p className="text-muted-foreground mb-4 leading-relaxed">
-              Recarga forzada: Ctrl+Shift+R (o Cmd+Shift+R en Mac). Tras un despliegue, el
-              navegador puede tener JavaScript antiguo en caché que pide ficheros
-              {' '}
-              <code className="text-xs bg-muted px-1.5 py-0.5 rounded">/assets/*.js</code>
-              {' '}
-              ya eliminados.
+              No hemos podido abrir esta página. Comprueba tu conexión y vuelve a intentarlo.
             </p>
-            <pre
-              className="text-left overflow-auto p-3 rounded-lg bg-card border border-border text-sm text-destructive"
+            <button
+              type="button"
+              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground"
+              onClick={() => window.location.reload()}
             >
-              {String(this.state.error?.message || this.state.error)}
-            </pre>
+              Volver a intentar
+            </button>
           </div>
         </div>
       );

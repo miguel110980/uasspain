@@ -335,6 +335,7 @@ services:
       - SETUID
     volumes:
       - media_data:/media_data:ro
+      - frontend_static:/var/lib/frontend-static
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--cacert", "/run/frontend-tls/ca.crt", "https://frontend:8443/", "-o", "/dev/null"]
       interval: 30s
@@ -447,6 +448,8 @@ volumes:
   backups_data:
     driver: local
   media_data:
+    driver: local
+  frontend_static:
     driver: local
   backup_keys:
     driver: local

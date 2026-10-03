@@ -59,6 +59,7 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/nosotros" element={<Nosotros />} />
             <Route path="/tecnologia" element={<Tecnologia />} />
+            <Route path="/tecnología" element={<Navigate to="/tecnologia" replace />} />
             <Route path="/blog" element={<Blog />} />
             <Route path="/contacto" element={<Contacto />} />
             <Route path="/servicios" element={<Navigate to={{ pathname: '/', hash: '#servicios' }} replace />} />
