@@ -40,8 +40,10 @@ no cambia datos ni omite la verificación TLS.
 - TLS: los certificados internos se generan localmente; las claves privadas nunca se versionan.
 
 El acceso se realiza con correo y contraseña y, cuando la política lo exige,
-código OTP. La autenticación con Google se ha retirado. Su migración histórica
-se conserva para mantener el esquema y los checksums de SQLx.
+código OTP. También está disponible la integración Google Identity Services;
+requiere un Client ID web y el origen autorizado. Consulte la
+[guía de activación](GOOGLE_AUTH.md). Se conserva la migración histórica
+para mantener el esquema y los checksums de SQLx.
 
 ## Videollamadas WebRTC
 

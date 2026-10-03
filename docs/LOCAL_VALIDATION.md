@@ -1,6 +1,36 @@
 # Validación local — 2 de octubre de 2026
 
-## Estado vigente — 3 de octubre de 2026: cuentas de prueba y retirada de Google
+## Estado vigente — 3 de octubre de 2026: integración Google restaurada
+
+Por petición posterior del usuario se restaura Google Identity Services con
+botón oficial visible y adaptable, estados de disponibilidad, reintentos ante
+fallos de configuración/SDK/nonce, renovación del nonce antes de caducar y
+rechazo de tokens inválidos sin reintento de refresh de sesión. El backend
+conserva firma RS256/JWKS, claims, nonce de un uso, vínculo de identidad estable,
+roles y política de OTP. No se modifican las migraciones.
+
+Rust: 52 tests, formato, check y Clippy pasan. Frontend: tipos, lint, 4 tests
+unitarios y build pasan. Cuatro pruebas Chromium con proveedor simulado pasan:
+configuración ausente y recuperación, nonce fallido y cuenta inexistente,
+token inválido sin refresh, y SDK fallido con recuperación. Comprueban además
+redirección al rol instructor y anchuras de 320, 390 y 1440 píxeles.
+
+`GOOGLE_PROVIDER_LOGIN=BLOCKED`: no existe un Client ID real autorizado en esta
+instalación. Los mocks del navegador no emiten sesiones del backend ni prueban
+un login real contra Google. La [guía de activación](GOOGLE_AUTH.md) y el script
+de configuración local dejan preparada esa operación. Las cuentas de prueba
+siguen activas y asignadas; la copia DPAPI de sus contraseñas se conserva.
+
+La aplicación compilada por HTTPS pasa la verificación de CA/hostname,
+cabeceras CSP/COOP, estado Google, botón visible sin configuración, login real
+del administrador y login API/Chromium de instructor y alumno. Se mantienen la
+asignación y la denegación de permisos administrativos. La evidencia está en
+`.run/uasspain/google-restoration-verification.json`. Los cinco servicios están
+saludables y el verificador de almacenamiento cifrado pasa: tres cuentas con
+PII no vacía cifrada y Argon2id, sin privilegios PostgreSQL añadidos, con las
+siete migraciones intactas.
+
+## Validación anterior — 3 de octubre de 2026: cuentas de prueba y retirada de Google
 
 La instalación principal conserva el administrador y ahora contiene también un
 instructor y un alumno de prueba activos, con un único rol por cuenta. El alumno

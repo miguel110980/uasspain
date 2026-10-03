@@ -49,6 +49,16 @@ export default function AdminNotificaciones() {
       });
     }
 
+    if (!status.google_oauth?.configured) {
+      lista.push({
+        id: 'oauth-missing',
+        tipo: 'info',
+        titulo: 'Google OAuth no configurado',
+        desc: 'Añade GOOGLE_CLIENT_ID en el .env raíz (Google Cloud Console).',
+        fecha: new Date().toISOString(),
+      });
+    }
+
     const dbOk = status.platform?.database_connected ?? status.platform?.storage_connected;
     if (status.platform && dbOk === false) {
       lista.push({

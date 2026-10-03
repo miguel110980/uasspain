@@ -151,6 +151,14 @@ export const authService = {
     return { completed: true, detail: res.data?.detail || 'Inicio de sesión correcto.' };
   },
 
+  async loginWithGoogleCredential(credential) {
+    const client_meta = await collectClientMeta();
+    await apiClient.post(endpoints.auth.google, {
+      id_token: credential,
+      client_meta,
+    });
+  },
+
   async register({ email, password, ...extra }) {
     const body = sanitizePayload({ email, password, ...extra }, AUTH_SCHEMA);
     const res = await apiClient.post(endpoints.auth.register, body);

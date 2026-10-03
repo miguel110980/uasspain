@@ -14,6 +14,7 @@ pub mod error;
 pub mod exam_admin;
 pub mod exam_import;
 pub mod exams;
+pub mod google_oidc;
 pub mod instructor_access;
 pub mod instructors;
 pub mod materials;

@@ -21,6 +21,10 @@ docker compose logs --tail 100 backend
 
 SMTP usa configuracion no secreta en `.env` y secretos montados desde `.secrets/`. Tras cambiar configuracion: `docker compose up -d --force-recreate --wait backend nginx`.
 
+Para activar [Google Identity Services](docs/GOOGLE_AUTH.md), configure el Client
+ID público con `scripts/configure-google-auth.ps1` y autorice el origen exacto
+en Google Cloud. El login indica la disponibilidad real de esa integración.
+
 Nunca incluya secretos en Git, logs ni comandos que puedan quedar en el historial. Consulte [SECURITY.md](SECURITY.md).
 
 ## Recuperar acceso a una cuenta existente

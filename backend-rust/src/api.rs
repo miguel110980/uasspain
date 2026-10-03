@@ -93,8 +93,10 @@ pub async fn public_stats(State(state): State<Arc<AppState>>) -> Json<serde_json
 }
 
 pub async fn system_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let google_configured =
+        std::env::var("GOOGLE_CLIENT_ID").is_ok_and(|value| !value.trim().is_empty());
     Json(
-        serde_json::json!({"backend":{"status":"ok","runtime":"rust","uptime_seconds":state.started.elapsed().as_secs()},"database":{"status":if state.pool.is_some(){"ok"}else{"error"}},"redis":{"status":if state.events.connected(){"ok"}else if state.events.configured(){"error"}else{"not_configured"}},"websocket":{"status":"ok"}}),
+        serde_json::json!({"backend":{"status":"ok","runtime":"rust","uptime_seconds":state.started.elapsed().as_secs()},"database":{"status":if state.pool.is_some(){"ok"}else{"error"}},"redis":{"status":if state.events.connected(){"ok"}else if state.events.configured(){"error"}else{"not_configured"}},"websocket":{"status":"ok"},"google_oauth":{"configured":google_configured}}),
     )
 }
 
@@ -145,6 +147,13 @@ async fn load_auth_policy(state: &AppState) -> Result<Value, AppError> {
     .unwrap_or_else(|| json!({"enabled":false,"required_roles":[]})))
 }
 
+pub async fn public_google_oauth() -> Json<Value> {
+    let client = std::env::var("GOOGLE_CLIENT_ID")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    Json(json!({"configured":client.is_some(),"client_id":client}))
+}
 pub async fn public_publications(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<PublicPublication>>, AppError> {

@@ -55,6 +55,7 @@ export function buildMonitorServices(status) {
   const dbOk = databaseConnected(status);
   const redis = status.redis || {};
   const smtp = status.smtp || {};
+  const oauth = status.google_oauth || {};
   const users = status.users || {};
   const ws = websocketServiceStatus(status);
 
@@ -79,6 +80,13 @@ export function buildMonitorServices(status) {
       status: smtp.configured ? 'ok' : 'warn',
       value: smtp.configured ? 'Configurado' : 'Sin credenciales',
       desc: smtp.host || '—',
+    },
+    {
+      name: 'Google OAuth',
+      iconKey: 'activity',
+      status: oauth.configured ? 'ok' : 'warn',
+      value: oauth.configured ? 'Listo' : 'Pendiente',
+      desc: oauth.configured ? 'Login social' : 'GOOGLE_CLIENT_ID en .env',
     },
     {
       name: 'Usuarios activos',

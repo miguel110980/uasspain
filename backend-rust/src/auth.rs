@@ -53,6 +53,11 @@ pub struct SessionRoleRequest {
     pub role: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct GoogleLoginRequest {
+    pub id_token: String,
+}
+
 #[derive(FromRow)]
 struct LoginRow {
     id: Uuid,
@@ -167,6 +172,184 @@ fn requires_login_otp(
                         .any(|required_role| roles.iter().any(|role| role == required_role))
                 })
     })
+}
+
+pub async fn google_challenge(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    if std::env::var("GOOGLE_CLIENT_ID")
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        return Err(AppError::Unavailable);
+    }
+    enforce_login_rate(&headers, "google-challenge")?;
+    let nonce = Uuid::new_v4().simple().to_string();
+    let proof = state
+        .tokens
+        .issue(0, Uuid::nil(), "google", "google_nonce", 5, &nonce)?;
+    let secure = if state.tokens.secure_cookie {
+        "; Secure"
+    } else {
+        ""
+    };
+    let mut response = Json(serde_json::json!({"nonce":nonce})).into_response();
+    response.headers_mut().append(SET_COOKIE, format!("uasspain_google_nonce={proof}; Path=/api/auth/google/; HttpOnly; SameSite=Strict; Max-Age=300{secure}").parse().map_err(|_| AppError::Internal)?);
+    Ok(response)
+}
+
+fn google_proof(state: &AppState, headers: &HeaderMap) -> Result<Claims, AppError> {
+    let raw = headers
+        .get(COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| {
+            cookies
+                .split(';')
+                .map(str::trim)
+                .find_map(|cookie| cookie.strip_prefix("uasspain_google_nonce="))
+        })
+        .ok_or(AppError::Unauthorized)?;
+    let proof = state.tokens.decode(raw, "google_nonce")?;
+    if proof.exp <= Utc::now().timestamp() as usize {
+        return Err(AppError::Unauthorized);
+    }
+    Ok(proof)
+}
+
+fn consume_google_proof(proof: &Claims, now: usize) -> Result<(), AppError> {
+    static CONSUMED: OnceLock<Mutex<HashMap<Uuid, usize>>> = OnceLock::new();
+    let mut consumed = CONSUMED
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| AppError::Internal)?;
+    consumed.retain(|_, expiry| *expiry > now);
+    if proof.exp <= now || consumed.contains_key(&proof.jti) {
+        return Err(AppError::Unauthorized);
+    }
+    if consumed.len() >= 10000 {
+        return Err(AppError::RateLimited);
+    }
+    consumed.insert(proof.jti, proof.exp);
+    Ok(())
+}
+
+pub async fn google_login(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<GoogleLoginRequest>,
+) -> Result<Response, AppError> {
+    let client_id = std::env::var("GOOGLE_CLIENT_ID")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or(AppError::Unavailable)?;
+    if !(16..=8192).contains(&input.id_token.len()) {
+        return Err(AppError::Validation("Token de Google no válido.".into()));
+    }
+    enforce_login_rate(&headers, "google")?;
+    let proof = google_proof(&state, &headers)?;
+    let token = crate::google_oidc::verified_token(&input.id_token, &client_id).await?;
+    if token.get("nonce").and_then(serde_json::Value::as_str) != Some(proof.session_key.as_str()) {
+        return Err(AppError::Unauthorized);
+    }
+    consume_google_proof(&proof, Utc::now().timestamp() as usize)?;
+    let email = validated_google_email(&token, &client_id, Utc::now().timestamp())?;
+    let lookup = state.cipher.blind_index(&email)?;
+    let subject_lookup = state.cipher.blind_index(&format!(
+        "google:{}",
+        token["sub"].as_str().ok_or(AppError::Unauthorized)?
+    ))?;
+    let row = sqlx::query_as::<_, LoginRow>(
+        "SELECT p.id, p.user_id, u.password, u.is_active, p.status, p.role, p.roles, p.otp_verified, p.login_otp_hash, p.login_otp_created_at, p.login_2fa_enabled_override,p.username AS profile_username,p.nombre AS profile_nombre,p.apellidos AS profile_apellidos,p.email AS profile_email \
+         FROM accounts_userprofile p JOIN auth_user u ON u.id = p.user_id WHERE p.google_subject_lookup=$2 OR (p.google_subject_lookup IS NULL AND p.email_lookup=$1) ORDER BY (p.google_subject_lookup=$2) DESC NULLS LAST LIMIT 1",
+    )
+    .bind(lookup)
+    .bind(subject_lookup.clone())
+    .fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    if !row.is_active || row.status != "activo" || !row.otp_verified {
+        return Err(AppError::Forbidden);
+    }
+    let policy: serde_json::Value =
+        sqlx::query_scalar("SELECT value FROM core_systemsetting WHERE key='auth_policy'")
+            .fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?)
+            .await?
+            .unwrap_or_else(|| serde_json::json!({"enabled":false,"required_roles":[]}));
+    if requires_login_otp(
+        &policy,
+        &roles_from_json(&row.roles, &row.role),
+        row.login_2fa_enabled_override,
+    ) {
+        return Err(AppError::Validation("Tu cuenta requiere verificación adicional. Accede con correo, contraseña y código temporal.".into()));
+    }
+    let linked = sqlx::query("UPDATE accounts_userprofile SET google_subject_lookup=$1 WHERE id=$2 AND (google_subject_lookup IS NULL OR google_subject_lookup=$1)").bind(subject_lookup).bind(row.id).execute(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
+    if linked.rows_affected() != 1 {
+        return Err(AppError::Unauthorized);
+    }
+    let role = row.role.clone();
+    let mut response = finish_login(&state, &headers, &row, &role, "google").await?;
+    response.headers_mut().append(
+        SET_COOKIE,
+        "uasspain_google_nonce=; Path=/api/auth/google/; HttpOnly; SameSite=Strict; Max-Age=0"
+            .parse()
+            .map_err(|_| AppError::Internal)?,
+    );
+    Ok(response)
+}
+
+// Google JWKS verifies the signature; bind its claims to this application.
+fn validated_google_email(
+    token: &serde_json::Value,
+    client_id: &str,
+    now: i64,
+) -> Result<String, AppError> {
+    let expiry = token
+        .get("exp")
+        .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()));
+    let issuer = token.get("iss").and_then(serde_json::Value::as_str);
+    let issued = token
+        .get("iat")
+        .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()));
+    if token.get("aud").and_then(serde_json::Value::as_str) != Some(client_id)
+        || !matches!(
+            issuer,
+            Some("accounts.google.com" | "https://accounts.google.com")
+        )
+        || !expiry.is_some_and(|exp| exp > now)
+        || token
+            .get("nbf")
+            .is_some_and(|value| !value.as_i64().is_some_and(|nbf| nbf <= now))
+        || !issued.is_some_and(|iat| iat <= now + 60)
+        || token
+            .get("azp")
+            .is_some_and(|value| value.as_str() != Some(client_id))
+        || !token
+            .get("email_verified")
+            .is_some_and(|value| value == true || value.as_str() == Some("true"))
+        || !token
+            .get("sub")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|subject| !subject.is_empty())
+    {
+        return Err(AppError::Unauthorized);
+    }
+    let email = token
+        .get("email")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(AppError::Unauthorized)?;
+    let email = crate::registration::normalize_email(email).map_err(|_| AppError::Unauthorized)?;
+    if !email.ends_with("@gmail.com")
+        && !token
+            .get("hd")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|domain| !domain.is_empty())
+    {
+        return Err(AppError::Unauthorized);
+    }
+    Ok(email)
 }
 
 async fn finish_login(
@@ -552,6 +735,8 @@ pub async fn validate_active_session(
             "/api/auth/login/"
                 | "/api/auth/logout/"
                 | "/api/auth/register/"
+                | "/api/auth/google/"
+                | "/api/auth/google/challenge/"
                 | "/api/auth/verify-otp/"
                 | "/api/auth/resend-otp/"
                 | "/api/auth/password-reset/"
@@ -768,7 +953,7 @@ fn env_i64(name: &str, fallback: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Claims, require_role};
+    use super::{Claims, TokenService, consume_google_proof, require_role, validated_google_email};
     use uuid::Uuid;
 
     fn claims(role: &str) -> Claims {
@@ -791,7 +976,42 @@ mod tests {
     }
 
     #[test]
-    fn password_login_applies_the_account_otp_policy() {
+    fn google_claims_bind_issuer_audience_expiry_and_verified_identity() {
+        let valid = serde_json::json!({"aud":"client-id","azp":"client-id","iss":"https://accounts.google.com", "iat":"900","exp":"1100","sub":"provider-subject","email_verified":"true","email":" User@EXAMPLE.COM ", "hd":"example.com"});
+        assert_eq!(
+            validated_google_email(&valid, "client-id", 1000).unwrap(),
+            "user@example.com"
+        );
+        for (key, value) in [
+            ("aud", serde_json::json!("other")),
+            ("azp", serde_json::json!("other")),
+            ("iss", serde_json::json!("https://attacker.example")),
+            ("exp", serde_json::json!("1000")),
+            ("iat", serde_json::json!("1200")),
+            ("nbf", serde_json::json!(1001)),
+            ("sub", serde_json::json!("")),
+            ("email_verified", serde_json::json!(false)),
+            ("email", serde_json::json!("invalid")),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[key] = value;
+            assert!(
+                validated_google_email(&invalid, "client-id", 1000).is_err(),
+                "accepted invalid {key}"
+            );
+        }
+        let mut external_email = valid.clone();
+        external_email.as_object_mut().unwrap().remove("hd");
+        assert!(validated_google_email(&external_email, "client-id", 1000).is_err());
+        external_email["email"] = serde_json::json!("user@gmail.com");
+        assert!(validated_google_email(&external_email, "client-id", 1000).is_ok());
+        let mut absent_audience = valid;
+        absent_audience.as_object_mut().unwrap().remove("aud");
+        assert!(validated_google_email(&absent_audience, "client-id", 1000).is_err());
+    }
+
+    #[test]
+    fn federated_and_password_login_share_the_account_otp_policy() {
         let policy = serde_json::json!({"enabled":true,"required_roles":["admin"]});
         let roles = vec!["instructor".to_owned(), "admin".to_owned()];
         assert!(super::requires_login_otp(&policy, &roles, None));
@@ -806,5 +1026,28 @@ mod tests {
             &[],
             Some(true)
         ));
+    }
+
+    #[test]
+    fn google_nonce_is_signed_bound_to_its_type_and_consumed_once() {
+        let issuer = TokenService::for_test();
+        let encoded = issuer
+            .issue(0, Uuid::nil(), "google", "google_nonce", 5, "nonce-fixture")
+            .unwrap();
+        let proof = issuer.decode(&encoded, "google_nonce").unwrap();
+        assert_eq!(proof.session_key, "nonce-fixture");
+        assert!(issuer.decode(&encoded, "access").is_err());
+        assert!(
+            issuer
+                .decode(&format!("{encoded}tampered"), "google_nonce")
+                .is_err()
+        );
+        let now = chrono::Utc::now().timestamp() as usize;
+        assert!(consume_google_proof(&proof, now).is_ok());
+        assert!(consume_google_proof(&proof, now).is_err());
+        let mut expired = proof;
+        expired.jti = Uuid::new_v4();
+        expired.exp = now;
+        assert!(consume_google_proof(&expired, now).is_err());
     }
 }

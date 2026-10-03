@@ -28,7 +28,8 @@ El comando muestra las contraseñas en la consola del usuario. No copie su salid
 a documentación, capturas ni commits. Si cambia una contraseña desde la
 aplicación, esa copia local no se actualiza automáticamente.
 
-El acceso con Google se ha retirado por petición del usuario: botón, librería,
-endpoints, configuración y avisos administrativos. Se conserva sin cambios la
-migración histórica `0007_google_subject.sql` para mantener la compatibilidad
-del esquema y sus checksums SQLx.
+El [acceso con Google](GOOGLE_AUTH.md) está restaurado y requiere configurar un
+Client ID autorizado. Estas dos cuentas ficticias usan contraseña; sus emails
+no son cuentas Google. Se conserva sin cambios la migración histórica
+`0007_google_subject.sql` para mantener la compatibilidad del esquema y sus
+checksums SQLx.

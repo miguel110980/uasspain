@@ -40,6 +40,7 @@ export default function AdminConfiguracion() {
     const p = status.platform || {};
     const redis = status.redis || {};
     const smtp = status.smtp || {};
+    const oauth = status.google_oauth || {};
     const users = status.users || {};
     const sec = status.security || {};
     const twoFactor = status.two_factor || {};
@@ -70,6 +71,7 @@ export default function AdminConfiguracion() {
         { label: 'Alumnos', value: String(users.alumno ?? 0) },
       ],
       integraciones: [
+        { label: 'Google OAuth', value: oauth.configured ? 'Configurado' : 'No configurado', estado: oauth.configured ? 'ok' : 'warning' },
         { label: 'WebSockets', value: ws.value, estado: ws.status === 'ok' ? 'ok' : 'warning' },
         { label: 'Backend de canales', value: redis.backend || status?.websockets?.backend || 'inmemory' },
         { label: '2FA por roles', value: twoFactor.enabled ? ((twoFactor.required_roles || []).join(', ') || 'Sin roles obligatorios') : 'Desactivada', estado: twoFactor.enabled ? 'ok' : 'warning' },

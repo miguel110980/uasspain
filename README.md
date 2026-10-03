@@ -4,7 +4,7 @@ Plataforma de formacion UAS con frontend React 19/TypeScript, API Rust con Axum,
 
 ## Funciones actuales
 
-- Autenticacion por correo y contraseña, OTP, sesiones y roles `admin`, `instructor` y `alumno`.
+- Autenticacion por correo y contraseña, OTP, Google Identity Services y roles `admin`, `instructor` y `alumno`.
 - Gestion de usuarios, examenes, materiales, resultados, conexiones, chat y videollamadas.
 - Blog y catalogo de formacion dinamicos administrados desde la SPA.
 - Backups cifrados locales/SFTP, comprobacion, retencion y restauracion auditada.
@@ -34,6 +34,10 @@ En una instalacion nueva, con volumen vacio y sin clave existente, añada
 `-InitializeKey`. En cada reinicio de PostgreSQL ejecute el mismo script; hasta
 recibir la clave protegida permanece bloqueado. Las migraciones Rust siguen
 siendo la unica fuente del esquema. Consulte [despliegue](docs/DEPLOYMENT.md).
+
+Para habilitar Google, configure un Client ID web y el origen autorizado como
+se explica en [acceso con Google](docs/GOOGLE_AUTH.md). Las
+[cuentas de prueba locales](docs/TEST_ACCOUNTS.md) están disponibles con contraseña.
 
 ## Arquitectura
 

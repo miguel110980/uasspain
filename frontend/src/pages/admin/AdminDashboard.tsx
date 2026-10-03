@@ -18,6 +18,7 @@ function buildServices(status) {
   if (!status) return [];
   const dbOk = databaseConnected(status);
   const smtp = status.smtp || {};
+  const oauth = status.google_oauth || {};
   const ws = websocketServiceStatus(status);
   return [
     { name: 'API REST', status: dbOk ? 'ok' : 'err', value: dbOk ? 'Online' : 'Degradado' },
@@ -27,6 +28,7 @@ function buildServices(status) {
       value: ws.value,
     },
     { name: 'SMTP', status: smtp.configured ? 'ok' : 'warn', value: smtp.configured ? 'Configurado' : 'Sin credenciales' },
+    { name: 'Google OAuth', status: oauth.configured ? 'ok' : 'warn', value: oauth.configured ? 'Listo' : 'Pendiente' },
     { name: 'Modo', status: status.platform?.production ? 'ok' : (status.platform?.debug ? 'warn' : 'ok'), value: status.platform?.production ? 'Producción' : 'Desarrollo' },
   ];
 }
