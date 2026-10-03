@@ -227,6 +227,14 @@ services:
       JWT_REFRESH_DAYS: "7"
       MEDIA_ROOT: /app/media
       BACKUP_STORAGE_PATH: /app/backups
+      TZ: ${TZ:-Europe/Madrid}
+      BACKUP_EXTERNAL_1_KEY_FILE: ${BACKUP_EXTERNAL_1_KEY_FILE:-/run/backup-secrets/external_1.key}
+      BACKUP_EXTERNAL_1_KNOWN_HOSTS_FILE: ${BACKUP_EXTERNAL_1_KNOWN_HOSTS_FILE:-/run/backup-secrets/known_hosts}
+      BACKUP_EXTERNAL_1_VPN_IP: ${BACKUP_EXTERNAL_1_VPN_IP:-}
+      BACKUP_EXTERNAL_2_KEY_FILE: ${BACKUP_EXTERNAL_2_KEY_FILE:-/run/backup-secrets/external_2.key}
+      BACKUP_EXTERNAL_2_KNOWN_HOSTS_FILE: ${BACKUP_EXTERNAL_2_KNOWN_HOSTS_FILE:-/run/backup-secrets/known_hosts}
+      BACKUP_EXTERNAL_2_VPN_IP: ${BACKUP_EXTERNAL_2_VPN_IP:-}
+      BACKUP_LOCAL_ALLOWED_ROOTS: ${BACKUP_LOCAL_ALLOWED_ROOTS:-}
       BACKUP_ENCRYPTION_ENABLED: "true"
       BACKUP_SCHEDULER_ENABLED: "true"
       BACKUP_REQUIRE_VPN: "true"
@@ -254,6 +262,7 @@ services:
       - backups_data:/app/backups
       - media_data:/app/media
       - backup_keys:/app/backup_keys
+      - ./.secrets/backup-sftp:/run/backup-secrets:ro
       - ./nginx/allowed_hosts.conf:/app/config/allowed_hosts.conf:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/uasspain-backend", "--healthcheck"]

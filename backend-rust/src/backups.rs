@@ -42,10 +42,13 @@ pub struct BackupJob {
     size_bytes: i64,
     encrypted: bool,
     checksum: String,
+    #[serde(skip_serializing)]
     storage_path: String,
+    #[serde(skip_serializing)]
     media_path: String,
     media_checksum: String,
     media_size_bytes: i64,
+    #[serde(skip_serializing)]
     remote_paths: Value,
     destinations: Value,
     verified: bool,
@@ -53,11 +56,13 @@ pub struct BackupJob {
     verified_checksum: String,
     restore_tested: bool,
     restore_tested_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "serialize_restore_test_result")]
     restore_test_result: String,
     initiated_by: String,
     restored_by: String,
     restored_at: Option<DateTime<Utc>>,
     data_loss_window_seconds: i32,
+    #[serde(serialize_with = "serialize_safe_error")]
     error: String,
     created_date: DateTime<Utc>,
     parent_backup_id: Option<Uuid>,
@@ -65,6 +70,7 @@ pub struct BackupJob {
     chain_index: i32,
     manifest: Value,
     manifest_checksum: String,
+    #[serde(skip_serializing)]
     manifest_path: String,
     backup_format_version: i32,
     encryption_key_id: String,
@@ -86,7 +92,9 @@ pub struct BackupServer {
     sftp_port: i32,
     sftp_user: String,
     sftp_remote_path: String,
+    #[serde(skip_serializing)]
     sftp_key_path: String,
+    #[serde(skip_serializing)]
     sftp_known_hosts: String,
     is_offsite: bool,
     status: String,
@@ -96,8 +104,12 @@ pub struct BackupServer {
     last_backup_status: String,
     disk_total_bytes: i64,
     disk_used_bytes: i64,
+    #[serde(serialize_with = "serialize_safe_error")]
     error: String,
     created_date: DateTime<Utc>,
+    configuration_updated_at: DateTime<Utc>,
+    connection_checked_at: Option<DateTime<Utc>>,
+    connection_ok: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +117,7 @@ pub struct CreateRequest {
     #[serde(rename = "type")]
     job_type: Option<String>,
     encrypt: Option<bool>,
+    background: Option<bool>,
 }
 #[derive(Debug, Deserialize)]
 pub struct IdRequest {
@@ -136,6 +149,7 @@ struct ManifestArtifact {
 pub struct RestoreRequest {
     origin: String,
     confirmed: bool,
+    confirmation_text: Option<String>,
     job_id: Option<Uuid>,
     filename: Option<String>,
 }
@@ -150,6 +164,11 @@ pub struct ServerIdRequest {
 #[derive(Debug, Deserialize)]
 pub struct OriginQuery {
     origin: Option<String>,
+}
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 #[derive(Debug, Deserialize)]
 pub struct ConfigWrite {
@@ -183,13 +202,18 @@ pub async fn status(
     let pool = pool(&state)?;
     let latest = fetch_job(pool, None).await?;
     let config = config_value(pool).await?;
+    let last_scheduled: Option<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT MAX(created_date) FROM backups_backupjob WHERE initiated_by='scheduler'",
+    )
+    .fetch_one(pool)
+    .await?;
     let servers = fetch_servers(pool).await?;
     let pg_dump_available = pg_dump_path().is_file();
     let active: Vec<&BackupServer> = servers.iter().filter(|server| server.is_active).collect();
     let total_disk: i64 = active.iter().map(|server| server.disk_total_bytes).sum();
     let used_disk: i64 = active.iter().map(|server| server.disk_used_bytes).sum();
     let last_successful: Option<DateTime<Utc>> = sqlx::query_scalar(
-        "SELECT MAX(created_date) FROM backups_backupjob WHERE status IN ('completed','partial') AND verified=TRUE",
+        "SELECT MAX(created_date) FROM backups_backupjob WHERE status='completed' AND verified=TRUE",
     )
     .fetch_one(pool)
     .await?;
@@ -207,7 +231,7 @@ pub async fn status(
         Err(_) => None,
     };
     Ok(Json(json!({
-        "system_status": if pg_dump_available { "ok" } else { "error" },
+        "system_status": if !pg_dump_available {"error"} else if active.is_empty() {"not_configured"} else if latest.as_ref().is_some_and(|job|matches!(job.status.as_str(),"failed"|"connection_failed"|"verify_failed")) {"error"} else if latest.as_ref().is_none_or(|job|job.status!="completed" || !job.verified) || active.iter().any(|server|server.status!="online") {"attention"} else {"ok"},
         "pg_dump_available": pg_dump_available,
         "server2_ip": std::env::var("VPN_SERVER2_IP").unwrap_or_else(|_| "10.50.0.2".into()),
         "last_backup": latest.as_ref().map(|job| job.created_date),
@@ -215,13 +239,19 @@ pub async fn status(
         "last_backup_status": latest.as_ref().map_or("none", |job| &job.status),
         "backup_size_bytes": latest.as_ref().map_or(0, |job| job.size_bytes),
         "backup_checksum": latest.as_ref().map_or("", |job| &job.checksum),
-        "next_backup": config.get("next_backup").and_then(Value::as_str).unwrap_or("03:00"),
+        "next_backup": if env_bool("BACKUP_SCHEDULER_ENABLED",true) && !active.is_empty() { next_backup_time(&config, last_scheduled) } else {None},
+        "timezone": std::env::var("TZ").unwrap_or_else(|_| "Europe/Madrid".into()),
+        "operation": latest.as_ref().filter(|job|job.status=="creating"),
+        "restore_enabled": env_bool("PRODUCTION_RESTORE_ENABLED",false),
+        "restore_in_progress": state.restores.read().await.values().any(|value|matches!(value.get("state").and_then(Value::as_str),Some("queued"|"downloading"|"running"))),
+        "history_total": sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM backups_backupjob").fetch_one(pool).await?,
+        "storage_used_bytes": sqlx::query_scalar::<_,i64>("SELECT COALESCE(SUM(size_bytes+media_size_bytes),0)::bigint FROM backups_backupjob").fetch_one(pool).await?,
         "last_successful_backup": last_successful,
         "last_verification": last_verified,
         "last_restore": last_restore,
         "integrity_status": if latest.as_ref().is_some_and(|job| job.verified) { "ok" } else { "unknown" },
-        "encryption_enabled": env_bool("BACKUP_ENCRYPTION_ENABLED", true),
-        "backup_servers": active,
+        "encryption_enabled": true,
+        "backup_servers": active.iter().map(|server|server_view(server)).collect::<Vec<_>>(),
         "total_disk_bytes": total_disk,
         "used_disk_bytes": used_disk,
         "servers_online": active.iter().filter(|server| server.status == "online").count(),
@@ -241,114 +271,41 @@ pub async fn test_connection(
     Json(input): Json<ServerIdRequest>,
 ) -> Result<Json<Value>, AppError> {
     let claims = admin(&state, &headers)?;
-    crate::runtime_config::audit(&state, claims.profile_id, "backup_connection_test").await?;
     let id = input
         .server_id
-        .ok_or_else(|| AppError::Validation("server_id es requerido.".into()))?;
-    let server = fetch_server(pool(&state)?, id)
+        .ok_or_else(|| AppError::Validation("Selecciona un destino.".into()))?;
+    let mut tx = pool(&state)?.begin().await?;
+    let server = sqlx::query_as::<_, BackupServer>(&server_select("WHERE id=$1 FOR UPDATE"))
+        .bind(id)
+        .fetch_optional(&mut *tx)
         .await?
         .ok_or(AppError::NotFound)?;
-    if server.transfer_protocol != "sftp" {
-        let path = std::path::Path::new(&server.smb_share);
-        let mut ok = path.is_absolute()
-            && !server.smb_share.contains("..")
-            && tokio::fs::metadata(path).await.is_ok_and(|m| m.is_dir());
-        if ok {
-            let probe = path.join(format!(".uasspain-probe-{}", Uuid::new_v4()));
-            match tokio::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&probe)
-                .await
-            {
-                Ok(file) => {
-                    drop(file);
-                    ok = tokio::fs::remove_file(&probe).await.is_ok();
-                }
-                Err(_) => ok = false,
-            }
-        }
-        return Ok(Json(
-            json!({"ok":ok,"detail":if ok {"Directorio del destino accesible en el contenedor."}else{"Destino no montado o no accesible desde el contenedor."}}),
-        ));
-    }
-    enforce_vpn_destination(&server)?;
-    if server.sftp_host.trim().is_empty() || server.sftp_user.trim().is_empty() {
-        return Err(AppError::Validation("SFTP host/user incompletos.".into()));
-    }
-    let key = PathBuf::from(&server.sftp_key_path);
-    let known_hosts = PathBuf::from(&server.sftp_known_hosts);
-    if !key.is_absolute() || !key.is_file() || !known_hosts.is_absolute() || !known_hosts.is_file()
-    {
-        return Ok(Json(
-            json!({"ok":false,"detail":"Configuración SFTP incompleta: sftp_key_path, sftp_known_hosts"}),
-        ));
-    }
-    let batch = std::env::temp_dir().join(format!("uasspain-sftp-probe-{}.batch", Uuid::new_v4()));
-    tokio::fs::write(&batch, b"ls /\n")
-        .await
-        .map_err(|_| AppError::Internal)?;
-    let mut command = tokio::process::Command::new("sftp");
-    command
-        .kill_on_drop(true)
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
-        .arg("StrictHostKeyChecking=yes")
-        .arg("-o")
-        .arg(format!("UserKnownHostsFile={}", known_hosts.display()))
-        .arg("-o")
-        .arg("PasswordAuthentication=no")
-        .arg("-i")
-        .arg(&key)
-        .arg("-P")
-        .arg(server.sftp_port.to_string())
-        .arg("-b")
-        .arg(&batch)
-        .arg(format!("{}@{}", server.sftp_user, server.sftp_host));
-    let outcome = tokio::time::timeout(std::time::Duration::from_secs(30), command.output()).await;
-    let _ = tokio::fs::remove_file(&batch).await;
-    let (ok, detail, error) = match outcome {
-        Ok(Ok(output)) if output.status.success() => (
-            true,
-            format!(
-                "Conexión SFTP verificada a {}:{}.",
-                server.sftp_host, server.sftp_port
-            ),
-            String::new(),
-        ),
-        Ok(Ok(output)) => {
-            let message = String::from_utf8_lossy(if output.stderr.is_empty() {
-                &output.stdout
-            } else {
-                &output.stderr
-            })
-            .trim()
-            .chars()
-            .take(500)
-            .collect::<String>();
-            (false, format!("Conexión SFTP fallida: {message}"), message)
-        }
-        Ok(Err(error)) => (false, format!("Error SFTP: {error}"), error.to_string()),
-        Err(_) => (
-            false,
-            "Conexión SFTP agotó el tiempo de espera.".into(),
-            "timeout".into(),
-        ),
+    let result = probe_destination(&server).await;
+    let (ok, detail, code) = match result {
+        Ok(()) => (true, "Conexión correcta.", "ok"),
+        Err(error) => (false, safe_error(&error), error_code(&error)),
     };
-    sqlx::query("UPDATE backups_backupserver SET status=$2,last_seen=CASE WHEN $2='online' THEN NOW() ELSE last_seen END,error=$3 WHERE id=$1")
-        .bind(id).bind(if ok {"online"} else {"offline"}).bind(error).execute(pool(&state)?).await?;
-    Ok(Json(json!({"ok":ok,"detail":detail})))
+    sqlx::query("UPDATE backups_backupserver SET connection_ok=$2,connection_checked_at=NOW(),status=$3,last_seen=CASE WHEN $2 THEN NOW() ELSE last_seen END,error=$4 WHERE id=$1")
+        .bind(id).bind(ok).bind(if ok {"online"} else {"offline"}).bind(if ok {""} else {code}).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO core_auditlog (id,profile_id,action,model_name,instance_id,extra,created_date,updated_date) VALUES ($1,$2,'backup_connection_test','BackupDestination',$3,$4,NOW(),NOW())")
+        .bind(Uuid::new_v4()).bind(claims.profile_id).bind(id.to_string()).bind(json!({"result":if ok {"success"}else{"failure"},"code":code})).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"ok":ok,"detail":detail,"code":code})))
 }
 
 pub async fn history(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<HistoryQuery>,
 ) -> Result<Json<Vec<BackupJob>>, AppError> {
     admin(&state, &headers)?;
-    let jobs = sqlx::query_as::<_, BackupJob>(&job_select("ORDER BY created_date DESC LIMIT 50"))
-        .fetch_all(pool(&state)?)
-        .await?;
+    let jobs = sqlx::query_as::<_, BackupJob>(&job_select(
+        "ORDER BY created_date DESC,id DESC LIMIT $1 OFFSET $2",
+    ))
+    .bind(query.limit.unwrap_or(50).clamp(1, 100))
+    .bind(query.offset.unwrap_or(0).max(0))
+    .fetch_all(pool(&state)?)
+    .await?;
     Ok(Json(jobs))
 }
 
@@ -365,9 +322,11 @@ pub async fn delete_backup(
         ));
     }
     let mut connection = pool(&state)?.acquire().await?;
+    connection.close_on_drop();
+    let mut operation_lock = crate::db::backup_operation_lock_connection().await?;
     let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
         .bind(BACKUP_LOCK_KEY)
-        .fetch_one(&mut *connection)
+        .fetch_one(&mut *operation_lock)
         .await?;
     if !locked {
         return Err(AppError::Validation(
@@ -421,7 +380,7 @@ pub async fn delete_backup(
     .await;
     let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(BACKUP_LOCK_KEY)
-        .execute(&mut *connection)
+        .execute(&mut *operation_lock)
         .await;
     result
 }
@@ -432,13 +391,16 @@ pub async fn create(
     Json(input): Json<CreateRequest>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     let claims = admin(&state, &headers)?;
-    let kind = input.job_type.unwrap_or_else(|| "incremental".into());
-    if !matches!(kind.as_str(), "full" | "incremental") {
+    let kind = input.job_type.unwrap_or_else(|| "automatic".into());
+    if !matches!(kind.as_str(), "automatic" | "full" | "incremental") {
         return Err(AppError::Validation("Tipo de backup no válido.".into()));
     }
-    let encrypt = input
-        .encrypt
-        .unwrap_or_else(|| env_bool("BACKUP_ENCRYPTION_ENABLED", true));
+    if input.encrypt == Some(false) {
+        return Err(AppError::Validation(
+            "El cifrado de las copias es obligatorio.".into(),
+        ));
+    }
+    let encrypt = true;
     let encrypted_email: String =
         sqlx::query_scalar("SELECT email FROM accounts_userprofile WHERE id=$1")
             .bind(claims.profile_id)
@@ -446,9 +408,11 @@ pub async fn create(
             .await?;
     let initiated_by = state.cipher.decrypt(&encrypted_email)?;
     let mut connection = pool(&state)?.acquire().await?;
+    connection.close_on_drop();
+    let mut operation_lock = crate::db::backup_operation_lock_connection().await?;
     let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
         .bind(BACKUP_LOCK_KEY)
-        .fetch_one(&mut *connection)
+        .fetch_one(&mut *operation_lock)
         .await?;
     if !locked {
         return Ok((
@@ -458,7 +422,55 @@ pub async fn create(
             ),
         ));
     }
-    let result = create_locked(&state, &mut connection, &initiated_by, &kind, encrypt).await;
+    let kind = effective_backup_kind(&mut connection, &kind).await?;
+    if input.background.unwrap_or(false) {
+        let id = Uuid::new_v4();
+        let chain = resolve_chain_context(&mut connection, &kind).await?;
+        insert_backup_job(&mut connection, id, &initiated_by, &chain).await?;
+        audit_event_connection(
+            &mut connection,
+            claims.profile_id,
+            "backup_create",
+            id,
+            json!({"result":"queued","requested_type":kind}),
+        )
+        .await?;
+        let task_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let outcome = create_locked(
+                &task_state,
+                &mut connection,
+                &initiated_by,
+                &kind,
+                true,
+                Some(id),
+            )
+            .await;
+            let success = outcome.as_ref().is_ok_and(|(_, Json(value))| {
+                value.pointer("/job/status").and_then(Value::as_str) == Some("completed")
+            });
+            if outcome.is_err() {
+                let _=sqlx::query("UPDATE backups_backupjob SET status='failed',finished_at=NOW(),error='operation_failed' WHERE id=$1").bind(id).execute(&mut *connection).await;
+            }
+            let _ = audit_event_connection(
+                &mut connection,
+                claims.profile_id,
+                "backup_create_result",
+                id,
+                json!({"result":if success {"success"}else{"failure"}}),
+            )
+            .await;
+            let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(BACKUP_LOCK_KEY)
+                .execute(&mut *operation_lock)
+                .await;
+        });
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({"job_id":id,"state":"creating","detail":"Copia en curso."})),
+        ));
+    }
+    let result = create_locked(&state, &mut connection, &initiated_by, &kind, encrypt, None).await;
     if let Ok((status, Json(value))) = &result {
         let instance_id = value
             .pointer("/job/id")
@@ -476,7 +488,7 @@ pub async fn create(
     }
     let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(BACKUP_LOCK_KEY)
-        .execute(&mut *connection)
+        .execute(&mut *operation_lock)
         .await;
     result
 }
@@ -487,18 +499,13 @@ async fn create_locked(
     initiated_by: &str,
     kind: &str,
     encrypt: bool,
+    existing_id: Option<Uuid>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
-    let id = Uuid::new_v4();
+    let id = existing_id.unwrap_or_else(Uuid::new_v4);
     let chain = resolve_chain_context(connection, kind).await?;
-    sqlx::query("INSERT INTO backups_backupjob (id,job_type,status,started_at,duration_seconds,size_bytes,encrypted,checksum,storage_path,media_path,media_checksum,media_size_bytes,remote_paths,destinations,verified,verified_checksum,restore_tested,restore_test_result,initiated_by,restored_by,data_loss_window_seconds,error,created_date,parent_backup_id,base_full_id,chain_index) VALUES ($1,$2,'creating',NOW(),0,0,false,'','','','',0,'[]'::jsonb,'{}'::jsonb,false,'',false,'',$3,'',0,'',NOW(),$4,$5,$6)")
-        .bind(id)
-        .bind(&chain.effective_kind)
-        .bind(initiated_by)
-        .bind(chain.parent_backup_id)
-        .bind(chain.base_full_id)
-        .bind(chain.chain_index)
-        .execute(&mut **connection)
-        .await?;
+    if existing_id.is_none() {
+        insert_backup_job(connection, id, initiated_by, &chain).await?;
+    }
     let started = Instant::now();
     match dump_to_disk(state, &chain.effective_kind, encrypt).await {
         Ok((path, checksum, size, media)) => {
@@ -540,6 +547,7 @@ async fn create_locked(
             );
             sqlx::query("UPDATE backups_backupjob SET status=$2,finished_at=NOW(),duration_seconds=$3,size_bytes=$4,encrypted=$5,checksum=$6,storage_path=$7,media_path=$8,media_checksum=$9,media_size_bytes=$10,remote_paths=$11,destinations=$12,verified=true,verified_at=NOW(),verified_checksum=$6,error=$13,manifest=$14,manifest_checksum=$15,manifest_path=$16,encryption_key_id=$17,backup_format_version=2 WHERE id=$1")
                 .bind(id).bind(&transfers.status).bind(elapsed).bind(i64::try_from(size).unwrap_or(i64::MAX)).bind(encrypt).bind(&checksum).bind(path.to_string_lossy().as_ref()).bind(media_path).bind(media_checksum).bind(media_size).bind(&transfers.remote_paths).bind(&transfers.destinations).bind(&transfers.error).bind(&manifest.value).bind(&manifest.checksum).bind(manifest.path.to_string_lossy().as_ref()).bind(&manifest.key_id).execute(&mut **connection).await?;
+            let _ = apply_retention_locked(state, connection, None).await;
             let job = fetch_job_connection(connection, id)
                 .await?
                 .ok_or(AppError::Internal)?;
@@ -561,12 +569,41 @@ async fn create_locked(
                 .bind(id).bind(elapsed).bind(&message).execute(&mut **connection).await?;
             Ok((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"detail":"Backup fallido.","error":message})),
+                Json(
+                    json!({"detail":"No se pudo crear la copia.","error":safe_error(&message),"code":error_code(&message)}),
+                ),
             ))
         }
     }
 }
 
+async fn insert_backup_job(
+    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+    id: Uuid,
+    initiated_by: &str,
+    chain: &ChainContext,
+) -> Result<(), AppError> {
+    sqlx::query("INSERT INTO backups_backupjob (id,job_type,status,started_at,duration_seconds,size_bytes,encrypted,checksum,storage_path,media_path,media_checksum,media_size_bytes,remote_paths,destinations,verified,verified_checksum,restore_tested,restore_test_result,initiated_by,restored_by,data_loss_window_seconds,error,created_date,parent_backup_id,base_full_id,chain_index) VALUES ($1,$2,'creating',NOW(),0,0,false,'','','','',0,'[]'::jsonb,'{}'::jsonb,false,'',false,'',$3,'',0,'',NOW(),$4,$5,$6)")
+        .bind(id)
+        .bind(&chain.effective_kind)
+        .bind(initiated_by)
+        .bind(chain.parent_backup_id)
+        .bind(chain.base_full_id)
+        .bind(chain.chain_index)
+        .execute(&mut **connection)
+        .await?;
+    Ok(())
+}
+async fn effective_backup_kind(
+    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+    requested: &str,
+) -> Result<String, AppError> {
+    if requested != "automatic" {
+        return Ok(requested.into());
+    }
+    let recent:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM backups_backupjob WHERE job_type='full' AND verified AND status IN ('completed','partial') AND created_date>NOW()-INTERVAL '7 days')").fetch_one(&mut **connection).await?;
+    Ok(if recent { "incremental" } else { "full" }.into())
+}
 async fn resolve_chain_context(
     connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
     requested_kind: &str,
@@ -816,14 +853,21 @@ async fn scheduler_tick(state: &AppState) -> Result<(), AppError> {
     )
     .fetch_one(pool)
     .await?;
-    if !schedule_due(&config, now, last_scheduled) {
+    if !fetch_servers(pool)
+        .await?
+        .iter()
+        .any(|server| server.is_active)
+        || !schedule_due(&config, now, last_scheduled)
+    {
         return Ok(());
     }
 
     let mut connection = pool.acquire().await?;
+    connection.close_on_drop();
+    let mut operation_lock = crate::db::backup_operation_lock_connection().await?;
     let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
         .bind(BACKUP_LOCK_KEY)
-        .fetch_one(&mut *connection)
+        .fetch_one(&mut *operation_lock)
         .await?;
     if !locked {
         return Ok(());
@@ -838,13 +882,12 @@ async fn scheduler_tick(state: &AppState) -> Result<(), AppError> {
         let kind = config
             .get("job_type")
             .and_then(Value::as_str)
-            .filter(|kind| matches!(*kind, "full" | "incremental"))
+            .filter(|kind| matches!(*kind, "automatic" | "full" | "incremental"))
             .unwrap_or("incremental");
-        let encrypt = config
-            .get("encrypt")
-            .and_then(Value::as_bool)
-            .unwrap_or_else(|| env_bool("BACKUP_ENCRYPTION_ENABLED", true));
-        let outcome = create_locked(state, &mut connection, "scheduler", kind, encrypt).await;
+        let encrypt = true;
+        let kind = effective_backup_kind(&mut connection, kind).await?;
+        let outcome =
+            create_locked(state, &mut connection, "scheduler", &kind, encrypt, None).await;
         match outcome {
             Ok((status, _)) if status.is_success() => {
                 tracing::info!(backup_type = kind, "scheduled backup completed");
@@ -857,7 +900,7 @@ async fn scheduler_tick(state: &AppState) -> Result<(), AppError> {
     }
     let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(BACKUP_LOCK_KEY)
-        .execute(&mut *connection)
+        .execute(&mut *operation_lock)
         .await;
     Ok(())
 }
@@ -935,6 +978,38 @@ fn parse_time(value: &str) -> Option<(u32, u32)> {
     (hour < 24 && minute < 60).then_some((hour, minute))
 }
 
+fn next_backup_time(
+    config: &Value,
+    last_scheduled: Option<DateTime<Utc>>,
+) -> Option<DateTime<Utc>> {
+    if config.get("frequency").and_then(Value::as_str) == Some("manual") {
+        return None;
+    }
+    let now = Utc::now();
+    let mut first = now.with_second(0)?.with_nanosecond(0)? + chrono::Duration::minutes(1);
+    if config.get("frequency").and_then(Value::as_str) == Some("every_n_days")
+        && let Some(last) = last_scheduled
+    {
+        let days = config
+            .get("interval_days")
+            .and_then(Value::as_i64)
+            .unwrap_or(3)
+            .clamp(1, 3650);
+        let earliest = last + chrono::Duration::days(days);
+        let rounded = earliest.with_second(0)?.with_nanosecond(0)?;
+        first = first.max(if rounded < earliest {
+            rounded + chrono::Duration::minutes(1)
+        } else {
+            rounded
+        });
+    }
+    // Walk instants, rather than wall-clock dates: skipped/repeated DST hours
+    // follow the same local-time rule as the scheduler.
+    (0..(370 * 24 * 60))
+        .map(|minute| first + chrono::Duration::minutes(minute))
+        .find(|time| schedule_due(config, time.with_timezone(&Local), last_scheduled))
+}
+
 async fn dump_to_disk(
     state: &AppState,
     kind: &str,
@@ -943,7 +1018,7 @@ async fn dump_to_disk(
     let root = backup_root().await?;
     check_local_capacity(state, &root).await?;
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-    let plain = root.join(format!(".tmp_{kind}_{timestamp}.dump"));
+    let plain = std::env::temp_dir().join(format!(".tmp_{kind}_{timestamp}.dump"));
     let final_path = root.join(format!(
         "uasspain_{kind}_{timestamp}.sql.gz{}",
         if encrypt { ".enc" } else { "" }
@@ -951,6 +1026,7 @@ async fn dump_to_disk(
     let database_url = backup_database_url()?;
     let mut command = Command::new(pg_dump_path());
     command
+        .kill_on_drop(true)
         .args(["-F", "c", "-Z", "6", "-f"])
         .arg(&plain)
         .arg(database_url)
@@ -974,6 +1050,8 @@ async fn dump_to_disk(
         let _ = fs::remove_file(&plain).await;
         return Err("pg_dump generó un archivo vacío".into());
     }
+    let _ = fs::remove_file(&plain).await;
+    validate_dump_bytes(&bytes).await?;
     let final_bytes = if encrypt {
         state
             .cipher
@@ -987,6 +1065,32 @@ async fn dump_to_disk(
     let checksum = sha256(&final_bytes);
     let media = create_media_archive(state, &root, &timestamp.to_string(), encrypt).await?;
     Ok((final_path, checksum, final_bytes.len() as u64, media))
+}
+
+async fn validate_dump_bytes(bytes: &[u8]) -> Result<(), String> {
+    if !bytes.starts_with(b"PGDMP") {
+        return Err("Backup PostgreSQL corrupto".into());
+    }
+    let path = std::env::temp_dir().join(format!("uasspain-verify-{}.dump", Uuid::new_v4()));
+    fs::write(&path, bytes)
+        .await
+        .map_err(|_| "No hay espacio para validar backup")?;
+    let outcome = timeout(
+        Duration::from_secs(60),
+        Command::new(pg_tool_path("pg_restore"))
+            .kill_on_drop(true)
+            .arg("--list")
+            .arg(&path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status(),
+    )
+    .await;
+    let _ = fs::remove_file(&path).await;
+    match outcome {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        _ => Err("Archivo PostgreSQL corrupto o incompatible".into()),
+    }
 }
 
 async fn create_media_archive(
@@ -1005,7 +1109,7 @@ async fn create_media_archive(
     if media_root == backup_root {
         return Err("MEDIA_ROOT y BACKUP_STORAGE_PATH no pueden ser iguales.".into());
     }
-    let temporary = backup_root.join(format!(".tmp_media_{timestamp}.zip"));
+    let temporary = std::env::temp_dir().join(format!(".tmp_media_{timestamp}.zip"));
     let source = media_root.clone();
     let excluded = backup_root.to_path_buf();
     let output = temporary.clone();
@@ -1156,7 +1260,7 @@ async fn transfer_to_servers(
                 "server_name": server.name,
                 "status": status,
                 "path": path,
-                "error": error,
+                "error": safe_error(&error),
                 "protocol": server.transfer_protocol,
                 "offsite": server.is_offsite,
             }),
@@ -1169,11 +1273,7 @@ async fn transfer_to_servers(
             .execute(pool)
             .await;
     }
-    let status = if successes == active.len()
-        && ["local", "external_1", "external_2"]
-            .iter()
-            .all(|role| active.iter().any(|s| s.role == *role))
-    {
+    let status = if successes == active.len() {
         "completed"
     } else if successes > 0 {
         "partial"
@@ -1265,7 +1365,7 @@ async fn transfer_sftp(
     media: Option<&(PathBuf, String, u64)>,
     manifest: Option<&(PathBuf, String, u64)>,
 ) -> Result<Vec<String>, String> {
-    enforce_vpn_destination_string(server)?;
+    let checked_host = checked_sftp_host(server).await?;
     if !valid_sftp_identity(&server.sftp_host, &server.sftp_user)
         || !safe_remote_path(&server.sftp_remote_path)
     {
@@ -1322,6 +1422,7 @@ async fn transfer_sftp(
     let outcome = timeout(
         Duration::from_secs(300),
         Command::new("sftp")
+            .kill_on_drop(true)
             .arg("-o")
             .arg("BatchMode=yes")
             .arg("-o")
@@ -1336,7 +1437,9 @@ async fn transfer_sftp(
             .arg(server.sftp_port.to_string())
             .arg("-b")
             .arg(&batch)
-            .arg(format!("{}@{}", server.sftp_user, server.sftp_host))
+            .arg("-o")
+            .arg(format!("HostKeyAlias={}", ssh_host_alias(server)))
+            .arg(format!("{}@{}", server.sftp_user, checked_host))
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .output(),
@@ -1420,38 +1523,18 @@ fn valid_sftp_identity(host: &str, user: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
 }
 
+fn ssh_host_alias(server: &BackupServer) -> String {
+    if server.sftp_port == 22 {
+        server.sftp_host.clone()
+    } else {
+        format!("[{}]:{}", server.sftp_host, server.sftp_port)
+    }
+}
+
 fn safe_remote_path(path: &str) -> bool {
     path.starts_with('/')
         && !path.contains("..")
         && !path.contains(['\n', '\r', '"', ';', '|', '&', '`'])
-}
-
-fn enforce_vpn_destination(server: &BackupServer) -> Result<(), AppError> {
-    enforce_vpn_destination_string(server).map_err(AppError::Validation)
-}
-
-fn enforce_vpn_destination_string(server: &BackupServer) -> Result<(), String> {
-    if !env_bool("BACKUP_REQUIRE_VPN", true) {
-        return Ok(());
-    }
-    let vpn_ip = server
-        .vpn_ip
-        .as_deref()
-        .ok_or_else(|| "El destino remoto no tiene una IP VPN configurada.".to_owned())?;
-    let configured: std::net::IpAddr = vpn_ip
-        .parse()
-        .map_err(|_| "La IP VPN configurada no es válida.".to_owned())?;
-    let host: std::net::IpAddr = server.sftp_host.parse().map_err(|_| {
-        "Con VPN obligatoria, sftp_host debe ser la IP privada del peer.".to_owned()
-    })?;
-    let private = match host {
-        std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
-        std::net::IpAddr::V6(ip) => (ip.segments()[0] & 0xfe00) == 0xfc00 || ip.is_loopback(),
-    };
-    if host != configured || !private {
-        return Err("El destino SFTP no coincide con la IP privada del peer VPN.".into());
-    }
-    Ok(())
 }
 
 pub async fn verify(
@@ -1466,7 +1549,8 @@ pub async fn verify(
     let path = safe_job_path(&job.storage_path)
         .await
         .ok_or_else(|| AppError::Validation("Archivo no encontrado".into()))?;
-    let actual = sha256(&fs::read(path).await.map_err(|_| AppError::NotFound)?);
+    let stored = fs::read(path).await.map_err(|_| AppError::NotFound)?;
+    let actual = sha256(&stored);
     let mut errors = Vec::new();
     if actual != job.checksum {
         errors.push("database_checksum_mismatch");
@@ -1514,6 +1598,35 @@ pub async fn verify(
         .await?;
         if !chain_valid {
             errors.push("incremental_chain_broken");
+        }
+    }
+    let dump = if job.encrypted {
+        state.cipher.decrypt_backup(&stored).ok()
+    } else {
+        Some(stored)
+    };
+    if let Some(dump) = dump {
+        if validate_dump_bytes(&dump).await.is_err() {
+            errors.push("database_archive_invalid");
+        }
+    } else {
+        errors.push("decryption_failed");
+    }
+    if !job.media_path.is_empty() {
+        let media = fs::read(
+            safe_job_path(&job.media_path)
+                .await
+                .ok_or(AppError::NotFound)?,
+        )
+        .await
+        .map_err(|_| AppError::NotFound)?;
+        let bytes = if job.encrypted {
+            state.cipher.decrypt_backup(&media).ok()
+        } else {
+            Some(media)
+        };
+        if bytes.is_none_or(|bytes| zip::ZipArchive::new(Cursor::new(bytes)).is_err()) {
+            errors.push("media_archive_invalid");
         }
     }
     let valid = errors.is_empty();
@@ -1611,41 +1724,71 @@ pub async fn retention(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    admin(&state, &headers)?;
-    let cfg = config_value(pool(&state)?).await?;
-    let mut deleted = 0_u64;
-    let mut errors = Vec::new();
-    for kind in ["full", "incremental"] {
-        let days = cfg
-            .get(format!("retention_{kind}"))
-            .and_then(Value::as_i64)
-            .unwrap_or(if kind == "full" { 4 } else { 30 })
-            .clamp(1, 3650);
-        let jobs = sqlx::query_as::<_, BackupJob>(&job_select("WHERE job_type=$1 AND created_date < NOW() - ($2 * INTERVAL '1 day') AND id <> (SELECT id FROM backups_backupjob WHERE verified=TRUE AND status IN ('completed','partial') ORDER BY created_date DESC LIMIT 1) AND NOT EXISTS (SELECT 1 FROM backups_backupjob child WHERE child.parent_backup_id=backups_backupjob.id OR child.base_full_id=backups_backupjob.id)"))
-            .bind(kind).bind(days).fetch_all(pool(&state)?).await?;
-        for job in jobs {
-            let removed = sqlx::query("DELETE FROM backups_backupjob WHERE id=$1 AND NOT EXISTS (SELECT 1 FROM backups_backupjob child WHERE child.parent_backup_id=$1 OR child.base_full_id=$1)")
-                .bind(job.id)
-                .execute(pool(&state)?)
-                .await?;
+    let claims = admin(&state, &headers)?;
+    let mut connection = pool(&state)?.acquire().await?;
+    connection.close_on_drop();
+    let mut operation_lock = crate::db::backup_operation_lock_connection().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+        .bind(BACKUP_LOCK_KEY)
+        .fetch_one(&mut *operation_lock)
+        .await?;
+    if !locked {
+        return Err(AppError::Validation(
+            "Hay una copia o restauración en curso.".into(),
+        ));
+    }
+    let result = apply_retention_locked(&state, &mut connection, Some(claims.profile_id)).await;
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(BACKUP_LOCK_KEY)
+        .execute(&mut *operation_lock)
+        .await;
+    result.map(Json)
+}
+async fn apply_retention_locked(
+    state: &AppState,
+    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+    actor: Option<Uuid>,
+) -> Result<Value, AppError> {
+    let cfg = config_value(pool(state)?).await?;
+    let mut deleted = 0u64;
+    // Remove old leaves first. Requerying allows ancestors to become leaves,
+    // while the newest verified point and every dependency needed by it remain.
+    loop {
+        let mut candidates = Vec::new();
+        for kind in ["incremental", "full"] {
+            let days = cfg
+                .get(format!("retention_{kind}"))
+                .and_then(Value::as_i64)
+                .unwrap_or(30)
+                .clamp(1, 3650);
+            let jobs=sqlx::query_as::<_,BackupJob>(&job_select("WHERE job_type=$1 AND status<>'creating' AND created_date<NOW()-($2*INTERVAL '1 day') AND id IS DISTINCT FROM (SELECT id FROM backups_backupjob WHERE verified AND status IN ('completed','partial') ORDER BY created_date DESC,id DESC LIMIT 1) AND id IS DISTINCT FROM (SELECT id FROM backups_backupjob WHERE verified AND manifest_checksum<>'' AND status IN ('completed','partial') ORDER BY created_date DESC,id DESC LIMIT 1) AND NOT EXISTS(SELECT 1 FROM backups_backupjob child WHERE child.parent_backup_id=backups_backupjob.id OR child.base_full_id=backups_backupjob.id) LIMIT 100"))
+                .bind(kind).bind(days).fetch_all(&mut **connection).await?;
+            candidates.extend(jobs);
+        }
+        if candidates.is_empty() {
+            break;
+        }
+        for job in candidates {
+            let removed=sqlx::query("DELETE FROM backups_backupjob WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM backups_backupjob child WHERE child.parent_backup_id=$1 OR child.base_full_id=$1)").bind(job.id).execute(&mut **connection).await?;
             if removed.rows_affected() == 0 {
-                errors.push(format!("{}: protegido por cadena incremental", job.id));
                 continue;
             }
             for raw in [&job.storage_path, &job.media_path, &job.manifest_path] {
-                if let Some(path) = safe_job_path(raw).await
-                    && let Err(error) = fs::remove_file(&path).await
-                    && error.kind() != std::io::ErrorKind::NotFound
-                {
-                    errors.push(format!("{}: {error}", job.id));
+                if let Some(path) = safe_job_path(raw).await {
+                    let _ = fs::remove_file(path).await;
                 }
             }
+            sqlx::query("INSERT INTO core_auditlog (id,created_date,updated_date,model_name,instance_id,action,extra,profile_id) VALUES ($1,NOW(),NOW(),'BackupJob',$2,'backup_retention_delete',$3,$4)")
+                .bind(Uuid::new_v4()).bind(job.id.to_string()).bind(json!({"result":"success","job_type":job.job_type})).bind(actor).execute(&mut **connection).await?;
             deleted += 1;
         }
+        if deleted >= 1000 {
+            break;
+        }
     }
-    Ok(Json(
-        json!({"detail":format!("Eliminados {deleted} backups antiguos."),"deleted":deleted,"errors":errors}),
-    ))
+    Ok(
+        json!({"detail":format!("Eliminadas {deleted} copias antiguas. Se conservan los puntos necesarios para recuperar los datos."),"deleted":deleted}),
+    )
 }
 
 pub async fn restore(
@@ -1657,7 +1800,7 @@ pub async fn restore(
     if !env_bool("PRODUCTION_RESTORE_ENABLED", false) {
         return Err(AppError::Unavailable);
     }
-    if !input.confirmed {
+    if !input.confirmed || input.confirmation_text.as_deref() != Some("RESTAURAR") {
         return Err(AppError::Validation(
             "La restauración requiere confirmación explícita.".into(),
         ));
@@ -1706,7 +1849,8 @@ pub async fn restore(
         ));
     }
     validate_restore_metadata(&state, &job).await?;
-    let mut lock_connection = pool(&state)?.acquire().await?;
+    let mut lock_connection = crate::db::backup_operation_lock_connection().await?;
+    lock_connection.close_on_drop();
     let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
         .bind(BACKUP_LOCK_KEY)
         .fetch_one(&mut *lock_connection)
@@ -1887,6 +2031,32 @@ async fn validate_restore_metadata(state: &AppState, job: &BackupJob) -> Result<
             "El manifest no corresponde al backup seleccionado.".into(),
         ));
     }
+    let current_schema: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(version),0) FROM _sqlx_migrations WHERE success")
+            .fetch_one(pool(state)?)
+            .await?;
+    let backup_schema = job
+        .manifest
+        .pointer("/source/migration_version")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| AppError::Validation("La copia no indica una versión compatible.".into()))?;
+    if backup_schema > current_schema {
+        return Err(AppError::Validation("La copia pertenece a otra versión de la aplicación. Utiliza la recuperación compatible indicada en la documentación.".into()));
+    }
+    let current_pg: String = sqlx::query_scalar("SHOW server_version")
+        .fetch_one(pool(state)?)
+        .await?;
+    if job
+        .manifest
+        .pointer("/source/postgresql_version")
+        .and_then(Value::as_str)
+        .and_then(|version| version.split('.').next())
+        != current_pg.split('.').next()
+    {
+        return Err(AppError::Validation(
+            "La copia pertenece a otra versión de PostgreSQL.".into(),
+        ));
+    }
     if job.job_type == "incremental" {
         let valid: bool = sqlx::query_scalar(
             "SELECT $1::uuid IS NOT NULL AND $2::uuid IS NOT NULL AND $3 > 0 \
@@ -1940,7 +2110,7 @@ async fn execute_remote_restore(
                     "filename": filename,
                     "checksum_verified": false,
                     "rolled_back": false,
-                    "error": error,
+                    "error": safe_error(&error),
                     "verify_errors": ["No se pudo descargar y verificar el origen remoto."],
                 }),
             );
@@ -2062,7 +2232,7 @@ async fn download_sftp_backup(
     destination: &Path,
     sidecar: &Path,
 ) -> Result<(), String> {
-    enforce_vpn_destination_string(server)?;
+    let checked_host = checked_sftp_host(server).await?;
     if !valid_sftp_identity(&server.sftp_host, &server.sftp_user)
         || !safe_remote_path(&server.sftp_remote_path)
     {
@@ -2089,6 +2259,7 @@ async fn download_sftp_backup(
     let outcome = timeout(
         Duration::from_secs(300),
         Command::new("sftp")
+            .kill_on_drop(true)
             .arg("-o")
             .arg("BatchMode=yes")
             .arg("-o")
@@ -2103,7 +2274,9 @@ async fn download_sftp_backup(
             .arg(server.sftp_port.to_string())
             .arg("-b")
             .arg(&batch)
-            .arg(format!("{}@{}", server.sftp_user, server.sftp_host))
+            .arg("-o")
+            .arg(format!("HostKeyAlias={}", ssh_host_alias(server)))
+            .arg(format!("{}@{}", server.sftp_user, checked_host))
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .output(),
@@ -2222,7 +2395,7 @@ async fn execute_production_restore(
                     "checksum_verified": true,
                     "rolled_back": rolled_back,
                     "safety_backup_id": safety_id,
-                    "error": error,
+                    "error": safe_error(&error),
                     "verify_errors": [],
                 }),
             );
@@ -2255,6 +2428,9 @@ async fn production_restore(
     } else {
         stored
     };
+    validate_dump_bytes(&dump)
+        .await
+        .map_err(|error| (safe_error(&error).into(), false, None))?;
     let safety = create_safety_snapshot(state).await.map_err(|error| {
         (
             format!("No se creó el backup de seguridad: {error}"),
@@ -2265,7 +2441,8 @@ async fn production_restore(
     let root = backup_root()
         .await
         .map_err(|error| (error, false, Some(safety.id)))?;
-    let temporary = root.join(format!(".tmp_production_restore_{}.dump", Uuid::new_v4()));
+    let temporary =
+        std::env::temp_dir().join(format!(".tmp_production_restore_{}.dump", Uuid::new_v4()));
     if let Err(error) = fs::write(&temporary, dump).await {
         return Err((
             format!("No se pudo preparar la restauración: {error}"),
@@ -2273,7 +2450,17 @@ async fn production_restore(
             Some(safety.id),
         ));
     }
-    let restored = replace_database(&temporary).await;
+    let restored = match replace_database(&temporary).await {
+        Ok(tables) => match crate::db::migrate_restored_database(
+            &restore_database_url().map_err(|error| (error, false, Some(safety.id)))?,
+        )
+        .await
+        {
+            Ok(()) => Ok(tables),
+            Err(_) => Err("No se pudo adaptar el esquema restaurado a la aplicación.".into()),
+        },
+        Err(error) => Err(error),
+    };
     let _ = fs::remove_file(&temporary).await;
     match restored {
         Ok(tables) => match restore_media_for_job(state, job).await {
@@ -2290,15 +2477,21 @@ async fn production_restore(
     }
 }
 
-async fn rollback_database(state: &AppState, safety: &SafetySnapshot, root: &Path) -> bool {
+async fn rollback_database(state: &AppState, safety: &SafetySnapshot, _root: &Path) -> bool {
     let Ok(bytes) = load_snapshot_dump(state, safety).await else {
         return false;
     };
-    let rollback_path = root.join(format!(".tmp_rollback_{}.dump", Uuid::new_v4()));
+    let rollback_path = std::env::temp_dir().join(format!(".tmp_rollback_{}.dump", Uuid::new_v4()));
     if fs::write(&rollback_path, bytes).await.is_err() {
         return false;
     }
-    let result = replace_database(&rollback_path).await.is_ok();
+    let result = match replace_database(&rollback_path).await {
+        Ok(_) => match restore_database_url() {
+            Ok(url) => crate::db::migrate_restored_database(&url).await.is_ok(),
+            Err(_) => false,
+        },
+        Err(_) => false,
+    };
     let _ = fs::remove_file(rollback_path).await;
     result
 }
@@ -2434,10 +2627,11 @@ async fn create_safety_snapshot(state: &AppState) -> Result<SafetySnapshot, Stri
     let root = backup_root().await?;
     let id = Uuid::new_v4();
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-    let temporary = root.join(format!(".tmp_restore_safety_{id}.dump"));
+    let temporary = std::env::temp_dir().join(format!(".tmp_restore_safety_{id}.dump"));
     let output = timeout(
         Duration::from_secs(600),
         Command::new(pg_dump_path())
+            .kill_on_drop(true)
             .args(["-F", "c", "-Z", "6", "-f"])
             .arg(&temporary)
             .arg(backup_database_url()?)
@@ -2459,7 +2653,7 @@ async fn create_safety_snapshot(state: &AppState) -> Result<SafetySnapshot, Stri
         .await
         .map_err(|error| format!("No se pudo leer el backup de seguridad: {error}"))?;
     let _ = fs::remove_file(&temporary).await;
-    let encrypted = env_bool("BACKUP_ENCRYPTION_ENABLED", true);
+    let encrypted = true;
     let payload = if encrypted {
         state
             .cipher
@@ -2515,6 +2709,14 @@ async fn load_snapshot_dump(
 
 async fn replace_database(dump: &Path) -> Result<i64, String> {
     let database_url = restore_database_url()?;
+    let owner = std::env::var("DB_MIGRATION_USER")
+        .ok()
+        .filter(|role| !role.is_empty());
+    if owner.as_ref().is_some_and(|role| {
+        role.len() > 63 || !role.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }) {
+        return Err("Rol de migraciones no válido.".into());
+    }
     let database = database_name_from_url(&database_url)?;
     if matches!(database.as_str(), "postgres" | "template0" | "template1") {
         return Err("La base de mantenimiento no se puede restaurar.".into());
@@ -2523,9 +2725,15 @@ async fn replace_database(dump: &Path) -> Result<i64, String> {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .map_or_else(|| database_url_with_name(&database_url, "postgres"), Ok)?;
+    crate::db::quiesce_runtime_for_restore(&maintenance_url, &database)
+        .await
+        .map_err(|_| {
+            "No se pudieron cerrar las conexiones de la aplicación para restaurar.".to_owned()
+        })?;
     let drop = timeout(
         Duration::from_secs(60),
         Command::new(pg_tool_path("dropdb"))
+            .kill_on_drop(true)
             .arg("--maintenance-db")
             .arg(&maintenance_url)
             .arg("--force")
@@ -2538,16 +2746,23 @@ async fn replace_database(dump: &Path) -> Result<i64, String> {
     .map_err(|_| "dropdb excedió 60 segundos".to_owned())?
     .map_err(|error| format!("No se pudo ejecutar dropdb: {error}"))?;
     if !drop.status.success() {
+        let _ = crate::db::migrate_restored_database(&database_url).await;
         return Err(format!(
             "dropdb falló: {}",
             String::from_utf8_lossy(&drop.stderr).trim()
         ));
     }
+    let mut create_command = Command::new(pg_tool_path("createdb"));
+    create_command
+        .kill_on_drop(true)
+        .arg("--maintenance-db")
+        .arg(&maintenance_url);
+    if let Some(role) = &owner {
+        create_command.arg("--owner").arg(role);
+    }
     let create = timeout(
         Duration::from_secs(60),
-        Command::new(pg_tool_path("createdb"))
-            .arg("--maintenance-db")
-            .arg(&maintenance_url)
+        create_command
             .arg(&database)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -2562,9 +2777,17 @@ async fn replace_database(dump: &Path) -> Result<i64, String> {
             String::from_utf8_lossy(&create.stderr).trim()
         ));
     }
+    crate::db::quiesce_runtime_for_restore(&maintenance_url, &database)
+        .await
+        .map_err(|_| "No se pudo proteger la base durante la restauración.".to_owned())?;
+    let mut restore_command = Command::new(pg_tool_path("pg_restore"));
+    restore_command.kill_on_drop(true);
+    if let Some(role) = &owner {
+        restore_command.arg("--role").arg(role);
+    }
     let restore = timeout(
         Duration::from_secs(600),
-        Command::new(pg_tool_path("pg_restore"))
+        restore_command
             .args([
                 "--exit-on-error",
                 "--no-owner",
@@ -2589,6 +2812,7 @@ async fn replace_database(dump: &Path) -> Result<i64, String> {
     let verified = timeout(
         Duration::from_secs(30),
         Command::new(pg_tool_path("psql"))
+            .kill_on_drop(true)
             .arg(&database_url)
             .args([
                 "-tAc",
@@ -2636,7 +2860,17 @@ pub async fn restore_test(
     headers: HeaderMap,
     Json(input): Json<IdRequest>,
 ) -> Result<Json<Value>, AppError> {
-    admin(&state, &headers)?;
+    let claims = admin(&state, &headers)?;
+    let mut operation_lock = crate::db::backup_operation_lock_connection().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+        .bind(BACKUP_LOCK_KEY)
+        .fetch_one(&mut *operation_lock)
+        .await?;
+    if !locked {
+        return Err(AppError::Validation(
+            "Hay una copia o restauración en curso.".into(),
+        ));
+    }
     let job = fetch_job(pool(&state)?, input.job_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -2655,14 +2889,23 @@ pub async fn restore_test(
     } else {
         stored
     };
-    let root = backup_root().await.map_err(|_| AppError::Internal)?;
     let suffix = Uuid::new_v4().simple().to_string();
     let database = format!("uasspain_restore_test_{}", &suffix[..12]);
-    let temporary = root.join(format!(".tmp_restore_{suffix}.dump"));
+    let temporary = std::env::temp_dir().join(format!(".tmp_restore_{suffix}.dump"));
+    validate_dump_bytes(&dump)
+        .await
+        .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
     fs::write(&temporary, &dump)
         .await
         .map_err(|_| AppError::Internal)?;
-    let media_files = drill_media_restore(&state, &job, &root).await?;
+    let media_result = drill_media_restore(&state, &job).await;
+    let media_files = match media_result {
+        Ok(files) => files,
+        Err(error) => {
+            let _ = fs::remove_file(&temporary).await;
+            return Err(error);
+        }
+    };
     let result = run_restore_drill(&database, &temporary).await;
     let _ = fs::remove_file(&temporary).await;
     match result {
@@ -2672,6 +2915,14 @@ pub async fn restore_test(
                 .bind(format!("success:{tables}"))
                 .execute(pool(&state)?)
                 .await?;
+            audit_event(
+                pool(&state)?,
+                claims.profile_id,
+                "backup_restore_test",
+                job.id,
+                json!({"result":"success"}),
+            )
+            .await?;
             Ok(Json(
                 json!({"success":true,"status":"success","tables":tables,"media_files":media_files,"job_id":job.id}),
             ))
@@ -2682,16 +2933,20 @@ pub async fn restore_test(
                 .bind(&error)
                 .execute(pool(&state)?)
                 .await?;
-            Err(AppError::Validation(error))
+            audit_event(
+                pool(&state)?,
+                claims.profile_id,
+                "backup_restore_test",
+                job.id,
+                json!({"result":"failure","code":error_code(&error)}),
+            )
+            .await?;
+            Err(AppError::Validation(safe_error(&error).into()))
         }
     }
 }
 
-async fn drill_media_restore(
-    state: &AppState,
-    job: &BackupJob,
-    backup_root: &Path,
-) -> Result<usize, AppError> {
+async fn drill_media_restore(state: &AppState, job: &BackupJob) -> Result<usize, AppError> {
     if job.media_path.is_empty() {
         return Ok(0);
     }
@@ -2709,7 +2964,7 @@ async fn drill_media_restore(
     } else {
         stored
     };
-    let drill = backup_root.join(format!(".media-restore-drill-{}", Uuid::new_v4()));
+    let drill = std::env::temp_dir().join(format!(".media-restore-drill-{}", Uuid::new_v4()));
     fs::create_dir(&drill)
         .await
         .map_err(|_| AppError::Internal)?;
@@ -2739,6 +2994,7 @@ async fn run_restore_drill(database: &str, dump: &Path) -> Result<i64, String> {
     let create = timeout(
         Duration::from_secs(30),
         Command::new(pg_tool_path("createdb"))
+            .kill_on_drop(true)
             .arg("--maintenance-db")
             .arg(&base_url)
             .arg(database)
@@ -2758,6 +3014,7 @@ async fn run_restore_drill(database: &str, dump: &Path) -> Result<i64, String> {
     let restore = timeout(
         Duration::from_secs(600),
         Command::new(pg_tool_path("pg_restore"))
+            .kill_on_drop(true)
             .args([
                 "--exit-on-error",
                 "--no-owner",
@@ -2779,6 +3036,7 @@ async fn run_restore_drill(database: &str, dump: &Path) -> Result<i64, String> {
         timeout(
             Duration::from_secs(30),
             Command::new(pg_tool_path("psql"))
+                .kill_on_drop(true)
                 .arg(&test_url)
                 .args([
                     "-tAc",
@@ -2815,6 +3073,7 @@ async fn drop_restore_database(base_url: &str, database: &str) {
     let _ = timeout(
         Duration::from_secs(30),
         Command::new(pg_tool_path("dropdb"))
+            .kill_on_drop(true)
             .arg("--maintenance-db")
             .arg(base_url)
             .arg("--force")
@@ -2852,9 +3111,20 @@ pub async fn put_config(
     if input.key.as_deref().is_some_and(|key| key != "backups") || !input.value.is_object() {
         return Err(AppError::Validation("Configuración no válida.".into()));
     }
+    let mut value = config_value(pool(&state)?).await?;
+    for (key, item) in input.value.as_object().ok_or(AppError::Internal)? {
+        value[key] = item.clone();
+    }
+    if let Some(days) = input.value.get("retention_days") {
+        value["retention_full"] = days.clone();
+        value["retention_incremental"] = days.clone();
+        value["retention_policy"] = json!("unified");
+    }
+    value["encrypt"] = json!(true);
     validate_config(&input.value)?;
+    validate_config(&value)?;
     sqlx::query("INSERT INTO backups_backupconfig (key,value) VALUES ('backups',$1) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value")
-        .bind(&input.value).execute(pool(&state)?).await?;
+        .bind(&value).execute(pool(&state)?).await?;
     audit_event(
         pool(&state)?,
         claims.profile_id,
@@ -2863,80 +3133,74 @@ pub async fn put_config(
         json!({"frequency":input.value.get("frequency"),"job_type":input.value.get("job_type"),"result":"success"}),
     )
     .await?;
-    Ok(Json(json!({"key":"backups","value":input.value})))
+    Ok(Json(json!({"key":"backups","value":value})))
 }
 
 pub async fn list_servers(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<Vec<BackupServer>>, AppError> {
+) -> Result<Json<Vec<Value>>, AppError> {
     admin(&state, &headers)?;
-    Ok(Json(fetch_servers(pool(&state)?).await?))
+    Ok(Json(
+        fetch_servers(pool(&state)?)
+            .await?
+            .iter()
+            .map(server_view)
+            .collect(),
+    ))
 }
 
 pub async fn create_server(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(mut input): Json<ServerWrite>,
-) -> Result<(StatusCode, Json<BackupServer>), AppError> {
-    admin(&state, &headers)?;
-    if input.ip_address.is_none() {
-        let host = input.sftp_host.as_deref().unwrap_or_default();
-        let mut addresses = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            tokio::net::lookup_host((host, 22)),
-        )
-        .await
-        .map_err(|_| AppError::Validation("No se pudo resolver el hostname.".into()))?
-        .map_err(|_| AppError::Validation("Hostname no valido.".into()))?;
-        input.ip_address = Some(
-            addresses
-                .next()
-                .ok_or_else(|| AppError::Validation("Hostname sin direccion IP.".into()))?
-                .ip()
-                .to_string(),
-        );
-    }
-    if let Some(role) = &input.role {
-        input.is_offsite = Some(role != "local");
-    }
+) -> Result<(StatusCode, Json<Value>), AppError> {
+    let claims = admin(&state, &headers)?;
+    prepare_server(&mut input, None).await?;
     validate_server(&input, true)?;
-    let name = input
-        .name
-        .ok_or_else(|| AppError::Validation("El nombre es obligatorio.".into()))?;
-    let ip_address = input
-        .ip_address
-        .ok_or_else(|| AppError::Validation("La direccion IP es obligatoria.".into()))?;
+    let active = input.is_active.unwrap_or(false);
+    input.is_active = Some(false);
     let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO backups_backupserver (id,name,role,ip_address,vpn_ip,vpn_port,vpn_status,smb_share,transfer_protocol,sftp_host,sftp_port,sftp_user,sftp_remote_path,sftp_key_path,sftp_known_hosts,is_offsite,status,is_active,last_backup_status,disk_total_bytes,disk_used_bytes,error,created_date) VALUES ($1,$2,$3,$4::inet,NULLIF($5,'')::inet,$6,'unknown',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'',0,0,'',NOW())")
-        .bind(id).bind(name).bind(input.role.unwrap_or_else(|| "local".into())).bind(ip_address).bind(input.vpn_ip.unwrap_or_default()).bind(input.vpn_port.unwrap_or(51820)).bind(input.smb_share.unwrap_or_default()).bind(input.transfer_protocol.unwrap_or_else(|| "copy".into())).bind(input.sftp_host.unwrap_or_default()).bind(input.sftp_port.unwrap_or(22)).bind(input.sftp_user.unwrap_or_default()).bind(input.sftp_remote_path.unwrap_or_default()).bind(input.sftp_key_path.unwrap_or_default()).bind(input.sftp_known_hosts.unwrap_or_default()).bind(input.is_offsite.unwrap_or(false)).bind("unknown").bind(input.is_active.unwrap_or(true)).execute(pool(&state)?).await?;
-    crate::runtime_config::audit(
-        &state,
-        admin(&state, &headers)?.profile_id,
+    let mut tx = pool(&state)?.begin().await?;
+    sqlx::query("INSERT INTO backups_backupserver (id,name,role,ip_address,vpn_ip,vpn_port,vpn_status,smb_share,transfer_protocol,sftp_host,sftp_port,sftp_user,sftp_remote_path,sftp_key_path,sftp_known_hosts,is_offsite,status,is_active,last_backup_status,disk_total_bytes,disk_used_bytes,error,created_date) VALUES ($1,$2,$3,$4::inet,NULLIF($5,'')::inet,$6,'unknown',$7,$8,$9,$10,$11,$12,$13,$14,$15,'unknown',false,'',0,0,'',NOW())")
+        .bind(id).bind(input.name).bind(input.role).bind(input.ip_address).bind(input.vpn_ip.unwrap_or_default()).bind(input.vpn_port.unwrap_or(51820)).bind(input.smb_share.unwrap_or_default()).bind(input.transfer_protocol).bind(input.sftp_host.unwrap_or_default()).bind(input.sftp_port.unwrap_or(22)).bind(input.sftp_user.unwrap_or_default()).bind(input.sftp_remote_path.unwrap_or_default()).bind(input.sftp_key_path.unwrap_or_default()).bind(input.sftp_known_hosts.unwrap_or_default()).bind(input.is_offsite.unwrap_or(false)).execute(&mut *tx).await?;
+    let mut server = sqlx::query_as::<_, BackupServer>(&server_select("WHERE id=$1"))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if active {
+        probe_destination(&server)
+            .await
+            .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
+        sqlx::query("UPDATE backups_backupserver SET is_active=true,connection_ok=true,connection_checked_at=NOW(),last_seen=NOW(),status='online' WHERE id=$1").bind(id).execute(&mut *tx).await?;
+        server = sqlx::query_as::<_, BackupServer>(&server_select("WHERE id=$1"))
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    audit_event(
+        pool(&state)?,
+        claims.profile_id,
         "backup_destination_create",
+        id,
+        json!({"result":"success","active":active}),
     )
     .await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(
-            fetch_server(pool(&state)?, id)
-                .await?
-                .ok_or(AppError::Internal)?,
-        ),
-    ))
+    Ok((StatusCode::CREATED, Json(server_view(&server))))
 }
 
 pub async fn get_server(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<Uuid>,
-) -> Result<Json<BackupServer>, AppError> {
+) -> Result<Json<Value>, AppError> {
     admin(&state, &headers)?;
-    Ok(Json(
-        fetch_server(pool(&state)?, id)
+    Ok(Json(server_view(
+        &fetch_server(pool(&state)?, id)
             .await?
             .ok_or(AppError::NotFound)?,
-    ))
+    )))
 }
 
 pub async fn update_server(
@@ -2944,28 +3208,56 @@ pub async fn update_server(
     headers: HeaderMap,
     AxumPath(id): AxumPath<Uuid>,
     Json(mut input): Json<ServerWrite>,
-) -> Result<Json<BackupServer>, AppError> {
-    admin(&state, &headers)?;
-    if let Some(role) = &input.role {
-        input.is_offsite = Some(role != "local");
-    }
+) -> Result<Json<Value>, AppError> {
+    let claims = admin(&state, &headers)?;
+    let mut tx = pool(&state)?.begin().await?;
+    let current = sqlx::query_as::<_, BackupServer>(&server_select("WHERE id=$1 FOR UPDATE"))
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let changed = server_configuration_changed(&input, &current);
+    let activation = input.is_active == Some(true) && !current.is_active;
+    prepare_server(&mut input, Some(&current)).await?;
+    // Configuration changes invalidate a previous probe and disable the target.
+    // A fresh explicit activation performs its own probe inside the transaction.
+    let active = if changed {
+        false
+    } else {
+        input.is_active.unwrap_or(current.is_active)
+    };
+    input.is_active = Some(active);
     validate_server(&input, false)?;
-    let result = sqlx::query("UPDATE backups_backupserver SET name=COALESCE($2,name),role=COALESCE($3,role),ip_address=COALESCE($4::inet,ip_address),vpn_ip=CASE WHEN $5::text IS NULL THEN vpn_ip ELSE NULLIF($5,'')::inet END,vpn_port=COALESCE($6,vpn_port),smb_share=COALESCE($7,smb_share),transfer_protocol=COALESCE($8,transfer_protocol),sftp_host=COALESCE($9,sftp_host),sftp_port=COALESCE($10,sftp_port),sftp_user=COALESCE($11,sftp_user),sftp_remote_path=COALESCE($12,sftp_remote_path),sftp_key_path=COALESCE($13,sftp_key_path),sftp_known_hosts=COALESCE($14,sftp_known_hosts),is_offsite=COALESCE($15,is_offsite),status=COALESCE($16,status),is_active=COALESCE($17,is_active) WHERE id=$1")
-        .bind(id).bind(input.name).bind(input.role).bind(input.ip_address).bind(input.vpn_ip).bind(input.vpn_port).bind(input.smb_share).bind(input.transfer_protocol).bind(input.sftp_host).bind(input.sftp_port).bind(input.sftp_user).bind(input.sftp_remote_path).bind(input.sftp_key_path).bind(input.sftp_known_hosts).bind(input.is_offsite).bind(Some("unknown")).bind(input.is_active).execute(pool(&state)?).await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound);
+    sqlx::query("UPDATE backups_backupserver SET name=COALESCE($2,name),role=COALESCE($3,role),ip_address=COALESCE($4::inet,ip_address),vpn_ip=CASE WHEN $5::text IS NULL THEN vpn_ip ELSE NULLIF($5,'')::inet END,vpn_port=COALESCE($6,vpn_port),smb_share=COALESCE($7,smb_share),transfer_protocol=COALESCE($8,transfer_protocol),sftp_host=COALESCE($9,sftp_host),sftp_port=COALESCE($10,sftp_port),sftp_user=COALESCE($11,sftp_user),sftp_remote_path=COALESCE($12,sftp_remote_path),sftp_key_path=COALESCE($13,sftp_key_path),sftp_known_hosts=COALESCE($14,sftp_known_hosts),is_offsite=COALESCE($15,is_offsite),is_active=$16,configuration_updated_at=CASE WHEN $17 THEN NOW() ELSE configuration_updated_at END,connection_ok=CASE WHEN $17 THEN false ELSE connection_ok END,status=CASE WHEN $17 THEN 'unknown' ELSE status END WHERE id=$1")
+        .bind(id).bind(input.name).bind(input.role).bind(input.ip_address).bind(input.vpn_ip).bind(input.vpn_port).bind(input.smb_share).bind(input.transfer_protocol).bind(input.sftp_host).bind(input.sftp_port).bind(input.sftp_user).bind(input.sftp_remote_path).bind(input.sftp_key_path).bind(input.sftp_known_hosts).bind(input.is_offsite).bind(active).bind(changed).execute(&mut *tx).await?;
+    let mut server = sqlx::query_as::<_, BackupServer>(&server_select("WHERE id=$1"))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if activation && !changed {
+        probe_destination(&server)
+            .await
+            .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
+        sqlx::query("UPDATE backups_backupserver SET is_active=true,connection_ok=true,connection_checked_at=NOW(),last_seen=NOW(),status='online',error='' WHERE id=$1").bind(id).execute(&mut *tx).await?;
+        server = sqlx::query_as::<_, BackupServer>(&server_select("WHERE id=$1"))
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
     }
-    crate::runtime_config::audit(
-        &state,
-        admin(&state, &headers)?.profile_id,
-        "backup_destination_update",
+    tx.commit().await?;
+    audit_event(
+        pool(&state)?,
+        claims.profile_id,
+        if input.is_active.is_some() && !changed {
+            "backup_destination_activation"
+        } else {
+            "backup_destination_update"
+        },
+        id,
+        json!({"result":"success","active":server.is_active}),
     )
     .await?;
-    Ok(Json(
-        fetch_server(pool(&state)?, id)
-            .await?
-            .ok_or(AppError::NotFound)?,
-    ))
+    Ok(Json(server_view(&server)))
 }
 
 pub async fn delete_server(
@@ -2985,15 +3277,403 @@ pub async fn delete_server(
 }
 
 async fn config_value(pool: &PgPool) -> Result<Value, AppError> {
-    let default = json!({"frequency":"daily","day":"*","hour":"03:00","interval_days":3,"job_type":"incremental","retention_full":4,"retention_incremental":30,"compressed":true,"encrypt":env_bool("BACKUP_ENCRYPTION_ENABLED",true)});
+    let default = json!({"frequency":"manual","day":"*","hour":"03:00","interval_days":3,"job_type":"automatic","retention_days":30,"retention_policy":"unified","retention_full":30,"retention_incremental":30,"compressed":true,"encrypt":true});
     Ok(sqlx::query_scalar::<_, Value>("INSERT INTO backups_backupconfig (key,value) VALUES ('backups',$1) ON CONFLICT (key) DO UPDATE SET key=EXCLUDED.key RETURNING value")
         .bind(default).fetch_one(pool).await?)
 }
 
 fn server_select(suffix: &str) -> String {
     format!(
-        "SELECT id,name,role,host(ip_address)::text AS ip_address,host(vpn_ip)::text AS vpn_ip,vpn_port::integer,vpn_status,vpn_last_handshake,smb_share,transfer_protocol,sftp_host,sftp_port::integer,sftp_user,sftp_remote_path,sftp_key_path,sftp_known_hosts,is_offsite,status,is_active,last_seen,last_backup,last_backup_status,disk_total_bytes::bigint,disk_used_bytes::bigint,error,created_date FROM backups_backupserver {suffix}"
+        "SELECT id,name,role,host(ip_address)::text AS ip_address,host(vpn_ip)::text AS vpn_ip,vpn_port::integer,vpn_status,vpn_last_handshake,smb_share,transfer_protocol,sftp_host,sftp_port::integer,sftp_user,sftp_remote_path,sftp_key_path,sftp_known_hosts,is_offsite,status,is_active,last_seen,last_backup,last_backup_status,disk_total_bytes::bigint,disk_used_bytes::bigint,error,created_date,configuration_updated_at,connection_checked_at,connection_ok FROM backups_backupserver {suffix}"
     )
+}
+
+fn error_code(error: &str) -> &'static str {
+    let text = error.to_lowercase();
+    match text.as_str() {
+        "ok" => return "ok",
+        "storage_full" => return "storage_full",
+        "server_identity" => return "server_identity",
+        "credentials" => return "credentials",
+        "vpn" => return "vpn",
+        "integrity" => return "integrity",
+        "database" => return "database",
+        "folder" => return "folder",
+        "connection" => return "connection",
+        _ => {}
+    }
+    if text.is_empty() {
+        "ok"
+    } else if text.contains("space") || text.contains("espacio") || text.contains("quota") {
+        "storage_full"
+    } else if text.contains("host key") || text.contains("host identification") {
+        "server_identity"
+    } else if text.contains("permission denied")
+        || text.contains("authentication")
+        || text.contains("clave")
+        || text.contains("known_hosts")
+    {
+        "credentials"
+    } else if text.contains("vpn") || text.contains("peer") {
+        "vpn"
+    } else if text.contains("checksum")
+        || text.contains("corrupt")
+        || text.contains("manifest")
+        || text.contains("descifr")
+    {
+        "integrity"
+    } else if text.contains("pg_") || text.contains("postgres") {
+        "database"
+    } else if text.contains("no such file")
+        || text.contains("carpeta")
+        || text.contains("directorio")
+        || text.contains("ruta")
+    {
+        "folder"
+    } else {
+        "connection"
+    }
+}
+fn safe_error(error: &str) -> &'static str {
+    match error_code(error) {
+        "ok" => "",
+        "storage_full" => "No hay espacio suficiente para guardar las copias.",
+        "server_identity" => "No se pudo verificar la identidad del servidor.",
+        "credentials" => "Credenciales/configuración incorrectas.",
+        "vpn" => "No está disponible la conexión privada configurada.",
+        "integrity" => "La copia no supera las comprobaciones de integridad.",
+        "database" => "No se pudo completar la operación de base de datos.",
+        "folder" => "Carpeta no accesible o sin permisos de escritura.",
+        _ => "No se pudo conectar. Comprueba el destino e inténtalo de nuevo.",
+    }
+}
+fn serialize_safe_error<S: serde::Serializer>(
+    value: &str,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(safe_error(value))
+}
+fn serialize_restore_test_result<S: serde::Serializer>(
+    value: &str,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if value
+        .strip_prefix("success:")
+        .is_some_and(|tables| !tables.is_empty() && tables.chars().all(|c| c.is_ascii_digit()))
+    {
+        serializer.serialize_str(value)
+    } else {
+        serializer.serialize_str(safe_error(value))
+    }
+}
+fn server_view(server: &BackupServer) -> Value {
+    let mut value = serde_json::to_value(server).unwrap_or_else(|_| json!({}));
+    value["key_configured"] =
+        json!(server.transfer_protocol != "sftp" || Path::new(&server.sftp_key_path).is_file());
+    value["identity_configured"] =
+        json!(server.transfer_protocol != "sftp" || Path::new(&server.sftp_known_hosts).is_file());
+    value["configuration_validated"] = json!(
+        server.connection_ok
+            && server
+                .connection_checked_at
+                .is_some_and(|time| time >= server.configuration_updated_at)
+    );
+    value
+}
+fn server_configuration_changed(input: &ServerWrite, current: &BackupServer) -> bool {
+    input.role.as_ref().is_some_and(|v| v != &current.role)
+        || input
+            .transfer_protocol
+            .as_ref()
+            .is_some_and(|v| v != &current.transfer_protocol)
+        || input
+            .sftp_host
+            .as_ref()
+            .is_some_and(|v| v != &current.sftp_host)
+        || input.sftp_port.is_some_and(|v| v != current.sftp_port)
+        || input
+            .sftp_user
+            .as_ref()
+            .is_some_and(|v| v != &current.sftp_user)
+        || input
+            .sftp_remote_path
+            .as_ref()
+            .is_some_and(|v| v != &current.sftp_remote_path)
+        || input
+            .smb_share
+            .as_ref()
+            .is_some_and(|v| v != &current.smb_share)
+        || input
+            .vpn_ip
+            .as_ref()
+            .is_some_and(|v| Some(v.as_str()) != current.vpn_ip.as_deref())
+        || input
+            .sftp_key_path
+            .as_ref()
+            .is_some_and(|v| v != &current.sftp_key_path)
+        || input
+            .sftp_known_hosts
+            .as_ref()
+            .is_some_and(|v| v != &current.sftp_known_hosts)
+        || input
+            .ip_address
+            .as_ref()
+            .is_some_and(|v| v != &current.ip_address)
+        || input.vpn_port.is_some_and(|v| v != current.vpn_port)
+}
+async fn prepare_server(
+    input: &mut ServerWrite,
+    current: Option<&BackupServer>,
+) -> Result<(), AppError> {
+    if let Some(current) = current {
+        input.name.get_or_insert_with(|| current.name.clone());
+        input
+            .ip_address
+            .get_or_insert_with(|| current.ip_address.clone());
+        input
+            .sftp_host
+            .get_or_insert_with(|| current.sftp_host.clone());
+        input.sftp_port.get_or_insert(current.sftp_port);
+        input
+            .sftp_user
+            .get_or_insert_with(|| current.sftp_user.clone());
+        input
+            .sftp_remote_path
+            .get_or_insert_with(|| current.sftp_remote_path.clone());
+        input
+            .smb_share
+            .get_or_insert_with(|| current.smb_share.clone());
+    }
+    let role = input
+        .role
+        .as_deref()
+        .or(current.map(|s| s.role.as_str()))
+        .unwrap_or("local")
+        .to_owned();
+    input.role = Some(role.clone());
+    input.is_offsite = Some(role != "local");
+    let protocol = input
+        .transfer_protocol
+        .as_deref()
+        .or(current.map(|s| s.transfer_protocol.as_str()))
+        .unwrap_or(if role == "local" { "copy" } else { "sftp" })
+        .to_owned();
+    if role != "local" && protocol != "sftp" {
+        return Err(AppError::Validation(
+            "Los servidores externos requieren transporte seguro.".into(),
+        ));
+    }
+    input.transfer_protocol = Some(protocol.clone());
+    if protocol != "sftp" {
+        input.ip_address.get_or_insert_with(|| "127.0.0.1".into());
+        if (current.is_none() && input.smb_share.is_none())
+            || input.smb_share.as_deref() == Some("")
+        {
+            input.smb_share = Some(
+                backup_root()
+                    .await
+                    .map_err(|_| AppError::Internal)?
+                    .join("destination-local")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    } else {
+        let prefix = format!("BACKUP_{}", role.to_ascii_uppercase());
+        if current.is_none() || current.is_some_and(|s| s.sftp_key_path.is_empty()) {
+            input.sftp_key_path.get_or_insert_with(|| {
+                std::env::var(format!("{prefix}_KEY_FILE")).unwrap_or_default()
+            });
+        }
+        if current.is_none() || current.is_some_and(|s| s.sftp_known_hosts.is_empty()) {
+            input.sftp_known_hosts.get_or_insert_with(|| {
+                std::env::var(format!("{prefix}_KNOWN_HOSTS_FILE")).unwrap_or_default()
+            });
+        }
+        if input.vpn_ip.is_none() && current.and_then(|s| s.vpn_ip.as_ref()).is_none() {
+            input.vpn_ip = std::env::var(format!("{prefix}_VPN_IP")).ok();
+        }
+        if current.is_none() && input.ip_address.is_none() {
+            let host = input.sftp_host.as_deref().unwrap_or_default();
+            if !valid_sftp_identity(host, "probe") {
+                return Err(AppError::Validation(
+                    "Servidor o dirección no válido.".into(),
+                ));
+            }
+            let addresses = timeout(
+                Duration::from_secs(3),
+                tokio::net::lookup_host((host, input.sftp_port.unwrap_or(22) as u16)),
+            )
+            .await
+            .map_err(|_| AppError::Validation("No se pudo resolver el servidor.".into()))?
+            .map_err(|_| AppError::Validation("No se pudo resolver el servidor.".into()))?;
+            input.ip_address = Some(
+                addresses
+                    .map(|address| address.ip().to_string())
+                    .next()
+                    .ok_or_else(|| {
+                        AppError::Validation("Servidor sin dirección disponible.".into())
+                    })?,
+            );
+        }
+    }
+    Ok(())
+}
+async fn checked_sftp_host(server: &BackupServer) -> Result<String, String> {
+    if !valid_sftp_identity(&server.sftp_host, &server.sftp_user) {
+        return Err("Credenciales de servidor incorrectas".into());
+    }
+    let addresses = timeout(
+        Duration::from_secs(5),
+        tokio::net::lookup_host((server.sftp_host.as_str(), server.sftp_port as u16)),
+    )
+    .await
+    .map_err(|_| "No se pudo resolver servidor")?
+    .map_err(|_| "No se pudo resolver servidor")?;
+    let addresses: Vec<_> = addresses.map(|address| address.ip()).collect();
+    if !env_bool("BACKUP_REQUIRE_VPN", true) {
+        return addresses
+            .first()
+            .map(ToString::to_string)
+            .ok_or_else(|| "Servidor sin dirección".into());
+    }
+    let peer: std::net::IpAddr = server
+        .vpn_ip
+        .as_deref()
+        .ok_or("IP del peer VPN no configurada")?
+        .parse()
+        .map_err(|_| "IP VPN inválida")?;
+    let private = match peer {
+        std::net::IpAddr::V4(ip) => ip.is_private(),
+        std::net::IpAddr::V6(ip) => (ip.segments()[0] & 0xfe00) == 0xfc00,
+    };
+    if !private || !addresses.contains(&peer) {
+        return Err("El servidor no coincide con el peer VPN privado".into());
+    }
+    Ok(peer.to_string())
+}
+async fn probe_destination(server: &BackupServer) -> Result<(), String> {
+    if server.transfer_protocol != "sftp" {
+        let path = Path::new(&server.smb_share);
+        if !safe_remote_path(&server.smb_share) {
+            return Err("Carpeta no válida".into());
+        }
+        let allowed = backup_root().await?;
+        if path.starts_with(&allowed) {
+            fs::create_dir_all(path)
+                .await
+                .map_err(|_| "Carpeta no accesible")?;
+        }
+        let path = fs::canonicalize(path)
+            .await
+            .map_err(|_| "Carpeta no accesible")?;
+        let roots = std::env::var("BACKUP_LOCAL_ALLOWED_ROOTS").unwrap_or_default();
+        let additional = roots
+            .split(':')
+            .filter(|root| !root.is_empty())
+            .any(|root| path.starts_with(root));
+        if !path.starts_with(&allowed) && !additional {
+            return Err("Carpeta fuera del almacenamiento permitido".into());
+        }
+        if local_free_bytes(&path).await? < 1024 * 1024 {
+            return Err("Espacio insuficiente".into());
+        }
+        let probe = path.join(format!(".uasspain-probe-{}", Uuid::new_v4()));
+        let bytes = Uuid::new_v4().as_bytes().to_vec();
+        let result = async {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&probe)
+                .await
+                .map_err(|_| "Carpeta sin escritura")?;
+            use tokio::io::AsyncWriteExt;
+            file.write_all(&bytes)
+                .await
+                .map_err(|_| "Carpeta sin escritura")?;
+            file.sync_all().await.map_err(|_| "Carpeta sin escritura")?;
+            drop(file);
+            if fs::read(&probe).await.map_err(|_| "Carpeta sin lectura")? != bytes {
+                return Err("Checksum de prueba incorrecto");
+            }
+            Ok(())
+        }
+        .await;
+        let removed = fs::remove_file(&probe).await;
+        result.map_err(str::to_owned)?;
+        removed.map_err(|_| "Carpeta sin permiso de eliminación".to_owned())?;
+        return Ok(());
+    }
+    let host = checked_sftp_host(server).await?;
+    if !safe_remote_path(&server.sftp_remote_path)
+        || !Path::new(&server.sftp_key_path).is_file()
+        || !Path::new(&server.sftp_known_hosts).is_file()
+    {
+        return Err("Clave o known_hosts no configurados".into());
+    }
+    let suffix = Uuid::new_v4();
+    let root = std::env::temp_dir();
+    let upload = root.join(format!("uasspain-probe-{suffix}"));
+    let download = root.join(format!("uasspain-probe-{suffix}.read"));
+    let batch = root.join(format!("uasspain-probe-{suffix}.batch"));
+    let bytes = Uuid::new_v4().as_bytes().to_vec();
+    fs::write(&upload, &bytes)
+        .await
+        .map_err(|_| "Error preparando prueba")?;
+    let remote = format!(
+        "{}/.uasspain-probe-{suffix}",
+        server.sftp_remote_path.trim_end_matches('/')
+    );
+    let commands = format!(
+        "cd \"{}\"\nput \"{}\" \"{remote}\"\nget \"{remote}\" \"{}\"\nrm \"{remote}\"\n-df .\n",
+        server.sftp_remote_path,
+        upload.display(),
+        download.display()
+    );
+    fs::write(&batch, commands)
+        .await
+        .map_err(|_| "Error preparando prueba")?;
+    let outcome = timeout(
+        Duration::from_secs(30),
+        Command::new("sftp")
+            .kill_on_drop(true)
+            .args([
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=yes",
+                "-o",
+                "PasswordAuthentication=no",
+                "-o",
+                "ConnectTimeout=10",
+            ])
+            .arg("-o")
+            .arg(format!("UserKnownHostsFile={}", server.sftp_known_hosts))
+            .arg("-o")
+            .arg(format!("HostKeyAlias={}", ssh_host_alias(server)))
+            .arg("-i")
+            .arg(&server.sftp_key_path)
+            .arg("-P")
+            .arg(server.sftp_port.to_string())
+            .arg("-b")
+            .arg(&batch)
+            .arg(format!("{}@{host}", server.sftp_user))
+            .output(),
+    )
+    .await;
+    let readback = fs::read(&download).await.ok();
+    for path in [&upload, &download, &batch] {
+        let _ = fs::remove_file(path).await;
+    }
+    match outcome {
+        Ok(Ok(output))
+            if output.status.success() && readback.as_deref() == Some(bytes.as_slice()) =>
+        {
+            Ok(())
+        }
+        Ok(Ok(output)) => Err(String::from_utf8_lossy(&output.stderr).into_owned()),
+        _ => Err("No se pudo conectar al servidor".into()),
+    }
 }
 async fn fetch_servers(pool: &PgPool) -> Result<Vec<BackupServer>, AppError> {
     Ok(sqlx::query_as(&server_select("ORDER BY name"))
@@ -3064,7 +3744,8 @@ fn pg_tool_path(tool: &str) -> PathBuf {
     };
     match std::env::var("PG_BIN") {
         Ok(dir) => Path::new(&dir).join(name),
-        Err(_) => PathBuf::from(name),
+        Err(_) if cfg!(windows) => PathBuf::from(name),
+        Err(_) => Path::new("/usr/bin").join(name),
     }
 }
 fn backup_database_url() -> Result<String, String> {
@@ -3208,6 +3889,9 @@ async fn audit_event(
     Ok(())
 }
 fn validate_config(value: &Value) -> Result<(), AppError> {
+    if value.get("encrypt") == Some(&Value::Bool(false)) {
+        return Err(AppError::Validation("El cifrado es obligatorio.".into()));
+    }
     let frequency = value
         .get("frequency")
         .and_then(Value::as_str)
@@ -3249,11 +3933,11 @@ fn validate_config(value: &Value) -> Result<(), AppError> {
         return Err(AppError::Validation("Intervalo de días no válido.".into()));
     }
     if let Some(kind) = value.get("job_type").and_then(Value::as_str)
-        && !matches!(kind, "full" | "incremental")
+        && !matches!(kind, "automatic" | "full" | "incremental")
     {
         return Err(AppError::Validation("Tipo programado no válido.".into()));
     }
-    for key in ["retention_full", "retention_incremental"] {
+    for key in ["retention_full", "retention_incremental", "retention_days"] {
         if let Some(value) = value.get(key)
             && !value
                 .as_i64()
@@ -3294,9 +3978,9 @@ fn validate_server(input: &ServerWrite, create: bool) -> Result<(), AppError> {
     if let Some(name) = &input.name
         && (name.is_empty()
             || name.len() > 100
-            || !name
+            || name
                 .chars()
-                .all(|character| character.is_ascii_alphanumeric() || " ._-".contains(character)))
+                .any(|character| character.is_control() || ";|&`".contains(character)))
     {
         return Err(AppError::Validation("Nombre no válido.".into()));
     }
@@ -3314,15 +3998,15 @@ fn validate_server(input: &ServerWrite, create: bool) -> Result<(), AppError> {
     if input
         .sftp_host
         .as_deref()
-        .is_some_and(|host| !valid_sftp_identity(host, "probe"))
+        .is_some_and(|host| !host.is_empty() && !valid_sftp_identity(host, "probe"))
         || input
             .sftp_user
             .as_deref()
-            .is_some_and(|user| !valid_sftp_identity("localhost", user))
+            .is_some_and(|user| !user.is_empty() && !valid_sftp_identity("localhost", user))
         || input
             .sftp_remote_path
             .as_deref()
-            .is_some_and(|path| !safe_remote_path(path))
+            .is_some_and(|path| !path.is_empty() && !safe_remote_path(path))
     {
         return Err(AppError::Validation(
             "Identidad o ruta SFTP no válida.".into(),
@@ -3380,6 +4064,61 @@ mod tests {
             sha256(b"abc"),
             "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn simplified_schedule_keeps_encryption_and_validates_unified_retention() {
+        assert!(validate_config(&json!({"frequency":"weekly","day":"1","hour":"03:15","job_type":"automatic","retention_days":30,"encrypt":true})).is_ok());
+        assert!(validate_config(&json!({"encrypt":false})).is_err());
+        assert!(validate_config(&json!({"retention_days":0})).is_err());
+        assert!(validate_config(&json!({"retention_days":3651})).is_err());
+        assert!(super::next_backup_time(&json!({"frequency":"manual"}), None).is_none());
+        let next =
+            super::next_backup_time(&json!({"frequency":"daily","hour":"03:15"}), None).unwrap();
+        use chrono::Timelike;
+        assert_eq!(
+            (next.with_timezone(&chrono::Local).hour(), next.minute()),
+            (3, 15)
+        );
+        let last = chrono::Utc::now();
+        let interval_next = super::next_backup_time(
+            &json!({"frequency":"every_n_days","interval_days":3650,"hour":"03:15"}),
+            Some(last),
+        )
+        .unwrap();
+        assert!(interval_next >= last + chrono::Duration::days(3650));
+    }
+
+    #[test]
+    fn errors_never_echo_credentials_or_internal_paths() {
+        let secret = "postgresql://user:private-password@db/app";
+        let result = super::safe_error(&format!(
+            "pg_restore failed: {secret} /run/secrets/private.key"
+        ));
+        assert!(!result.contains("private-password"));
+        assert!(!result.contains("/run/secrets"));
+        assert_eq!(
+            super::error_code("Host key verification failed"),
+            "server_identity"
+        );
+        assert_eq!(
+            super::error_code("Permission denied (publickey)"),
+            "credentials"
+        );
+        assert_eq!(super::error_code("Carpeta no accesible"), "folder");
+        assert_eq!(super::error_code("checksum mismatch"), "integrity");
+        for code in [
+            "storage_full",
+            "server_identity",
+            "credentials",
+            "vpn",
+            "integrity",
+            "database",
+            "folder",
+            "connection",
+        ] {
+            assert_eq!(super::error_code(code), code);
+        }
     }
 
     #[test]

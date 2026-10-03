@@ -11,6 +11,7 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - e2e_pgdata:/var/lib/postgresql/data
+      - ./scripts/e2e/backup-roles.sql:/docker-entrypoint-initdb.d/10-backup-roles.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U uasspain -d test_e2e_uasspain"]
       interval: 3s
@@ -45,8 +46,14 @@ services:
       SECRET_KEY: e2e-only-secret-key-with-at-least-thirty-two-bytes
       FIELD_ENCRYPTION_KEY: ${E2E_FIELD_ENCRYPTION_KEY:?run-e2e.ps1 debe generar la clave efimera}
       DB_NAME: test_e2e_uasspain
-      DB_USER: uasspain
+      DB_USER: uasspain_app
       DB_PASSWORD: ${E2E_DB_PASSWORD:-e2e_only_db_password}
+      DB_MIGRATION_USER: uasspain_migrator
+      DB_MIGRATION_PASSWORD: ${E2E_DB_PASSWORD:-e2e_only_db_password}
+      DB_BACKUP_USER: uasspain_backup
+      DB_BACKUP_PASSWORD: ${E2E_DB_PASSWORD:-e2e_only_db_password}
+      DB_RESTORE_USER: uasspain_restore
+      DB_RESTORE_PASSWORD: ${E2E_DB_PASSWORD:-e2e_only_db_password}
       DB_HOST: postgres-e2e
       DB_PORT: "5432"
       DB_SSLMODE: disable
@@ -66,6 +73,11 @@ services:
       DEV_EMAIL_OUTBOX_DIR: /app/backups/e2e-mailbox
       MEDIA_ROOT: /app/media
       BACKUP_STORAGE_PATH: /app/backups
+      TZ: Europe/Madrid
+      BACKUP_EXTERNAL_1_KEY_FILE: /app/backup_keys/backup_sftp_ed25519
+      BACKUP_EXTERNAL_1_KNOWN_HOSTS_FILE: /app/backup_keys/known_hosts
+      BACKUP_EXTERNAL_2_KEY_FILE: /app/backup_keys/backup_sftp_ed25519
+      BACKUP_EXTERNAL_2_KNOWN_HOSTS_FILE: /app/backup_keys/known_hosts
       BACKUP_KEY_DIR: /app/backup_keys
       BACKUP_ENCRYPTION_ENABLED: "true"
       BACKUP_SCHEDULER_ENABLED: "false"
@@ -80,6 +92,8 @@ services:
       - e2e_backups:/app/backups
       - e2e_media:/app/media
       - e2e_backup_keys:/app/backup_keys
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "/usr/local/bin/uasspain-backend", "--healthcheck"]
       interval: 5s

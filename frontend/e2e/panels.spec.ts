@@ -9,7 +9,7 @@ const roles = [
     'Notificaciones', 'Backups', 'VPN', 'Configuración', 'Mi cuenta',
   ] },
   { role: 'instructor', email: 'instructor.e2e@test.local', password: 'E2eInstr_2026!', sections: [ // pragma: allowlist secret - isolated fixture
-    'Dashboard', 'Usuarios', 'Exámenes', 'Material', 'Resultados', 'Estadísticas',
+    'Dashboard', 'Alumnos', 'Exámenes', 'Material', 'Resultados', 'Estadísticas',
     'Chat', 'Videollamada', 'Conexiones activas', 'Cuenta',
   ] },
   { role: 'alumno', email: 'alumno.e2e@test.local', password: 'E2ePass_2026!', sections: [ // pragma: allowlist secret - isolated fixture
@@ -66,23 +66,30 @@ test('admin runtime settings and all three empty backup slots are editable', asy
   for (const server of servers) expect((await page.request.delete(`/api/backups/servers/${server.id}/`, { headers })).status()).toBe(204);
   await page.locator('aside:visible nav').getByRole('button', { name: 'Backups', exact: true }).click();
   for (const label of ['Servidor local', 'Servidor externo 1', 'Servidor externo 2']) {
-    const form = page.getByRole('form', { name: label, exact: true });
-    await expect(form.getByLabel('Nombre', { exact: true })).toBeEditable();
-    await form.getByLabel('Nombre', { exact: true }).fill(`Fixture ${label}`);
-    await form.getByLabel('IP/hostname', { exact: true }).fill('127.0.0.1');
-    await form.getByLabel('Usuario', { exact: true }).fill('fixture');
-    await form.getByLabel('Ruta destino', { exact: true }).fill('/backups');
-    await form.getByRole('button', { name: 'Guardar destino', exact: true }).click();
-    await expect(form.getByRole('status')).toHaveText('Destino guardado.');
-    await form.getByLabel('Nombre', { exact: true }).fill(`Updated ${label}`);
-    await form.getByRole('button', { name: 'Guardar destino', exact: true }).click();
-    await expect(form.getByRole('status')).toHaveText('Destino guardado.');
-    const connection = page.waitForRequest((request) => request.url().endsWith('/api/backups/test-connection/'));
-    await form.getByRole('button', { name: 'Probar conexión', exact: true }).click();
-    const request = await connection;
-    const saved = await (await page.request.get('/api/backups/servers/', { headers })).json();
-    expect(request.postDataJSON().server_id).toBe(saved.find((server) => server.name === `Updated ${label}`).id);
-    await expect(form.getByRole('status')).not.toHaveText('Conectando…');
+    const card=page.getByRole('article',{name:label,exact:true});
+    await card.getByRole('button',{name:'Configurar',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'Configurar '+label,exact:true});
+    await dialog.getByLabel('Nombre del destino').fill('Fixture '+label);
+    await dialog.getByRole('button',{name:'Continuar',exact:true}).click();
+    await dialog.getByRole('button',{name:'Continuar',exact:true}).click();
+    if(label!=='Servidor local') {
+      await dialog.getByLabel('Servidor o dirección').fill(label.endsWith('1')?'sftp-ext1-e2e':'sftp-ext2-e2e');
+      await dialog.getByRole('button',{name:'Continuar',exact:true}).click();
+      await dialog.getByLabel('Usuario',{exact:true}).fill(label.endsWith('1')?'backupsftp':'offsite');
+      await dialog.getByRole('button',{name:'Continuar',exact:true}).click();
+      await dialog.getByLabel('Carpeta donde guardar las copias').fill('/backups');
+      await dialog.getByText('Opciones avanzadas',{exact:true}).click();
+      await dialog.getByLabel('Puerto',{exact:true}).fill('2222');
+    }
+    await dialog.getByRole('button',{name:'Guardar',exact:true}).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(card.getByRole('status')).toHaveText('Destino guardado. Prueba la conexión antes de activarlo.');
+    const connection=page.waitForRequest(request=>request.url().endsWith('/api/backups/test-connection/'));
+    await card.getByRole('button',{name:'Probar conexión',exact:true}).click();
+    const request=await connection;
+    const saved=await(await page.request.get('/api/backups/servers/',{headers})).json();
+    expect(request.postDataJSON().server_id).toBe(saved.find(server=>server.name==='Fixture '+label).id);
+    await expect(card.getByRole('status')).toHaveText('Conexión correcta.');
   }
   for (const server of await (await page.request.get('/api/backups/servers/', { headers })).json()) {
     expect((await page.request.delete(`/api/backups/servers/${server.id}/`, { headers })).status()).toBe(204);

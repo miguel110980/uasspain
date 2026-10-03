@@ -1,0 +1,93 @@
+import { expect, test } from '@playwright/test';
+import { adminClient, check } from '../../scripts/e2e/auth-fixtures.mjs';
+
+test('simplified backups: wizard, schedule, real copy, history and reinforced restore', async ({ page }) => {
+  test.setTimeout(180_000);
+  // Only the labelled isolated Compose installation is used by these fixtures.
+  const admin = await adminClient();
+  for (const server of (await admin.call('/api/backups/servers/')).body) check((await admin.call(`/api/backups/servers/${server.id}/`, 'DELETE')).status === 204, 'Fixture cleanup');
+  await page.goto('/?auth=login');
+  await page.getByLabel('Correo electrónico *', { exact: true }).fill('e2e-admin@test.local');
+  await page.getByLabel('Contraseña *', { exact: true }).fill('E2eAdmin_2026!'); // pragma: allowlist secret - isolated fixture
+  await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
+  await expect(page).toHaveURL(/\/admin$/);
+  await page.locator('aside:visible nav').getByRole('button', { name: 'Backups', exact: true }).click();
+  const targets = page.getByRole('region', { name: 'Destinos de backup', exact: true });
+  await expect(targets.getByRole('article')).toHaveCount(3);
+  await expect(page.getByText('IP privada del peer VPN', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Ruta de la clave privada montada', { exact: true })).toHaveCount(0);
+  const local = targets.getByRole('article', { name: 'Servidor local', exact: true });
+  await expect(local.getByRole('checkbox', { name: 'Activo: Servidor local' })).toBeDisabled();
+  await local.getByRole('button', { name: 'Configurar' }).click();
+  let dialog = page.getByRole('dialog', { name: 'Configurar Servidor local', exact: true });
+  await dialog.getByLabel('Nombre del destino').fill('Copias de la instalación');
+  await dialog.getByRole('button', { name: 'Continuar' }).click();
+  await expect(dialog.getByLabel('Tipo de destino')).toHaveValue('local');
+  await dialog.getByRole('button', { name: 'Continuar' }).click();
+  await expect(dialog.getByLabel('Almacenamiento local')).toHaveValue('default');
+  await dialog.getByRole('button', { name: 'Guardar', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(local.getByRole('status')).toHaveText('Destino guardado. Prueba la conexión antes de activarlo.');
+  await local.getByRole('button', { name: 'Probar conexión' }).click();
+  await expect(local.getByRole('status')).toHaveText('Conexión correcta.');
+  // The controlled switch changes only after the server confirms activation.
+  await local.getByRole('checkbox', { name: 'Activo: Servidor local' }).click();
+  await expect(local.getByRole('status')).toHaveText('Destino activado.');
+  await expect(local.getByRole('checkbox', { name: 'Activo: Servidor local' })).toBeChecked();
+  await targets.getByRole('article', { name: 'Servidor externo 1', exact: true }).getByRole('button', { name: 'Configurar' }).click();
+  dialog = page.getByRole('dialog', { name: 'Configurar Servidor externo 1', exact: true });
+  await dialog.getByLabel('Nombre del destino').fill('Copias externas');
+  await dialog.getByRole('button', { name: 'Continuar' }).click();
+  await dialog.getByRole('button', { name: 'Continuar' }).click();
+  await dialog.getByLabel('Servidor o dirección').fill('sftp-ext1-e2e');
+  await dialog.getByRole('button', { name: 'Continuar' }).click();
+  await dialog.getByLabel('Usuario', { exact: true }).fill('backupsftp');
+  await dialog.getByRole('button', { name: 'Continuar' }).click();
+  await dialog.getByLabel('Carpeta donde guardar las copias').fill('/backups');
+  await expect(dialog.getByLabel('Puerto', { exact: true })).not.toBeVisible();
+  await dialog.getByText('Opciones avanzadas', { exact: true }).click();
+  await expect(dialog.getByLabel('Puerto', { exact: true })).toHaveValue('22');
+  await dialog.getByLabel('Puerto', { exact: true }).fill('2222');
+  await expect(dialog.getByLabel(/known_hosts|clave privada/i)).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Guardar', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const external = targets.getByRole('article', { name: 'Servidor externo 1', exact: true });
+  await expect(external.getByRole('checkbox')).not.toBeChecked();
+  const schedule = page.getByRole('form', { name: 'Programación de copias', exact: true });
+  await schedule.getByRole('combobox', { name: 'Frecuencia', exact: true }).selectOption('weekly');
+  await schedule.getByRole('combobox', { name: 'Día de la semana', exact: true }).selectOption('2');
+  await schedule.getByLabel('Hora', { exact: false }).fill('04:20');
+  await schedule.getByRole('combobox', { name: 'Tipo de copia', exact: true }).selectOption('automatic');
+  await schedule.getByRole('combobox', { name: 'Conservar copias durante', exact: true }).selectOption('60');
+  await expect(schedule.getByText('Cada Martes a las 04:20', { exact: false })).toBeVisible();
+  await schedule.getByRole('button', { name: 'Guardar programación' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Programación guardada.' })).toBeVisible();
+  await page.reload();
+  await page.locator('aside:visible nav').getByRole('button', { name: 'Backups', exact: true }).click();
+  await expect(schedule.getByRole('combobox', { name: 'Día de la semana', exact: true })).toHaveValue('2');
+  await expect(schedule.getByLabel('Hora', { exact: false })).toHaveValue('04:20');
+  await expect(schedule.getByRole('combobox', { name: 'Conservar copias durante', exact: true })).toHaveValue('60');
+  await page.getByRole('button', { name: 'Crear copia ahora', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Crear copia ahora', exact: true }).getByRole('button', { name: 'Confirmar creación' }).click();
+  const history = page.getByRole('region', { name: 'Historial y restauración', exact: true });
+  const newest = history.getByRole('article').first();
+  await expect(newest.getByText('Correcta', { exact: true })).toBeVisible({ timeout: 60_000 });
+  await newest.getByRole('button', { name: 'Restaurar', exact: true }).click();
+  const restore = page.getByRole('dialog', { name: 'Restaurar copia de seguridad', exact: true });
+  await expect(restore.getByRole('button', { name: 'Restaurar definitivamente' })).toBeDisabled();
+  await restore.getByRole('checkbox').check();
+  await restore.getByLabel('Escribe RESTAURAR para confirmar').fill('RESTAURAR');
+  await expect(restore.getByRole('button', { name: 'Restaurar definitivamente' })).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect(restore).toHaveCount(0);
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(value => { document.documentElement.classList.toggle('dark', value === 'dark'); }, theme);
+    for (const width of [320, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await expect(local.getByRole('button', { name: 'Configurar' })).toBeVisible();
+    }
+  }
+  await page.screenshot({ path: test.info().outputPath('backups-simplified.png'), fullPage: true });
+  console.log('BACKUP_SIMPLE_UI=PASS BACKUP_DESTINATIONS_UI=PASS BACKUP_WIZARD=PASS BACKUP_ADVANCED_OPTIONS=PASS BACKUP_SCHEDULE_UI=PASS BACKUP_HISTORY_UI=PASS BACKUP_RESTORE_UI=PASS RESPONSIVE=PASS ACCESSIBILITY=PASS');
+});

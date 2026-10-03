@@ -165,6 +165,14 @@ try {
     & node (Join-Path $Root 'scripts/e2e/e2e-assignments.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de asignaciones E2E fallo' }
 
+    Write-Host '==> Validando backups simplificados y restauracion real'
+    & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a backups E2E fallo' }
+    & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'readiness previa a backups E2E fallo' }
+    & node (Join-Path $Root 'scripts/e2e/e2e-backups.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de backups E2E fallo' }
+
     Write-Host '==> Validando cursos, temario transaccional y permisos contra PostgreSQL'
     & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a cursos E2E fallo' }

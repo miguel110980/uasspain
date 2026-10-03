@@ -126,6 +126,7 @@ def do_restore(sess, payload, tries=4):
     Devuelve (200, data) si terminó done, (500, data) si terminó failed o
     (código, data) si la petición fue rechazada.
     """
+    payload = {**payload, 'confirmation_text': 'RESTAURAR'}
     st, resp = call_post_retry(
         sess, "/api/backups/restore/", payload, timeout=60, tries=tries
     )
@@ -364,8 +365,11 @@ def run_content_e2e(admin, instr):
         st_hidden, hidden = admin.call("GET", f"/api/courses/{slug}")
         log(st_list == 200 and visible is not None and visible.get("status") == "upcoming" and visible.get("content_available") is False and visible.get("description") == "" and "sections" not in visible, "curso_proximamente_en_catalogo_sin_contenido", f"{st_list}")
         log(
-            st_hidden == 404,
-            "curso_proximamente_contenido_protegido",
+            st_hidden == 200 and hidden.get("status") == "upcoming"
+            and hidden.get("content_available") is False
+            and hidden.get("description") == "" and hidden.get("introduction") == ""
+            and hidden.get("syllabus") == "" and hidden.get("sections") == [],
+            "curso_proximamente_pagina_publica_sin_contenido_privado",
             f"{st_hidden}",
         )
 
@@ -1235,13 +1239,16 @@ async def main():
         st_h == 200
         and st == 200
         and fljob is not None
-        and fljob.get("status") == "partial",
-        "e2e_backup_fallo_conexion",
+        and fljob.get("status") == "completed"
+        and fljob.get("destinations", {}).get("external_1", {}).get("status") == "NOT_CONFIGURED",
+        "e2e_backup_destino_invalido_desactivado",
         f"{st} {fljob.get('status') if fljob else fl}",
     )
     st_pu, _pu = admin.call(
         "PUT", f"/api/backups/servers/{bad_host}/", {"sftp_host": "sftp-ext1-e2e"}
     )
+    admin.call("POST", "/api/backups/test-connection/", {"server_id":bad_host}, timeout=60)
+    admin.call("PUT", f"/api/backups/servers/{bad_host}/", {"is_active":True}, timeout=60)
     st, rec = call_post_retry(
         admin,
         "/api/backups/create/",

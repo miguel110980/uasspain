@@ -9,6 +9,95 @@ use crate::{error::AppError, security::FieldCipher};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
+pub(crate) async fn backup_operation_lock_connection()
+-> Result<sqlx::pool::PoolConnection<sqlx::Postgres>, AppError> {
+    let mut url = url::Url::parse(&database_url().ok_or(AppError::Unavailable)?)
+        .map_err(|_| AppError::Unavailable)?;
+    // The coordination session must survive dropdb --force during restoration.
+    // It uses the runtime role and requires only CONNECT and advisory locking.
+    url.set_path("/postgres");
+    let pool = create_pool(url.as_str(), 1, 0).await?;
+    let mut connection = pool.acquire().await?;
+    connection.close_on_drop();
+    Ok(connection)
+}
+
+pub(crate) async fn quiesce_runtime_for_restore(
+    maintenance_url: &str,
+    database: &str,
+) -> Result<(), AppError> {
+    let runtime_url = database_url().ok_or(AppError::Unavailable)?;
+    let runtime_role = url::Url::parse(&runtime_url)
+        .map_err(|_| AppError::Unavailable)?
+        .username()
+        .to_owned();
+    let owner_pool = create_pool(maintenance_url, 1, 0).await?;
+    let statement = format!(
+        "REVOKE CONNECT ON DATABASE \"{}\" FROM PUBLIC, \"{}\"",
+        database.replace('"', "\"\""),
+        runtime_role.replace('"', "\"\"")
+    );
+    let result = sqlx::query(&statement).execute(&owner_pool).await;
+    owner_pool.close().await;
+    result?;
+    // The runtime terminates only its own sessions. No pg_signal_backend or
+    // superuser grant is needed, and the coordination session is in postgres.
+    let mut runtime = backup_operation_lock_connection().await?;
+    sqlx::query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND usename=current_user AND pid<>pg_backend_pid()")
+        .bind(database).execute(&mut *runtime).await?;
+    Ok(())
+}
+
+pub(crate) async fn migrate_restored_database(url: &str) -> Result<(), AppError> {
+    let pool = create_pool(
+        &migration_database_url().unwrap_or_else(|| url.to_owned()),
+        2,
+        0,
+    )
+    .await?;
+    let result = async {
+        // pg_restore --no-privileges omits ACLs. Reinstate the existing roles
+        // before runtime access, future migrations or subsequent backups.
+        sqlx::raw_sql(r#"
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='uasspain_app') THEN
+        EXECUTE format('REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database());
+        REVOKE ALL ON SCHEMA public FROM PUBLIC;
+        REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO uasspain_app', current_database());
+        GRANT USAGE ON SCHEMA public TO uasspain_app;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO uasspain_app;
+        GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO uasspain_app;
+        GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO uasspain_app;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO uasspain_app;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO uasspain_app;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO uasspain_app;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='uasspain_backup') THEN
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO uasspain_backup', current_database());
+        GRANT USAGE ON SCHEMA public TO uasspain_backup;
+        GRANT SELECT ON ALL TABLES IN SCHEMA public TO uasspain_backup;
+        GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO uasspain_backup;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO uasspain_backup;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO uasspain_backup;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='uasspain_restore') THEN
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO uasspain_restore', current_database());
+        GRANT USAGE ON SCHEMA public TO uasspain_restore;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='uasspain_monitor') THEN
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO uasspain_monitor', current_database());
+    END IF;
+END $$;
+"#).execute(&pool).await?;
+        run_migrations(&pool).await
+    }.await;
+    pool.close().await;
+    result
+}
+
 pub async fn connect_from_env() -> Result<Option<PgPool>, AppError> {
     let Some(url) = database_url() else {
         return Ok(None);

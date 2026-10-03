@@ -29,7 +29,7 @@ FROM ubuntu:26.04@sha256:3595d7fc4286a33fad0fd853a4063e654287a9c3787437d7937c94c
 
 RUN apt-get update \
     && apt-get upgrade --yes \
-    && apt-get install --no-install-recommends --yes ca-certificates openssh-client libpq5 liblz4-1 libzstd1 libreadline8t64 zlib1g \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends --yes ca-certificates tzdata openssh-client libpq5 liblz4-1 libzstd1 libreadline8t64 zlib1g \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 uasspain \
     && useradd --system --uid 10001 --gid uasspain --home-dir /nonexistent --shell /usr/sbin/nologin uasspain \
