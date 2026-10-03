@@ -33,6 +33,13 @@ for (const width of [320, 390, 768, 1440]) {
     const menu = page.locator(width < 1440 ? '#main-mobile-menu' : '[id^="desktop-menu-"]').filter({ visible: true });
     await expect(menu.getByRole('link', { name: published.name, exact: true })).toBeVisible();
     await expect(menu.getByRole('link', { name: upcoming.name, exact: true })).toHaveCount(0);
+    const upcomingEntry = menu.locator('[data-course-status="upcoming"]').filter({ hasText: upcoming.name });
+    await upcomingEntry.scrollIntoViewIfNeeded();
+    await expect(upcomingEntry).toBeVisible();
+    await expect(upcomingEntry).toHaveAttribute('aria-disabled', 'true');
+    await expect(upcomingEntry.getByText('Próximamente', { exact: true })).toBeVisible();
+    await expect(upcomingEntry.locator('a')).toHaveCount(0);
+    if (width >= 1440) expect(await upcomingEntry.evaluate(node => node.previousElementSibling?.textContent?.trim())).toBe('Otros cursos');
     await menu.getByRole('link', { name: 'Todos los cursos', exact: true }).click();
     await expect(page).toHaveURL(/\/formacion$/);
     await expect(page.getByRole('heading', { name: 'Todos los cursos', exact: true })).toBeVisible();

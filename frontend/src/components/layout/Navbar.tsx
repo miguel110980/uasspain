@@ -41,6 +41,12 @@ const navLinks = [
 
 const COURSE_ICONS = { GraduationCap, Plane, RadioTower, Shield, Siren };
 const MenuIcon = ({ icon: Icon }) => <span className={styles.menuIcon} aria-hidden="true"><Icon /></span>;
+const UpcomingCourseItem = ({ item, className }) => (
+  <div data-course-status="upcoming" aria-disabled="true" className={`${className} cursor-default`}>
+    <MenuIcon icon={item.icon} />
+    <span className="min-w-0"><span className="block">{item.label}</span><span className="block text-[10px] text-warning">Próximamente</span></span>
+  </div>
+);
 const SCROLL_MAX = 160;
 
 function easeOutCubic(t) {
@@ -74,10 +80,11 @@ export default function Navbar() {
       ...COURSE_CATEGORIES.map(category => ({
         label: category.menuLabel,
         children: managedCourses
-          .filter(course => course.status === 'published' && course.category === category.value)
+          .filter(course => course.category === category.value)
           .map(course => ({
             label: course.name, href: coursePath(course),
             icon: COURSE_ICONS[course.menu_icon] || GraduationCap,
+            upcoming: course.status !== 'published',
           })),
       })),
     ],
@@ -278,7 +285,9 @@ export default function Navbar() {
                         <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 cursor-default">
                           {group.label}
                         </div>
-                        {group.children.map((item) => (
+                        {group.children.map((item) => item.upcoming ? (
+                          <UpcomingCourseItem key={item.href} item={item} className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground rounded-md" />
+                        ) : (
                           <Link
                             key={item.label}
                             to={item.href}
@@ -447,7 +456,9 @@ export default function Navbar() {
                                     {group.label}
                                   </div>
                                   <div className="h-px bg-border mb-1" />
-                                  {group.children.map((child) => (
+                                  {group.children.map((child) => child.upcoming ? (
+                                    <UpcomingCourseItem key={child.href} item={child} className="flex items-center gap-2 py-2 text-xs uppercase tracking-widest text-muted-foreground/70" />
+                                  ) : (
                                     <Link
                                       key={child.label}
                                       to={child.href}

@@ -76,7 +76,10 @@ export default function AdminCursos() {
     <form onSubmit={saveCourse} className="glass-card p-5 space-y-5" aria-label={editing ? 'Editar curso' : 'Nuevo curso'}>
       <div className="flex flex-wrap justify-between gap-3"><h3 className="font-heading font-bold">{editing ? `Editar ${editing.name}` : 'Nuevo curso'}</h3>{editing && <button type="button" disabled={saving} onClick={reset} className="text-xs text-muted-foreground hover:text-primary">Cancelar edición</button>}</div>
       <fieldset disabled={saving} className="space-y-5 min-w-0">
-        <label className="block text-sm font-medium" htmlFor="course-name">Nombre del curso<input ref={nameRef} id="course-name" required maxLength={180} value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} className={fieldClass} /></label>
+        <div className="grid md:grid-cols-2 gap-4">
+          <label className="block text-sm font-medium" htmlFor="course-name">Nombre del curso<input ref={nameRef} id="course-name" required maxLength={180} value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} className={fieldClass} /></label>
+          <div><label htmlFor="course-category" className="block text-sm font-medium">Categoría</label><select id="course-category" required value={form.category} onChange={event => setForm({ ...form, category: event.target.value as CourseCategory })} className={fieldClass}>{COURSE_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}</select></div>
+        </div>
         <label className="block text-sm font-medium" htmlFor="course-description">Descripción<textarea id="course-description" required maxLength={100000} rows={5} value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} className={fieldClass} /></label>
         <fieldset className="space-y-3 min-w-0"><legend className="text-sm font-medium mb-2">Temario</legend>
           {form.topics.map((topic, index) => <div key={topic.key} className="border border-border rounded p-3 space-y-3 min-w-0">
@@ -86,7 +89,6 @@ export default function AdminCursos() {
           </div>)}
           <button type="button" disabled={form.topics.length >= 100} onClick={() => setForm(current => ({ ...current, topics: [...current.topics, { key: crypto.randomUUID(), title: '', body: '' }] }))} className="inline-flex items-center gap-2 px-3 py-2 border border-primary/30 text-primary rounded text-xs"><Plus className="w-4 h-4" />Añadir tema</button>
         </fieldset>
-        <div><label htmlFor="course-category" className="block text-sm font-medium">Categoría</label><select id="course-category" required value={form.category} onChange={event => setForm({ ...form, category: event.target.value as CourseCategory })} className={fieldClass}>{COURSE_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}</select></div>
         <div className="grid md:grid-cols-3 gap-4">
           <div><label htmlFor="course-modality" className="block text-sm font-medium">Modalidad</label><select id="course-modality" required value={form.modality} onChange={event => setForm({ ...form, modality: event.target.value as CourseForm['modality'] })} className={fieldClass}><option value="online">Online</option><option value="presencial">Presencial</option></select></div>
           <label htmlFor="course-duration" className="block text-sm font-medium">Duración<input id="course-duration" type="text" maxLength={120} value={form.duration} onChange={event => setForm({ ...form, duration: event.target.value })} placeholder="Ej. 40 horas o 3 semanas" className={fieldClass} /></label>

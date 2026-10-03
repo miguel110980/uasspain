@@ -17,6 +17,12 @@ test('course management updates the catalog, stable URL and ordered topics in re
   await publicPage.getByRole('button', { name: 'Formación', exact: true }).click();
   try {
     const form = page.getByRole('form', { name: 'Nuevo curso', exact: true });
+    for (const width of [320, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await form.getByLabel('Nombre del curso', { exact: true }).scrollIntoViewIfNeeded();
+      await expect(form.getByLabel('Categoría', { exact: true })).toBeInViewport();
+      expect(await form.evaluate(el => Boolean(el.querySelector('#course-category').compareDocumentPosition(el.querySelector('#course-description')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+    }
     await expect(form.locator('input[type="number"], input[type="file"]')).toHaveCount(0);
     await expect(form.getByPlaceholder('slug-opcional')).toHaveCount(0);
     await form.getByLabel('Nombre del curso', { exact: true }).fill(`  ${name}  `);
