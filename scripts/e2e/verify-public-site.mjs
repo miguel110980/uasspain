@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import https from 'node:https';
+import { gunzipSync } from 'node:zlib';
 import assert from 'node:assert/strict';
 
 // Exercise the compiled site through the edge proxy with real TLS verification.
@@ -8,11 +9,14 @@ assert.equal(target.protocol, 'https:');
 const ca = await readFile(process.env.SITE_TEST_CA || '.secrets/tls/ca.crt');
 function get(path) {
   return new Promise((resolve, reject) => {
-    const request = https.get(new URL(path, target), { ca, timeout: 10000 }, response => {
-      let body = '';
-      response.setEncoding('utf8');
-      response.on('data', chunk => { body += chunk; });
-      response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body }));
+    const request = https.get(new URL(path, target), { ca, timeout: 10000, headers: { 'Accept-Encoding': 'gzip' } }, response => {
+      const chunks = [];
+      response.on('data', chunk => { chunks.push(chunk); });
+      response.on('end', () => {
+        const bytes = Buffer.concat(chunks);
+        const body = (response.headers['content-encoding'] === 'gzip' ? gunzipSync(bytes) : bytes).toString('utf8');
+        resolve({ status: response.statusCode, headers: response.headers, body });
+      });
     });
     request.on('timeout', () => request.destroy(new Error('HTTPS request timed out')));
     request.on('error', reject);
@@ -21,7 +25,7 @@ function get(path) {
 const sitemap = await get('/sitemap-static.xml');
 assert.equal(sitemap.status, 200);
 const paths = [...sitemap.body.matchAll(/<loc>([^<]+)<\/loc>/g)].map(match => new URL(match[1]).pathname);
-assert.ok(paths.length >= 20, 'Static sitemap must contain the public routes');
+assert.ok(paths.length >= 10, 'Static sitemap must contain the public routes');
 const titles = new Set();
 for (const path of paths) {
   const response = await get(path);
@@ -67,6 +71,8 @@ for (const match of courses.body.matchAll(/<loc>([^<]+)<\/loc>/g)) {
   const response = await get(new URL(match[1]).pathname);
   assert.equal(response.status, 200);
   assert.match(response.body, /<h1\b/);
+  assert.match(response.body, /<title>[^<]+<\/title>/);
+  assert.match(response.body, /<link rel="canonical"/);
   assert.match(response.body, /"@type":"Course"/);
   assert.doesNotMatch(response.body, /<!--#include|an error occurred/);
 }

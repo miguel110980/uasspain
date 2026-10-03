@@ -67,7 +67,13 @@ pub async fn course_head(
     let course = published(state, slug).await?;
     let origin = origin()?;
     let name = text(&course, "name");
-    let title = escape(&format!("{name} | UASSPAIN"));
+    let presentation = &course["presentation"];
+    let original_name = text(presentation, "original_name") == name;
+    let title = if original_name && !text(&presentation["seo"], "title").is_empty() {
+        escape(text(&presentation["seo"], "title"))
+    } else {
+        escape(&format!("{name} | UASSPAIN"))
+    };
     let description = text(&course, "short_description");
     let description = if description.is_empty() {
         name
@@ -78,11 +84,18 @@ pub async fn course_head(
     let schema = json!({"@context":"https://schema.org", "@type":"Course", "name":name,
         "description":description, "url":url, "provider":{"@type":"Organization","name":"UASSPAIN","url":origin}});
     let schema = schema.to_string().replace('<', "\\u003c");
-    let description = escape(description);
+    let description = if description == text(presentation, "original_summary")
+        && !text(&presentation["seo"], "description").is_empty()
+    {
+        escape(text(&presentation["seo"], "description"))
+    } else {
+        escape(description)
+    };
+    let keywords = escape(text(&presentation["seo"], "keywords"));
     let url = escape(&url);
     let image = escape(&format!("{origin}/images/hero_claro.webp"));
     Ok(Html(format!(
-        "<title>{title}</title><meta name=\"description\" content=\"{description}\"><meta name=\"robots\" content=\"index, follow, max-image-preview:large\"><link rel=\"canonical\" href=\"{url}\"><meta property=\"og:title\" content=\"{title}\"><meta property=\"og:description\" content=\"{description}\"><meta property=\"og:url\" content=\"{url}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:image\" content=\"{image}\"><meta name=\"twitter:image\" content=\"{image}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{title}\"><meta name=\"twitter:description\" content=\"{description}\"><script id=\"seo-org-jsonld\" type=\"application/ld+json\">{schema}</script>"
+        "<title>{title}</title><meta name=\"description\" content=\"{description}\"><meta name=\"keywords\" content=\"{keywords}\"><meta name=\"robots\" content=\"index, follow, max-image-preview:large\"><link rel=\"canonical\" href=\"{url}\"><meta property=\"og:title\" content=\"{title}\"><meta property=\"og:description\" content=\"{description}\"><meta property=\"og:url\" content=\"{url}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:image\" content=\"{image}\"><meta name=\"twitter:image\" content=\"{image}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{title}\"><meta name=\"twitter:description\" content=\"{description}\"><script id=\"seo-org-jsonld\" type=\"application/ld+json\">{schema}</script>"
     )))
 }
 
@@ -91,9 +104,24 @@ pub async fn course_body(
     Path(slug): Path<String>,
 ) -> Result<Html<String>, AppError> {
     let course = published(state, slug).await?;
+    let presentation = &course["presentation"];
+    let heading = if text(presentation, "original_name") == text(&course, "name") {
+        presentation["hero_parts"]
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .map(|part| text(part, "text"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_else(|| text(&course, "name").to_owned())
+    } else {
+        text(&course, "name").to_owned()
+    };
     let mut html = format!(
         "<main class=\"max-w-5xl mx-auto px-6 pt-28 pb-24\"><a href=\"/formacion\">Formación</a><h1 class=\"font-heading text-4xl font-bold mt-6\">{}</h1><p class=\"mt-5\">{}</p>",
-        escape(text(&course, "name")),
+        escape(&heading),
         escape(text(&course, "short_description"))
     );
     html.push_str(&format!(
@@ -105,19 +133,53 @@ pub async fn course_body(
         },
         escape(text(&course, "duration"))
     ));
-    for (key, heading) in [
+    for key in ["format_label", "certification", "badge"] {
+        if key == "format_label"
+            && text(&course, "modality") != text(presentation, "original_modality")
+        {
+            continue;
+        }
+        let value = text(presentation, key);
+        if !value.is_empty() {
+            html.push_str(&format!("<p>{}</p>", escape(value)));
+        }
+    }
+    for (key, default_heading) in [
         ("introduction", "Introducción"),
         ("description", "Descripción"),
         ("syllabus", "Temario"),
     ] {
         let body = text(&course, key);
         if !body.is_empty() {
+            let heading =
+                if key == "description" && !text(presentation, "description_heading").is_empty() {
+                    text(presentation, "description_heading")
+                } else {
+                    default_heading
+                };
+            let heading = escape(heading);
             html.push_str(&format!("<section class=\"mt-10\"><h2>{heading}</h2><p class=\"whitespace-pre-wrap\">{}</p></section>", escape(body)));
         }
     }
     if let Some(sections) = course.get("sections").and_then(Value::as_array) {
+        let heading = text(presentation, "topics_heading");
+        html.push_str(&format!(
+            "<h2>{}</h2>",
+            escape(if heading.is_empty() {
+                "Temario"
+            } else {
+                heading
+            })
+        ));
         for section in sections {
             html.push_str(&format!("<section class=\"mt-10\"><h2>{}</h2><p class=\"whitespace-pre-wrap\">{}</p></section>", escape(text(section, "title")), escape(text(section, "body"))));
+        }
+    }
+    let cta = &presentation["cta"];
+    for key in ["heading", "description", "label"] {
+        let value = text(cta, key);
+        if !value.is_empty() {
+            html.push_str(&format!("<p>{}</p>", escape(value)));
         }
     }
     html.push_str("</main>");

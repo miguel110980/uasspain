@@ -2,11 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowDown, ArrowUp, BookOpen, Edit3, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import contentService, { type Course, type CourseStatus } from '@/services/contentService';
+import { COURSE_CATEGORIES, courseCategoryLabel, type CourseCategory } from '@/lib/courseCategories';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 
 type Topic = { key: string; id?: string; title: string; body: string };
-type CourseForm = { name: string; description: string; modality: 'online' | 'presencial'; duration: string; status: CourseStatus; topics: Topic[] };
-const emptyForm = (): CourseForm => ({ name: '', description: '', modality: 'online', duration: '', status: 'upcoming', topics: [] });
+type CourseForm = { name: string; description: string; category: CourseCategory; modality: 'online' | 'presencial'; duration: string; status: CourseStatus; topics: Topic[] };
+const emptyForm = (): CourseForm => ({ name: '', description: '', category: 'other', modality: 'online', duration: '', status: 'upcoming', topics: [] });
 const fieldClass = 'w-full min-w-0 mt-2 bg-surface-muted border border-border rounded px-3 py-2 text-sm focus-visible:outline-primary';
 const errorText = (error: unknown, fallback: string) => (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail || fallback;
 
@@ -34,7 +35,7 @@ export default function AdminCursos() {
     const description = [...new Set([course.introduction?.trim(), course.description?.trim() || course.short_description?.trim()].filter(Boolean))].join('\n\n');
     const topics: Topic[] = (course.sections || []).map(topic => ({ key: topic.id, id: topic.id, title: topic.title, body: topic.body }));
     if (course.syllabus?.trim()) topics.unshift({ key: crypto.randomUUID(), title: 'Temario', body: course.syllabus.trim() });
-    setEditing(course); setForm({ name: course.name, description, modality: course.modality, duration: course.duration, status: course.status, topics });
+    setEditing(course); setForm({ name: course.name, description, category: course.category, modality: course.modality, duration: course.duration, status: course.status, topics });
     setError(''); setNotice(''); nameRef.current?.focus();
   };
   const changeTopic = (key: string, patch: Partial<Topic>) => setForm(current => ({ ...current, topics: current.topics.map(topic => topic.key === key ? { ...topic, ...patch } : topic) }));
@@ -50,7 +51,7 @@ export default function AdminCursos() {
     }
     savingLock.current = true; setSaving(true); setError(''); setNotice('');
     try {
-      const payload = { name: form.name.trim(), description: form.description.trim(), modality: form.modality, duration: form.duration.trim(), status: form.status,
+      const payload = { name: form.name.trim(), description: form.description.trim(), category: form.category, modality: form.modality, duration: form.duration.trim(), status: form.status,
         sections: form.topics.map((topic, sort_order) => ({ ...(topic.id ? { id: topic.id } : {}), title: topic.title.trim(), body: topic.body.trim(), sort_order })), introduction: '', syllabus: '' };
       const course = editing ? await contentService.updateCourse(editing.id, payload) : await contentService.createCourse(payload);
       setCourses(current => [...current.filter(item => item.id !== course.id), course].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)));
@@ -85,6 +86,7 @@ export default function AdminCursos() {
           </div>)}
           <button type="button" disabled={form.topics.length >= 100} onClick={() => setForm(current => ({ ...current, topics: [...current.topics, { key: crypto.randomUUID(), title: '', body: '' }] }))} className="inline-flex items-center gap-2 px-3 py-2 border border-primary/30 text-primary rounded text-xs"><Plus className="w-4 h-4" />Añadir tema</button>
         </fieldset>
+        <div><label htmlFor="course-category" className="block text-sm font-medium">Categoría</label><select id="course-category" required value={form.category} onChange={event => setForm({ ...form, category: event.target.value as CourseCategory })} className={fieldClass}>{COURSE_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}</select></div>
         <div className="grid md:grid-cols-3 gap-4">
           <div><label htmlFor="course-modality" className="block text-sm font-medium">Modalidad</label><select id="course-modality" required value={form.modality} onChange={event => setForm({ ...form, modality: event.target.value as CourseForm['modality'] })} className={fieldClass}><option value="online">Online</option><option value="presencial">Presencial</option></select></div>
           <label htmlFor="course-duration" className="block text-sm font-medium">Duración<input id="course-duration" type="text" maxLength={120} value={form.duration} onChange={event => setForm({ ...form, duration: event.target.value })} placeholder="Ej. 40 horas o 3 semanas" className={fieldClass} /></label>
@@ -95,7 +97,7 @@ export default function AdminCursos() {
     </form>
     <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4" aria-busy={loading}>{loading ? <Loader2 aria-label="Cargando cursos" className="animate-spin text-primary" /> : courses.length === 0 ? <p className="text-sm text-muted-foreground">Todavía no hay cursos guardados.</p> : courses.map(course => <article key={course.id} className="glass-card p-5 min-w-0 space-y-3">
       <h3 className="font-heading font-bold">{course.name}</h3><p className="text-sm text-muted-foreground line-clamp-3">{course.description || course.short_description}</p>
-      <dl className="text-xs space-y-2"><div><dt className="inline text-muted-foreground">Modalidad: </dt><dd className="inline">{course.modality === 'presencial' ? 'Presencial' : 'Online'}</dd></div><div><dt className="inline text-muted-foreground">Duración: </dt><dd className="inline">{course.duration || 'Sin especificar'}</dd></div><div><dt className="inline text-muted-foreground">Estado: </dt><dd className={`inline font-bold ${course.status === 'published' ? 'text-success' : 'text-warning'}`}>{course.status === 'published' ? 'Publicado' : 'Próximamente'}</dd></div></dl>
+      <dl className="text-xs space-y-2"><div><dt className="inline text-muted-foreground">Categoría: </dt><dd className="inline">{courseCategoryLabel(course.category)}</dd></div><div><dt className="inline text-muted-foreground">Modalidad: </dt><dd className="inline">{course.modality === 'presencial' ? 'Presencial' : 'Online'}</dd></div><div><dt className="inline text-muted-foreground">Duración: </dt><dd className="inline">{course.duration || 'Sin especificar'}</dd></div><div><dt className="inline text-muted-foreground">Estado: </dt><dd className={`inline font-bold ${course.status === 'published' ? 'text-success' : 'text-warning'}`}>{course.status === 'published' ? 'Publicado' : 'Próximamente'}</dd></div></dl>
       <div className="flex flex-wrap gap-2"><button disabled={saving} onClick={() => selectCourse(course)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-border rounded text-xs"><Edit3 className="w-3.5 h-3.5" />Editar</button><button disabled={saving || deleting} onClick={() => setPendingDelete(course)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-danger/30 text-danger rounded text-xs"><Trash2 className="w-3.5 h-3.5" />Eliminar</button></div>
     </article>)}</div>
     <AlertDialog open={Boolean(pendingDelete)} onOpenChange={open => !open && !deleting && setPendingDelete(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Eliminar curso</AlertDialogTitle><AlertDialogDescription>Se eliminará “{pendingDelete?.name}” y su temario. Esta acción no se puede deshacer.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel><AlertDialogAction disabled={deleting} onClick={event => { event.preventDefault(); void confirmDelete(); }} className="bg-danger text-white hover:bg-danger/90">{deleting ? 'Eliminando…' : 'Eliminar curso'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>

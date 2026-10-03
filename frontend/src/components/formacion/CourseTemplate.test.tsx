@@ -20,6 +20,7 @@ const baseCourse: Course = {
   syllabus: 'Temario privado',
   cover_image_url: '',
   modality: 'online',
+  category: 'other',
   duration: '40 horas',
   status: 'upcoming',
   sort_order: 0,

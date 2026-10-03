@@ -7,9 +7,10 @@ let admin;
 try {
   admin = await adminClient();
   const suffix = randomUUID();
-  const payload = { name: `  Curso seguro ${suffix}  `, description: '  Texto\0 seguro\nSegunda línea  ', modality: 'presencial', duration: '  3 semanas (24 horas)  ', status: 'upcoming', sections: [{ title: 'Tema B', body: 'Contenido B' }, { title: 'Tema A', body: 'Contenido A' }] };
+  const payload = { name: `  Curso seguro ${suffix}  `, description: '  Texto\0 seguro\nSegunda línea  ', category: 'other', modality: 'presencial', duration: '  3 semanas (24 horas)  ', status: 'upcoming', sections: [{ title: 'Tema B', body: 'Contenido B' }, { title: 'Tema A', body: 'Contenido A' }] };
   const created = await admin.call('/api/admin/courses', 'POST', payload);
   gate(created.status === 201, 'create');
+  gate(created.body.category === 'other', 'category_create');
   const course = created.body; const id = uuid(course.id); ids.push(id);
   gate(course.name === payload.name.trim() && course.description === 'Texto seguro\nSegunda línea' && course.duration === '3 semanas (24 horas)', 'trim_and_sanitize');
   const stored = JSON.parse(sql(`SELECT json_build_object('name',name,'description',description,'duration',duration,'modality',modality,'topics',(SELECT json_agg(json_build_object('title',title,'sort_order',sort_order) ORDER BY sort_order) FROM course_sections WHERE course_id='${id}')) FROM courses WHERE id='${id}'`));
@@ -21,6 +22,15 @@ try {
   }
   const missingModality = { ...payload }; delete missingModality.modality;
   gate((await admin.call('/api/admin/courses', 'POST', missingModality)).status === 400, 'missing_modality_denied');
+  const missingCategory = { ...payload }; delete missingCategory.category;
+  gate((await admin.call('/api/admin/courses', 'POST', missingCategory)).status === 400, 'missing_category_denied');
+  for (const category of ['', 'arbitrary', 'EASA', "../other"]) {
+    gate((await admin.call(`/api/admin/courses/${id}`, 'PATCH', {category})).status === 400, 'invalid_category_denied');
+  }
+  for (const category of ['easa', 'non_easa', 'instructor', 'other']) {
+    const changed = await admin.call(`/api/admin/courses/${id}`, 'PATCH', {category});
+    gate(changed.status === 200 && changed.body.category === category && sql(`SELECT category FROM courses WHERE id='${id}'`) === category, `category_${category}_persists`);
+  }
   const duplicate = await admin.call('/api/admin/courses', 'POST', payload);
   gate(duplicate.status === 201 && duplicate.body.slug !== course.slug && duplicate.body.slug.length <= 180, 'automatic_slug_collision');
   ids.push(uuid(duplicate.body.id));

@@ -75,17 +75,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/blog/posts", get(crate::content::public_posts))
         .route("/api/blog/posts/{id}", get(crate::content::public_post))
         .route("/api/courses", get(crate::content::public_courses))
-        .route("/api/courses/{slug}", get(crate::content::public_course))
+        .route("/api/courses/{*slug}", get(crate::content::public_course))
         .route(
-            "/api/public/seo/course-route/{slug}",
+            "/api/public/seo/course-route/{*slug}",
             get(crate::seo::course_route),
         )
         .route(
-            "/api/public/seo/course-head/{slug}",
+            "/api/public/seo/course-head/{*slug}",
             get(crate::seo::course_head),
         )
         .route(
-            "/api/public/seo/course-body/{slug}",
+            "/api/public/seo/course-body/{*slug}",
             get(crate::seo::course_body),
         )
         .route(

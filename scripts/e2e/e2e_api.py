@@ -339,6 +339,7 @@ def run_content_e2e(admin, instr):
         course_payload = {
             "name": f"Curso E2E {stamp}",
             "modality": "online",
+            "category": "other",
             "slug": slug,
             "short_description": "Curso visible como próximo",
             "description": "CONTENIDO PRIVADO E2E",

@@ -30,6 +30,9 @@ test('course management updates the catalog, stable URL and ordered topics in re
     await form.getByRole('button', { name: 'Subir tema 2', exact: true }).click();
     await form.getByLabel('Contenido del tema 1', { exact: true }).fill('Operaciones seguras.');
     await form.getByLabel('Modalidad', { exact: true }).selectOption('presencial');
+    await expect(form.getByLabel('Categoría', { exact: true })).toHaveAttribute('required', '');
+    await expect(form.getByLabel('Categoría', { exact: true }).locator('option')).toHaveText(['Curso EASA', 'Curso no EASA', 'Curso de Instructor', 'Otros cursos']);
+    await form.getByLabel('Categoría', { exact: true }).selectOption('other');
     await form.getByLabel('Duración', { exact: true }).fill('  3 semanas (24 horas)  ');
     for (const width of [320, 390, 768, 1440]) {
       await page.setViewportSize({ width, height: 900 });
@@ -42,6 +45,7 @@ test('course management updates the catalog, stable URL and ordered topics in re
     const response = await created; expect(response.status()).toBe(201);
     const course = await response.json(); id = course.id;
     expect(course.name).toBe(name); expect(course.duration).toBe('3 semanas (24 horas)');
+    expect(course.category).toBe('other');
     expect(course.sections.map(topic => [topic.title, topic.sort_order])).toEqual([['Tema B', 0], ['Tema A', 1]]);
     expect((await page.request.get(`/api/courses/${course.slug}`)).status()).toBe(404);
     await expect(publicPage.getByRole('link', { name, exact: true })).toHaveCount(0);
@@ -53,6 +57,7 @@ test('course management updates the catalog, stable URL and ordered topics in re
     await card().getByRole('button', { name: 'Editar', exact: true }).click();
     const edit = page.getByRole('form', { name: 'Editar curso', exact: true });
     await expect(edit.getByLabel('Tema 1', { exact: true })).toHaveValue('Tema B');
+    await expect(edit.getByLabel('Categoría', { exact: true })).toHaveValue('other');
     await edit.getByLabel('Estado', { exact: true }).selectOption('published');
     await edit.getByRole('button', { name: 'Guardar', exact: true }).click();
     await expect(publicPage.getByRole('link', { name, exact: true })).toBeVisible();
@@ -61,7 +66,7 @@ test('course management updates the catalog, stable URL and ordered topics in re
     await publicPage.getByRole('link', { name, exact: true }).click();
     await expect(publicPage).toHaveURL(new RegExp(`/formacion/${course.slug}$`));
     await expect(publicPage.getByRole('heading', { name, exact: true })).toBeVisible();
-    await expect(publicPage.getByText('Descripción pública completa.', { exact: true })).toBeVisible();
+    await expect(publicPage.getByRole('heading', { name: 'Descripción', exact: true }).locator('..').getByText('Descripción pública completa.', { exact: true })).toBeVisible();
     await expect(publicPage.getByText('Presencial', { exact: true })).toBeVisible();
     await expect(publicPage.getByText('3 semanas (24 horas)', { exact: true })).toBeVisible();
     expect(await publicPage.locator('main ol h3').allTextContents()).toEqual(['Tema B', 'Tema A']);

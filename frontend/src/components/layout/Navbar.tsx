@@ -12,6 +12,7 @@ const AuthModal = lazy(() => import('@/components/auth/AuthModal'));
 import Logo from '@/components/layout/Logo';
 import styles from './Navbar.module.css';
 import contentService from '@/services/contentService';
+import { COURSE_CATEGORIES, coursePath } from '@/lib/courseCategories';
 import authService from '@/services/authService';
 import useSession from '@/hooks/useSession';
 import { panelRouteForUser } from '@/lib/roles';
@@ -31,46 +32,15 @@ const navLinks = [
       { label: 'Termografía', href: '/servicios/termografia', icon: Thermometer },
     ],
   },
-  {
-    label: 'Formación',
-    groups: [
-      {
-        label: 'Cursos EASA',
-        children: [
-          { label: 'A1/A3', href: '/formacion/easa/a1-a3', icon: GraduationCap },
-          { label: 'A2', href: '/formacion/easa/a2', icon: GraduationCap },
-          { label: 'STS — General', href: '/formacion/easa/sts', icon: Plane },
-          { label: 'STS-01 — VLOS Poblado', href: '/formacion/easa/sts-01', icon: Plane },
-          { label: 'STS-02 — BVLOS', href: '/formacion/easa/sts-02', icon: Plane },
-        ],
-      },
-      {
-        label: 'Cursos no EASA',
-        children: [
-          { label: 'Radiofonista UAS', href: '/formacion/no-easa/radiofonista', icon: RadioTower },
-          { label: 'Seguridad', href: '/formacion/no-easa/seguridad', icon: Shield },
-          { label: 'Emergencias / APO', href: '/formacion/no-easa/emergencias-apo', icon: Siren },
-          { label: 'EN01', href: '/formacion/no-easa/en01', icon: RadioTower },
-          { label: 'EN02', href: '/formacion/no-easa/en02', icon: RadioTower },
-          { label: 'Operadores SOC', href: '/formacion/no-easa/operadores-soc', icon: Shield },
-        ],
-      },
-      {
-        label: 'Instructor UAS',
-        children: [
-          { label: 'Certificación de Instructor', href: '/formacion/instructor/certificacion', icon: GraduationCap },
-          { label: 'Revalidación de Instructor', href: '/formacion/instructor/revalidacion', icon: GraduationCap },
-          { label: 'Formación Continua', href: '/formacion/instructor/continua', icon: GraduationCap },
-        ],
-      },
-    ],
-  },
+  { label: 'Formación', groups: [] },
   { label: 'Tecnología', href: '/tecnologia' },
   { label: 'Quiénes Somos', href: '/nosotros' },
   { label: 'Blog', href: '/blog' },
   { label: 'Contacto', href: '/contacto' },
 ];
 
+const COURSE_ICONS = { GraduationCap, Plane, RadioTower, Shield, Siren };
+const MenuIcon = ({ icon: Icon }) => <span className={styles.menuIcon} aria-hidden="true"><Icon /></span>;
 const SCROLL_MAX = 160;
 
 function easeOutCubic(t) {
@@ -100,15 +70,16 @@ export default function Navbar() {
   const effectiveNavLinks = navLinks.map((link) => link.label !== 'Formación' ? link : {
     ...link,
     groups: [
-      { label: 'Catálogo', children: [
-        { label: 'Todos los cursos', href: '/formacion', icon: GraduationCap },
-        ...managedCourses.filter(course => course.status === 'published').map((course) => ({
-          label: course.name,
-          href: `/formacion/${course.slug}`,
-          icon: GraduationCap,
-        })),
-      ] },
-      ...(link.groups || []),
+      { label: 'Catálogo', children: [{ label: 'Todos los cursos', href: '/formacion', icon: GraduationCap }] },
+      ...COURSE_CATEGORIES.map(category => ({
+        label: category.menuLabel,
+        children: managedCourses
+          .filter(course => course.status === 'published' && course.category === category.value)
+          .map(course => ({
+            label: course.name, href: coursePath(course),
+            icon: COURSE_ICONS[course.menu_icon] || GraduationCap,
+          })),
+      })),
     ],
   });
 
@@ -297,7 +268,7 @@ export default function Navbar() {
               exit={{ opacity: 0, y: 8 }}
               transition={{ duration: 0.2 }}
               id={`desktop-menu-${link.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
-              className={`${styles.desktopMenu} absolute top-full left-1/2 -translate-x-1/2 mt-3 w-56 rounded-lg shadow-2xl border border-border bg-popover z-50`}
+              className={`${styles.desktopMenu} absolute top-full left-1/2 -translate-x-1/2 mt-3 ${link.label === 'Formación' ? 'w-64 max-w-[calc(100vw-2rem)]' : 'w-56'} rounded-lg shadow-2xl border border-border bg-popover z-50`}
             >
               <div className="p-2">
                 {groups
@@ -314,7 +285,7 @@ export default function Navbar() {
                             onClick={() => setDropdownOpen(null)}
                             className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-md transition-all duration-200"
                           >
-                            <item.icon className="w-4 h-4" />
+                            <MenuIcon icon={item.icon} />
                             {item.label}
                           </Link>
                         ))}
@@ -327,7 +298,7 @@ export default function Navbar() {
                         onClick={() => setDropdownOpen(null)}
                         className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-md transition-all duration-200"
                       >
-                        <item.icon className="w-4 h-4" />
+                        <MenuIcon icon={item.icon} />
                         {item.label}
                       </Link>
                     ))}
@@ -485,7 +456,7 @@ export default function Navbar() {
                                         location.pathname === child.href ? 'text-primary' : 'text-muted-foreground/70 hover:text-primary'
                                       }`}
                                     >
-                                      <child.icon className="w-3.5 h-3.5" />
+                                      <MenuIcon icon={child.icon} />
                                       {child.label}
                                     </Link>
                                   ))}
@@ -500,7 +471,7 @@ export default function Navbar() {
                                     location.pathname === child.href ? 'text-primary' : 'text-muted-foreground/70 hover:text-primary'
                                   }`}
                                 >
-                                  <child.icon className="w-3.5 h-3.5" />
+                                  <MenuIcon icon={child.icon} />
                                   {child.label}
                                 </Link>
                               ))}

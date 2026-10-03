@@ -90,13 +90,11 @@ export const ROUTE_SEO = {
 export function getSeoForPath(pathname) {
   pathname = pathname === '/' ? pathname : pathname.replace(/\/+$/, '');
   const base = ROUTE_SEO[pathname] || {};
-  const course = /^\/formacion\/(easa|no-easa|instructor)\/(.+)$/.exec(pathname);
-  const courseName = course?.[2].replace(/-/g, ' ').toUpperCase();
   return {
-    title: base.title || (courseName ? `Formación ${courseName} | UASSPAIN` : SITE.defaultTitle),
-    description: base.description || (courseName ? `Información del programa de formación ${courseName} de UASSPAIN.` : SITE.defaultDescription),
+    title: base.title || SITE.defaultTitle,
+    description: base.description || SITE.defaultDescription,
     keywords: base.keywords || SITE.defaultKeywords,
-    noindex: base.noindex || (!ROUTE_SEO[pathname] && !course),
+    noindex: base.noindex || (!ROUTE_SEO[pathname]),
     canonical: `${SITE.url}${pathname}`,
   };
 }

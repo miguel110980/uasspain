@@ -3,13 +3,13 @@ import { expect, test } from '@playwright/test';
 const published = {
   id: 'catalog-published', name: 'Curso publicado de catálogo', slug: 'catalogo-publicado',
   short_description: 'Programa disponible.', description: 'Descripción completa.',
-  modality: 'online', duration: '40 horas', status: 'published', cover_image_url: '',
+  category: 'easa', modality: 'online', duration: '40 horas', status: 'published', cover_image_url: '',
   sections: [{ id: 'topic', title: 'Temario publicado', body: 'Contenido', sort_order: 0 }],
 };
 const upcoming = {
   id: 'catalog-upcoming', name: 'Curso próximo de catálogo', slug: 'catalogo-proximo',
   short_description: 'Próxima convocatoria.', description: '', content_available: false,
-  modality: 'presencial', duration: '3 semanas', status: 'upcoming', cover_image_url: '',
+  category: 'other', modality: 'presencial', duration: '3 semanas', status: 'upcoming', cover_image_url: '',
 };
 
 test.beforeEach(async ({ page }) => {

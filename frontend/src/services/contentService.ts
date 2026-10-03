@@ -1,6 +1,7 @@
 import apiClient from '@/api/apiClient';
 import endpoints from '@/api/endpoints';
 import { queryClientInstance } from '@/lib/query-client';
+import type { CourseCategory } from '@/lib/courseCategories';
 
 export function refreshCourseQueries() {
   void queryClientInstance.invalidateQueries({ queryKey: ['public', 'courses'] });
@@ -49,6 +50,16 @@ export interface Course {
   id: string;
   name: string;
   slug: string;
+  category: CourseCategory;
+  menu_icon?: string;
+  presentation?: {
+    original_name?: string; original_summary?: string; original_modality?: string;
+    icon?: string; hero_parts?: { text: string; highlight: boolean }[]; badge?: string;
+    back?: { href: string; label: string }; format_label?: string; certification?: string;
+    description_heading?: string; topics_heading?: string;
+    cta?: { heading: string; description: string; label: string; href: string };
+    seo?: { title: string; description: string; keywords: string };
+  };
   short_description: string;
   description?: string;
   introduction?: string;

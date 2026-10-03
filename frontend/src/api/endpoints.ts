@@ -105,7 +105,7 @@ export const endpoints = {
     blogPosts: `${API_PREFIX}/blog/posts`,
     blogPost: (id) => `${API_PREFIX}/blog/posts/${id}`,
     courses: `${API_PREFIX}/courses`,
-    course: (slug) => `${API_PREFIX}/courses/${encodeURIComponent(slug)}`,
+    course: (slug) => `${API_PREFIX}/courses/${slug.split('/').map(encodeURIComponent).join('/')}`,
   },
   adminContent: {
     blogPosts: `${API_PREFIX}/admin/blog/posts`,

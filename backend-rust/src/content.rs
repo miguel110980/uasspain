@@ -50,6 +50,7 @@ pub struct CourseWrite {
     #[serde(default)]
     syllabus: String,
     modality: String,
+    category: String,
     #[serde(default)]
     duration: String,
     sections: Option<Vec<SectionWrite>>,
@@ -68,6 +69,7 @@ pub struct CoursePatch {
     introduction: Option<String>,
     syllabus: Option<String>,
     modality: Option<String>,
+    category: Option<String>,
     duration: Option<String>,
     sections: Option<Vec<SectionWrite>>,
     status: Option<String>,
@@ -328,7 +330,7 @@ pub async fn public_courses(
     let rows = sqlx::query_scalar::<_, Value>(
         "SELECT jsonb_build_object('id',id,'name',name,'slug',slug,
          'short_description',short_description,'description',CASE WHEN status='published' THEN description ELSE '' END,'modality',modality,'duration',duration,'cover_image_url',cover_image_url,
-         'status',status,'content_available',status='published','sort_order',sort_order,'published_at',published_at)
+         'category',category,'menu_icon',presentation->>'icon','status',status,'content_available',status='published','sort_order',sort_order,'published_at',published_at)
          FROM courses WHERE status IN ('upcoming','published') ORDER BY sort_order,name",
     )
     .fetch_all(pool(&state)?)
@@ -351,7 +353,7 @@ pub async fn admin_courses(
 ) -> Result<Json<Vec<Value>>, AppError> {
     admin(&state, &headers)?;
     let rows = sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,
+        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'category',c.category,'presentation',c.presentation,
          'modality',c.modality,'duration',c.duration,'short_description',c.short_description,'description',c.description,
          'introduction',c.introduction,'syllabus',c.syllabus,
          'cover_image_url',c.cover_image_url,'cover_image_path',c.cover_image_path,
@@ -389,13 +391,13 @@ pub async fn create_course(
     let mut tx = pool(&state)?.begin().await?;
     for attempt in 0..2 {
         let inserted: Option<Uuid> = sqlx::query_scalar(
-            "INSERT INTO courses (id,name,slug,short_description,description,introduction,syllabus,status,sort_order,created_by,published_at,modality,duration) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $8='published' THEN NOW() ELSE NULL END,$11,$12) \
+            "INSERT INTO courses (id,name,slug,short_description,description,introduction,syllabus,status,sort_order,created_by,published_at,modality,duration,category) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $8='published' THEN NOW() ELSE NULL END,$11,$12,$13) \
              ON CONFLICT (slug) DO NOTHING RETURNING id"
         ).bind(id).bind(&input.name).bind(&slug).bind(input.short_description.trim())
          .bind(&input.description).bind(input.introduction.trim()).bind(input.syllabus.trim())
          .bind(&input.status).bind(input.sort_order).bind(claims.profile_id)
-         .bind(&input.modality).bind(&input.duration).fetch_optional(&mut *tx).await?;
+         .bind(&input.modality).bind(&input.duration).bind(&input.category).fetch_optional(&mut *tx).await?;
         if inserted.is_some() {
             break;
         }
@@ -424,30 +426,37 @@ pub async fn update_course(
     input.name = input.name.map(|value| course_text(&value));
     input.description = input.description.map(|value| course_text(&value));
     input.duration = input.duration.map(|value| course_text(&value));
-    if input.short_description.is_none() {
+    validate_course_patch(&input)?;
+    let slug = input.slug.as_deref().map(normalize_slug).transpose()?;
+    let mut tx = pool(&state)?.begin().await?;
+    let existing_description: Option<String> =
+        sqlx::query_scalar("SELECT description FROM courses WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let existing_description = existing_description.ok_or(AppError::NotFound)?;
+    // Category, modality and status changes must not rewrite an imported hero summary.
+    if input.short_description.is_none()
+        && input
+            .description
+            .as_ref()
+            .is_some_and(|value| value != &existing_description)
+    {
         input.short_description = input
             .description
             .as_ref()
             .map(|value| value.chars().take(320).collect());
     }
-    validate_course_patch(&input)?;
-    let slug = input.slug.as_deref().map(normalize_slug).transpose()?;
-    let mut tx = pool(&state)?.begin().await?;
-    let exists: Option<Uuid> = sqlx::query_scalar("SELECT id FROM courses WHERE id=$1 FOR UPDATE")
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    exists.ok_or(AppError::NotFound)?;
     let result = sqlx::query(
         "UPDATE courses SET name=COALESCE($2,name),slug=COALESCE($3,slug), \
          short_description=COALESCE($4,short_description),description=COALESCE($5,description), \
          introduction=COALESCE($6,introduction),syllabus=COALESCE($7,syllabus), \
          status=COALESCE($8,status),sort_order=COALESCE($9,sort_order),updated_at=NOW(), \
          published_at=CASE WHEN COALESCE($8,status)='published' THEN COALESCE(published_at,NOW()) ELSE NULL END, \
-         modality=COALESCE($10,modality),duration=COALESCE($11,duration) WHERE id=$1"
+         modality=COALESCE($10,modality),duration=COALESCE($11,duration),category=COALESCE($12,category) WHERE id=$1"
     ).bind(id).bind(input.name).bind(slug).bind(input.short_description)
      .bind(input.description).bind(input.introduction).bind(input.syllabus)
-     .bind(input.status).bind(input.sort_order).bind(input.modality).bind(input.duration)
+     .bind(input.status).bind(input.sort_order).bind(input.modality).bind(input.duration).bind(input.category)
      .execute(&mut *tx).await;
     map_unique(result)?;
     if let Some(sections) = input.sections {
@@ -629,7 +638,7 @@ async fn post_json(pool: &PgPool, id: Uuid, public_only: bool) -> Result<Value, 
 
 async fn course_json_by_id(pool: &PgPool, id: Uuid) -> Result<Value, AppError> {
     sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
+        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'category',c.category,'presentation',c.presentation,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
          'description',c.description,'introduction',c.introduction,'syllabus',c.syllabus,
          'cover_image_url',c.cover_image_url,'cover_image_path',c.cover_image_path,'status',c.status,
          'sort_order',c.sort_order,'created_at',c.created_at,'updated_at',c.updated_at,'published_at',c.published_at,
@@ -644,7 +653,7 @@ async fn course_json_by_slug(
     admin_view: bool,
 ) -> Result<Value, AppError> {
     sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
+        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'category',c.category,'presentation',c.presentation,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
          'description',CASE WHEN c.status='published' OR $2 THEN c.description ELSE '' END,
          'introduction',CASE WHEN c.status='published' OR $2 THEN c.introduction ELSE '' END,
          'syllabus',CASE WHEN c.status='published' OR $2 THEN c.syllabus ELSE '' END,
@@ -778,6 +787,7 @@ fn validate_course(input: &CourseWrite, slug: &str) -> Result<(), AppError> {
         || input.description.trim().is_empty()
         || input.description.chars().count() > 100_000
         || !matches!(input.modality.as_str(), "online" | "presencial")
+        || !valid_course_category(&input.category)
         || input.duration.chars().count() > 120
         || input.introduction.chars().count() > 50_000
         || input.syllabus.chars().count() > 50_000
@@ -790,6 +800,13 @@ fn validate_course(input: &CourseWrite, slug: &str) -> Result<(), AppError> {
     Ok(())
 }
 fn validate_course_patch(input: &CoursePatch) -> Result<(), AppError> {
+    if input
+        .category
+        .as_deref()
+        .is_some_and(|value| !valid_course_category(value))
+    {
+        return Err(invalid("Categoría no válida."));
+    }
     validate_topics(input.sections.as_deref())?;
     validate_optional_text(input.duration.as_deref(), 120, false)?;
     if input
@@ -839,9 +856,17 @@ fn validate_optional_text(value: Option<&str>, max: usize, required: bool) -> Re
     Ok(())
 }
 
+fn valid_course_category(value: &str) -> bool {
+    matches!(value, "easa" | "non_easa" | "instructor" | "other")
+}
 fn normalize_slug(value: &str) -> Result<String, AppError> {
-    let slug = slugify(value);
-    if slug.is_empty() || slug.len() > 180 || slug != value.trim().to_ascii_lowercase() {
+    let slug = value.trim().to_ascii_lowercase();
+    let segment = match slug.split_once('/') {
+        Some(("easa" | "no-easa" | "instructor", segment)) => segment,
+        Some(_) => return Err(invalid("Ruta de curso no válida.")),
+        None => slug.as_str(),
+    };
+    if segment.is_empty() || slug.len() > 180 || slugify(segment) != segment {
         return Err(invalid(
             "Slug no válido; use letras minúsculas, números y guiones.",
         ));
@@ -906,7 +931,7 @@ mod tests {
 
     #[test]
     fn course_requires_description_and_known_modality() {
-        let valid = json!({"name":"Curso","description":"Contenido","modality":"online"});
+        let valid = json!({"name":"Curso","description":"Contenido","modality":"online","category":"other"});
         let mut input: super::CourseWrite = serde_json::from_value(valid.clone()).unwrap();
         assert!(super::validate_course(&input, "curso").is_ok());
         input.description = "   ".into();
@@ -924,7 +949,7 @@ mod tests {
 
     #[test]
     fn course_topics_reject_empty_titles_and_large_duration() {
-        let input: super::CourseWrite = serde_json::from_value(json!({"name":"Curso","description":"Texto","modality":"presencial","duration":"x".repeat(121)})).unwrap();
+        let input: super::CourseWrite = serde_json::from_value(json!({"name":"Curso","description":"Texto","modality":"presencial","category":"other","duration":"x".repeat(121)})).unwrap();
         assert!(super::validate_course(&input, "curso").is_err());
         let sections: Vec<super::SectionWrite> =
             serde_json::from_value(json!([{"title":" \0 ","body":"Texto"}])).unwrap();
@@ -949,5 +974,37 @@ mod tests {
         assert_ne!(first, collision);
         assert!(super::normalize_slug(&collision).is_ok());
         assert_eq!(super::generated_slug("飞行", id, false), "curso");
+    }
+    #[test]
+    fn course_category_is_required_and_restricted() {
+        for category in ["easa", "non_easa", "instructor", "other"] {
+            assert!(super::valid_course_category(category));
+        }
+        for category in ["", "EASA", "arbitrary", "../other"] {
+            assert!(!super::valid_course_category(category));
+        }
+        assert!(
+            serde_json::from_value::<super::CourseWrite>(
+                json!({"name":"Curso","description":"Texto","modality":"online"})
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn legacy_slugs_only_allow_the_established_route_prefixes() {
+        assert!(normalize_slug("easa/sts-01").is_ok());
+        assert!(normalize_slug("no-easa/en01").is_ok());
+        assert!(normalize_slug("instructor/continua").is_ok());
+        for slug in [
+            "../sts",
+            "unknown/sts",
+            "easa/../sts",
+            "easa/a/b",
+            "easa/",
+            "/easa/sts",
+            "easa/a%2fb",
+        ] {
+            assert!(normalize_slug(slug).is_err());
+        }
     }
 }

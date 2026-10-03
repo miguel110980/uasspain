@@ -5,6 +5,7 @@ import { ArrowRight, CheckCircle2, Clock3, GraduationCap, Loader2 } from 'lucide
 import Navbar from '@/components/layout/Navbar';
 import Footer from '@/components/layout/Footer';
 import contentService from '@/services/contentService';
+import { courseCategoryLabel, coursePath } from '@/lib/courseCategories';
 
 export default function Formacion() {
   const { data = [], isLoading, isError, refetch } = useQuery({ queryKey: ['public', 'courses'], queryFn: contentService.publicCourses, staleTime: 0, refetchInterval: 30_000 });
@@ -45,10 +46,11 @@ export default function Formacion() {
                           {published ? 'Publicado' : 'Próximamente'}
                         </span>
                       </div>
+                      <p className="text-xs text-primary mt-3">{courseCategoryLabel(course.category)}</p>
                       <p className="text-sm text-muted-foreground mt-3 flex-1">{course.short_description}</p>
                       <p className="text-xs text-muted-foreground mt-3">{course.modality === 'presencial' ? 'Presencial' : 'Online'}{course.duration ? ` · ${course.duration}` : ''}</p>
                       {published && (
-                        <Link to={`/formacion/${course.slug}`} className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-primary mt-5">
+                        <Link to={coursePath(course)} className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-primary mt-5">
                           Ver curso <ArrowRight className="w-4 h-4" />
                         </Link>
                       )}
