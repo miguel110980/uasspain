@@ -5,6 +5,7 @@ import Footer from '@/components/layout/Footer';
 import SeoHead from '@/components/seo/SeoHead';
 import { SITE } from '@/lib/seoConfig';
 import { courseCategoryLabel, coursePath } from '@/lib/courseCategories';
+import { courseModalityLabel } from '@/lib/courseModalities';
 import type { Course } from '@/services/contentService';
 
 const COURSE_ICONS = { GraduationCap, Plane, RadioTower, Shield, Siren };
@@ -19,7 +20,7 @@ export default function CourseTemplate({ course }: { course: Course }) {
   const sections = upcoming ? [] : course.sections || [];
   const Icon = COURSE_ICONS[presentation.icon] || GraduationCap;
   const format = course.modality === presentation.original_modality && presentation.format_label
-    ? presentation.format_label : course.modality === 'presencial' ? 'Presencial' : 'Online';
+    ? presentation.format_label : courseModalityLabel(course.modality);
   const seoTitle = originalName && presentation.seo?.title ? presentation.seo.title : `${course.name} | UASSPAIN`;
   const seoDescription = course.short_description === presentation.original_summary && presentation.seo?.description
     ? presentation.seo.description : course.short_description || description || course.name;

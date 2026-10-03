@@ -7,16 +7,25 @@ let admin;
 try {
   admin = await adminClient();
   const suffix = randomUUID();
-  const payload = { name: `  Curso seguro ${suffix}  `, description: '  Texto\0 seguro\nSegunda línea  ', category: 'other', modality: 'presencial', duration: '  3 semanas (24 horas)  ', status: 'upcoming', sections: [{ title: 'Tema B', body: 'Contenido B' }, { title: 'Tema A', body: 'Contenido A' }] };
+  const payload = { name: `  Curso seguro ${suffix}  `, description: '  Texto\0 seguro\nSegunda línea  ', category: 'other', modality: 'presencial_online', duration: '  3 semanas (24 horas)  ', status: 'upcoming', sections: [{ title: 'Tema B', body: 'Contenido B' }, { title: 'Tema A', body: 'Contenido A' }] };
   const created = await admin.call('/api/admin/courses', 'POST', payload);
   gate(created.status === 201, 'create');
   gate(created.body.category === 'other', 'category_create');
   const course = created.body; const id = uuid(course.id); ids.push(id);
   gate(course.name === payload.name.trim() && course.description === 'Texto seguro\nSegunda línea' && course.duration === '3 semanas (24 horas)', 'trim_and_sanitize');
   const stored = JSON.parse(sql(`SELECT json_build_object('name',name,'description',description,'duration',duration,'modality',modality,'topics',(SELECT json_agg(json_build_object('title',title,'sort_order',sort_order) ORDER BY sort_order) FROM course_sections WHERE course_id='${id}')) FROM courses WHERE id='${id}'`));
-  gate(stored.name === course.name && stored.modality === 'presencial' && JSON.stringify(stored.topics) === JSON.stringify([{title:'Tema B',sort_order:0},{title:'Tema A',sort_order:1}]), 'database_and_topic_order');
+  gate(stored.name === course.name && stored.modality === 'presencial_online' && JSON.stringify(stored.topics) === JSON.stringify([{title:'Tema B',sort_order:0},{title:'Tema A',sort_order:1}]), 'database_and_topic_order');
   const announced = (await apiClient().call('/api/courses')).body.find(item => item.id === id);
-  gate((await apiClient().call(`/api/courses/${course.slug}`)).status === 404 && announced?.status === 'upcoming' && announced.content_available === false && announced.description === '' && !('sections' in announced), 'upcoming_listed_content_private');
+  const upcomingPage = await apiClient().call(`/api/courses/${course.slug}`);
+  gate(upcomingPage.status === 200 && upcomingPage.body.content_available === false && upcomingPage.body.description === '' && upcomingPage.body.sections.length === 0 && announced?.status === 'upcoming' && announced.content_available === false && announced.description === '' && !('sections' in announced), 'upcoming_listed_content_private');
+  for (const modality of ['online', 'presencial', 'presencial_online']) {
+    const additional = await admin.call('/api/admin/courses', 'POST', { ...payload, name: `Modalidad ${modality} ${suffix}`, modality });
+    gate(additional.status === 201 && additional.body.modality === modality, `modality_${modality}_create`);
+    ids.push(uuid(additional.body.id));
+    const changed = await admin.call(`/api/admin/courses/${id}`, 'PATCH', { modality });
+    const detail = await apiClient().call(`/api/courses/${course.slug}`);
+    gate(changed.status === 200 && changed.body.slug === course.slug && detail.body.modality === modality && sql(`SELECT modality FROM courses WHERE id='${id}'`) === modality, `modality_${modality}_update_persists`);
+  }
   for (const [name, patch] of Object.entries({ empty_name: {name:'   '}, empty_description:{description:' \0 '}, modality:{modality:'hibrido'}, duration:{duration:'x'.repeat(121)}, duration_type:{duration:5}, status:{status:'draft'}, topic:{sections:[{title:'\0 '}]}, topics_type:{sections:{title:'bad'}} })) {
     gate((await admin.call(`/api/admin/courses/${id}`, 'PATCH', patch)).status === 400, `invalid_${name}_denied`);
   }
@@ -65,7 +74,9 @@ try {
     const statuses = await Promise.all([client.call('/api/admin/courses','POST',payload),client.call(`/api/admin/courses/${id}`,'PATCH',{name:'unauthorized'}),client.call(`/api/admin/courses/${id}`,'DELETE')]);
     gate(statuses.every(result=>result.status===403), `${role}_writes_denied`);
   }
-  gate((await admin.call(`/api/admin/courses/${id}`, 'PATCH', {status:'upcoming'})).status === 200 && (await anonymous.call(`/api/courses/${course.slug}`)).status === 404, 'unpublish_hides_url');
+  gate((await admin.call(`/api/admin/courses/${id}`, 'PATCH', {status:'upcoming'})).status === 200, 'unpublish');
+  const reverted = await anonymous.call(`/api/courses/${course.slug}`);
+  gate(reverted.status === 200 && reverted.body.content_available === false && reverted.body.description === '' && reverted.body.sections.length === 0, 'unpublish_keeps_page_without_full_content');
   gate((await admin.call(`/api/admin/courses/${id}`, 'DELETE')).status === 204 && sql(`SELECT COUNT(*) FROM course_sections WHERE course_id='${id}'`) === '0', 'delete_cascades_topics');
 } finally {
   if (admin) for (const id of ids) await admin.call(`/api/admin/courses/${id}`, 'DELETE');

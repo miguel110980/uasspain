@@ -6,6 +6,7 @@ import Navbar from '@/components/layout/Navbar';
 import Footer from '@/components/layout/Footer';
 import contentService from '@/services/contentService';
 import { courseCategoryLabel, coursePath } from '@/lib/courseCategories';
+import { courseModalityLabel } from '@/lib/courseModalities';
 
 export default function Formacion() {
   const { data = [], isLoading, isError, refetch } = useQuery({ queryKey: ['public', 'courses'], queryFn: contentService.publicCourses, staleTime: 0, refetchOnWindowFocus: true, refetchInterval: 30_000 });
@@ -48,7 +49,7 @@ export default function Formacion() {
                       </div>
                       <p className="text-xs text-primary mt-3">{courseCategoryLabel(course.category)}</p>
                       <p className="text-sm text-muted-foreground mt-3 flex-1">{course.short_description}</p>
-                      <p className="text-xs text-muted-foreground mt-3">{course.modality === 'presencial' ? 'Presencial' : 'Online'}{course.duration ? ` · ${course.duration}` : ''}</p>
+                      <p className="text-xs text-muted-foreground mt-3">{courseModalityLabel(course.modality)}{course.duration ? ` · ${course.duration}` : ''}</p>
                       <Link to={coursePath(course)} className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-primary mt-5">
                         Ver curso <ArrowRight className="w-4 h-4" />
                       </Link>

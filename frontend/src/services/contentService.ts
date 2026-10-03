@@ -2,6 +2,7 @@ import apiClient from '@/api/apiClient';
 import endpoints from '@/api/endpoints';
 import { queryClientInstance } from '@/lib/query-client';
 import type { CourseCategory } from '@/lib/courseCategories';
+import type { CourseModality } from '@/lib/courseModalities';
 
 export function refreshCourseQueries() {
   void queryClientInstance.invalidateQueries({ queryKey: ['admin', 'courses'] });
@@ -67,7 +68,7 @@ export interface Course {
   syllabus?: string;
   cover_image_url: string;
   cover_image_path?: string;
-  modality: 'online' | 'presencial';
+  modality: CourseModality;
   duration: string;
   status: CourseStatus;
   sort_order: number;

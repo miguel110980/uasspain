@@ -128,10 +128,11 @@ pub async fn course_body(
     );
     html.push_str(&format!(
         "<dl class=\"mt-6\"><dt>Modalidad</dt><dd>{}</dd><dt>Duración</dt><dd>{}</dd></dl>",
-        if text(&course, "modality") == "presencial" {
-            "Presencial"
-        } else {
-            "Online"
+        match text(&course, "modality") {
+            "presencial" => "Presencial",
+            "online" => "Online",
+            "presencial_online" => "Presencial/Online",
+            _ => "Sin especificar",
         },
         escape(text(&course, "duration"))
     ));

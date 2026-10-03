@@ -786,7 +786,7 @@ fn validate_course(input: &CourseWrite, slug: &str) -> Result<(), AppError> {
         || input.short_description.chars().count() > 320
         || input.description.trim().is_empty()
         || input.description.chars().count() > 100_000
-        || !matches!(input.modality.as_str(), "online" | "presencial")
+        || !valid_course_modality(&input.modality)
         || !valid_course_category(&input.category)
         || input.duration.chars().count() > 120
         || input.introduction.chars().count() > 50_000
@@ -812,7 +812,7 @@ fn validate_course_patch(input: &CoursePatch) -> Result<(), AppError> {
     if input
         .modality
         .as_deref()
-        .is_some_and(|value| !matches!(value, "online" | "presencial"))
+        .is_some_and(|value| !valid_course_modality(value))
     {
         return Err(invalid("Modalidad no válida."));
     }
@@ -858,6 +858,9 @@ fn validate_optional_text(value: Option<&str>, max: usize, required: bool) -> Re
 
 fn valid_course_category(value: &str) -> bool {
     matches!(value, "easa" | "non_easa" | "instructor" | "other")
+}
+fn valid_course_modality(value: &str) -> bool {
+    matches!(value, "online" | "presencial" | "presencial_online")
 }
 fn normalize_slug(value: &str) -> Result<String, AppError> {
     let slug = value.trim().to_ascii_lowercase();
@@ -954,6 +957,25 @@ mod tests {
         let sections: Vec<super::SectionWrite> =
             serde_json::from_value(json!([{"title":" \0 ","body":"Texto"}])).unwrap();
         assert!(super::validate_topics(Some(&sections)).is_err());
+    }
+
+    #[test]
+    fn course_create_and_patch_support_the_same_three_modalities() {
+        for modality in [
+            "online",
+            "presencial",
+            "presencial_online",
+            "",
+            "hybrid",
+            "Presencial/Online",
+        ] {
+            let create: super::CourseWrite = serde_json::from_value(json!({"name":"Curso","description":"Contenido","category":"other","modality":modality})).unwrap();
+            let patch: super::CoursePatch =
+                serde_json::from_value(json!({"modality":modality})).unwrap();
+            let valid = matches!(modality, "online" | "presencial" | "presencial_online");
+            assert_eq!(super::validate_course(&create, "curso").is_ok(), valid);
+            assert_eq!(super::validate_course_patch(&patch).is_ok(), valid);
+        }
     }
 
     #[test]

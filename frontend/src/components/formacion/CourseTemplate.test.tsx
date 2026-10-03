@@ -68,4 +68,10 @@ describe('CourseTemplate', () => {
     expect(html).toContain('&lt;img');
     expect(html).not.toContain('<img src="x"');
   });
+
+  it('muestra Presencial/Online al cambiar la modalidad de un curso importado', () => {
+    const html = render({ ...baseCourse, status: 'published', modality: 'presencial_online', presentation: { original_modality: 'online', format_label: '100% Online' } });
+    expect(html).toContain('Presencial/Online');
+    expect(html).not.toContain('100% Online');
+  });
 });
