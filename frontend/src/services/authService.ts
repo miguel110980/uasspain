@@ -1,5 +1,6 @@
 import apiClient from '@/api/apiClient';
 import type { SystemStatusResponse } from '@/api/systemStatus';
+import type { AssignableInstructor } from '@/types/api';
 import { getRoles, panelRouteForUser, isBlockedStatus } from '@/lib/roles';
 import { endpoints } from '@/api/endpoints';
 import { collectClientMeta } from '@/lib/clientMeta';
@@ -259,7 +260,7 @@ export const authService = {
     return profiles;
   },
 
-  async listInstructors() {
+  async listInstructors(): Promise<AssignableInstructor[]> {
     const res = await apiClient.get(endpoints.functions.listInstructors);
     return unwrapList(res);
   },

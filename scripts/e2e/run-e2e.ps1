@@ -161,6 +161,10 @@ try {
     & node (Join-Path $Root 'scripts/e2e/e2e-panels.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de alcance de paneles E2E fallo' }
 
+    Write-Host '==> Validando selector de instructor, permisos y reasignacion concurrente'
+    & node (Join-Path $Root 'scripts/e2e/e2e-assignments.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de asignaciones E2E fallo' }
+
     Write-Host '==> Validando cursos, temario transaccional y permisos contra PostgreSQL'
     & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a cursos E2E fallo' }

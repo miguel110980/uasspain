@@ -89,7 +89,7 @@ export default function InstructorPanel() {
     loadAll().catch((err) => console.error('Error cargando datos del panel:', err));
     const unsubscribe = conexionesService.subscribeConexiones((event) => {
       const payload = conexionesService.parseWsPayload(event);
-      if (payload?.type === 'conexion' || event.type === 'poll') {
+      if (payload?.type === 'conexion' || payload?.type === 'asignacion' || event.type === 'poll') {
         clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = setTimeout(() => {
           loadAll(true).catch(() => {});
@@ -263,6 +263,9 @@ export default function InstructorPanel() {
     <AdminUsuarios
       scopeRole="alumno"
       allowEdit={false}
+      allowInstructorAssignment
+      assignmentOwnerId={authProfile?.id}
+      onAssignmentChanged={() => { void loadAll(true); }}
       onExamenes={setModalBloqueo}
       onResultados={setModalResultados}
       onAccesos={setModalAccesos}

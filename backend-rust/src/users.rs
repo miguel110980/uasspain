@@ -35,11 +35,13 @@ pub struct ProfileRow {
     pub login_2fa_enabled_override: Option<bool>,
     pub created_date: DateTime<Utc>,
     pub assigned_instructor_id: Option<Uuid>,
+    pub assigned_instructor_nombre: Option<String>,
+    pub assigned_instructor_apellidos: Option<String>,
 }
 
 impl ProfileRow {
-    pub const FIELDS: &'static str = "id, user_id, nombre, apellidos, email, username, dni_nie, fecha_nacimiento, foto_perfil, status, role, roles, otp_verified, login_2fa_enabled_override, created_date, assigned_instructor_id";
-    pub const SELECT_BY_ID: &'static str = "SELECT id, user_id, nombre, apellidos, email, username, dni_nie, fecha_nacimiento, foto_perfil, status, role, roles, otp_verified, login_2fa_enabled_override, created_date, assigned_instructor_id FROM accounts_userprofile WHERE id = $1";
+    pub const FIELDS: &'static str = "id, user_id, nombre, apellidos, email, username, dni_nie, fecha_nacimiento, foto_perfil, status, role, roles, otp_verified, login_2fa_enabled_override, created_date, assigned_instructor_id, (SELECT i.nombre FROM accounts_userprofile i WHERE i.id=accounts_userprofile.assigned_instructor_id) AS assigned_instructor_nombre, (SELECT i.apellidos FROM accounts_userprofile i WHERE i.id=accounts_userprofile.assigned_instructor_id) AS assigned_instructor_apellidos";
+    pub const SELECT_BY_ID: &'static str = "SELECT id, user_id, nombre, apellidos, email, username, dni_nie, fecha_nacimiento, foto_perfil, status, role, roles, otp_verified, login_2fa_enabled_override, created_date, assigned_instructor_id, (SELECT i.nombre FROM accounts_userprofile i WHERE i.id=accounts_userprofile.assigned_instructor_id) AS assigned_instructor_nombre, (SELECT i.apellidos FROM accounts_userprofile i WHERE i.id=accounts_userprofile.assigned_instructor_id) AS assigned_instructor_apellidos FROM accounts_userprofile WHERE id = $1";
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,10 +62,22 @@ pub struct ProfileView {
     pub login_2fa_enabled_override: Option<bool>,
     pub created_date: DateTime<Utc>,
     pub assigned_instructor_id: Option<Uuid>,
+    pub assigned_instructor_name: Option<String>,
 }
 
 impl ProfileView {
     pub fn from_row(row: ProfileRow, cipher: &FieldCipher) -> Result<Self, AppError> {
+        let assigned_instructor_name = match (
+            &row.assigned_instructor_nombre,
+            &row.assigned_instructor_apellidos,
+        ) {
+            (Some(nombre), Some(apellidos)) => Some(
+                format!("{} {}", cipher.decrypt(nombre)?, cipher.decrypt(apellidos)?)
+                    .trim()
+                    .to_owned(),
+            ),
+            _ => None,
+        };
         Ok(Self {
             id: row.id,
             user_id: row.user_id,
@@ -94,6 +108,7 @@ impl ProfileView {
             login_2fa_enabled_override: row.login_2fa_enabled_override,
             created_date: row.created_date,
             assigned_instructor_id: row.assigned_instructor_id,
+            assigned_instructor_name,
         })
     }
     pub fn full_name(&self) -> String {
@@ -136,6 +151,53 @@ pub struct ProfileWrite {
 #[derive(Debug, Deserialize)]
 pub struct StudentIds {
     student_ids: Vec<Uuid>,
+}
+
+#[derive(FromRow, Serialize)]
+pub struct InstructorOption {
+    id: Uuid,
+    nombre: String,
+    apellidos: String,
+    username: String,
+}
+
+#[derive(FromRow)]
+struct AssignmentProfile {
+    id: Uuid,
+    role: String,
+    roles: serde_json::Value,
+    status: String,
+    otp_verified: bool,
+    is_active: Option<bool>,
+    assigned_instructor_id: Option<Uuid>,
+}
+
+impl AssignmentProfile {
+    fn has_role(&self, role: &str) -> bool {
+        self.role == role
+            || self
+                .roles
+                .as_array()
+                .is_some_and(|roles| roles.iter().any(|value| value.as_str() == Some(role)))
+    }
+    fn assignable(&self) -> bool {
+        self.has_role("instructor")
+            && self.status == "activo"
+            && self.otp_verified
+            && self.is_active == Some(true)
+    }
+    fn can_be_assigned_by(&self, claims: &auth::Claims, target: Uuid) -> bool {
+        if !self.has_role("alumno") || self.id == target {
+            return false;
+        }
+        claims.role == "admin"
+            || (claims.role == "instructor"
+                && (self.assigned_instructor_id == Some(claims.profile_id)
+                    || (self.assigned_instructor_id.is_none() && target == claims.profile_id))
+                && ((!self.has_role("admin") && !self.has_role("instructor"))
+                    || (self.assigned_instructor_id == Some(target)
+                        && target == claims.profile_id)))
+    }
 }
 
 pub async fn list(
@@ -235,14 +297,14 @@ pub async fn update(
         .clone()
         .unwrap_or_else(|| auth::roles_from_json(&current.roles, &current.role));
     if let Some(instructor_id) = input.assigned_instructor_id {
-        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile WHERE id=$1 AND status='activo' AND (role='instructor' OR roles ? 'instructor'))")
+        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role='instructor' OR p.roles ? 'instructor'))")
             .bind(instructor_id).fetch_one(&mut *tx).await?;
         if !valid {
             return Err(AppError::Validation(
                 "El instructor asignado no está activo o no tiene el rol instructor.".into(),
             ));
         }
-        if !target_roles.iter().any(|role| role == "alumno") {
+        if instructor_id == id || !target_roles.iter().any(|role| role == "alumno") {
             return Err(AppError::Validation(
                 "Solo se puede asignar instructor a un alumno.".into(),
             ));
@@ -427,44 +489,56 @@ pub async fn assign_students(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin", "instructor"])?;
-    if input.student_ids.is_empty() || input.student_ids.len() > 200 {
+    if input.student_ids.is_empty()
+        || input.student_ids.len() > 200
+        || input
+            .student_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != input.student_ids.len()
+    {
         return Err(AppError::Validation(
             "Se requieren entre uno y 200 student_id.".into(),
         ));
     }
-    if claims.role != "admin" && claims.profile_id != id {
-        return Err(AppError::Forbidden);
-    }
-    let instructor:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile WHERE id=$1 AND (role='instructor' OR roles ? 'instructor'))").bind(id).fetch_one(pool(&state)?).await?;
-    if !instructor {
+    let mut tx = pool(&state)?.begin().await?;
+    let mut locked_ids = input.student_ids.clone();
+    locked_ids.push(id);
+    locked_ids.sort();
+    locked_ids.dedup();
+    // Lock the target and every student in a consistent order. Concurrent
+    // reassignment rechecks ownership after waiting, rather than stealing a row.
+    let rows = sqlx::query_as::<_, AssignmentProfile>("SELECT p.id,p.role,p.roles,p.status,p.otp_verified,u.is_active,p.assigned_instructor_id FROM accounts_userprofile p LEFT JOIN auth_user u ON u.id=p.user_id WHERE p.id=ANY($1) ORDER BY p.id FOR UPDATE OF p")
+        .bind(&locked_ids).fetch_all(&mut *tx).await?;
+    if !rows.iter().any(|row| row.id == id && row.assignable()) {
         return Err(AppError::Validation(
-            "El perfil seleccionado no es un instructor.".into(),
+            "El instructor seleccionado debe estar activo y verificado.".into(),
         ));
     }
-    let mut tx = pool(&state)?.begin().await?;
-    sqlx::query("SELECT id FROM accounts_userprofile WHERE id=ANY($1) ORDER BY id FOR UPDATE")
-        .bind(&input.student_ids)
-        .fetch_all(&mut *tx)
-        .await?;
-    let found: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM accounts_userprofile WHERE id=ANY($1) AND (role='alumno' OR roles ? 'alumno')",
-    )
-    .bind(&input.student_ids)
-    .fetch_one(&mut *tx)
-    .await?;
-    if found != input.student_ids.len() as i64 {
-        return Err(AppError::NotFound);
-    }
-    if claims.role != "admin" {
-        let conflict:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile WHERE id=ANY($1) AND assigned_instructor_id IS NOT NULL AND assigned_instructor_id<>$2)").bind(&input.student_ids).bind(id).fetch_one(&mut *tx).await?;
-        if conflict {
+    for student_id in &input.student_ids {
+        let student = rows
+            .iter()
+            .find(|row| row.id == *student_id)
+            .ok_or(AppError::NotFound)?;
+        if !student.has_role("alumno") {
+            return Err(AppError::NotFound);
+        }
+        if !student.can_be_assigned_by(&claims, id) {
             return Err(AppError::Forbidden);
         }
     }
     let count=sqlx::query("UPDATE accounts_userprofile SET assigned_instructor_id=$1,updated_date=NOW() WHERE id=ANY($2) AND (role='alumno' OR roles ? 'alumno')").bind(id).bind(&input.student_ids).execute(&mut *tx).await?.rows_affected();
     tx.commit().await?;
+    state
+        .events
+        .publish(
+            "connections",
+            serde_json::json!({"type":"asignacion","action":"updated"}),
+        )
+        .await;
     Ok(Json(
-        serde_json::json!({"detail":format!("{count} alumno(s) asignado(s)."),"assigned_count":count}),
+        serde_json::json!({"detail":format!("{count} alumno(s) asignado(s)."),"assigned_count":count,"assigned_instructor_id":id}),
     ))
 }
 pub async fn unassign_students(
@@ -484,11 +558,20 @@ pub async fn unassign_students(
 pub async fn instructors(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<Vec<ProfileView>>, AppError> {
+) -> Result<Json<Vec<InstructorOption>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    require_role(&claims, &["admin"])?;
-    let rows=sqlx::query_as::<_,ProfileRow>(&format!("SELECT {} FROM accounts_userprofile WHERE status='activo' AND (role='instructor' OR roles ? 'instructor') ORDER BY nombre,apellidos,email",ProfileRow::FIELDS)).fetch_all(pool(&state)?).await?;
-    views(rows, &state)
+    require_role(&claims, &["admin", "instructor"])?;
+    let mut rows = sqlx::query_as::<_, InstructorOption>("SELECT p.id,p.nombre,p.apellidos,p.username FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.status='activo' AND p.otp_verified AND u.is_active AND (p.role='instructor' OR p.roles ? 'instructor')")
+        .fetch_all(pool(&state)?).await?;
+    for row in &mut rows {
+        row.nombre = state.cipher.decrypt(&row.nombre)?;
+        row.apellidos = state.cipher.decrypt(&row.apellidos)?;
+        row.username = state.cipher.decrypt(&row.username)?;
+    }
+    rows.sort_by_cached_key(|row| {
+        format!("{} {} {}", row.nombre, row.apellidos, row.username).to_lowercase()
+    });
+    Ok(Json(rows))
 }
 
 fn optional_boolean_update<'de, D: serde::Deserializer<'de>>(
@@ -612,5 +695,72 @@ mod tests {
         assert!(require_admin("alumno").is_err());
         assert!(require_admin("instructor").is_err());
         assert!(require_admin("admin").is_ok());
+    }
+
+    #[test]
+    fn assignment_permissions_preserve_scope_and_protect_staff_roles() {
+        let owner = uuid::Uuid::new_v4();
+        let recipient = uuid::Uuid::new_v4();
+        let claims = super::auth::Claims {
+            profile_id: owner,
+            role: "instructor".into(),
+            user_id: 1,
+            token_type: "access".into(),
+            exp: usize::MAX,
+            iat: 0,
+            jti: uuid::Uuid::nil(),
+            session_key: String::new(),
+        };
+        let mut student = super::AssignmentProfile {
+            id: uuid::Uuid::new_v4(),
+            role: "alumno".into(),
+            roles: serde_json::json!(["alumno"]),
+            status: "activo".into(),
+            otp_verified: true,
+            is_active: Some(true),
+            assigned_instructor_id: Some(owner),
+        };
+        assert!(student.can_be_assigned_by(&claims, recipient));
+        student.assigned_instructor_id = Some(recipient);
+        assert!(!student.can_be_assigned_by(&claims, owner));
+        student.assigned_instructor_id = None;
+        assert!(student.can_be_assigned_by(&claims, owner));
+        assert!(!student.can_be_assigned_by(&claims, recipient));
+        student.assigned_instructor_id = Some(owner);
+        student.roles = serde_json::json!(["alumno", "admin"]);
+        assert!(!student.can_be_assigned_by(&claims, recipient));
+        assert!(student.can_be_assigned_by(&claims, owner));
+        let admin = super::auth::Claims {
+            role: "admin".into(),
+            ..claims
+        };
+        assert!(student.can_be_assigned_by(&admin, recipient));
+        assert!(!student.can_be_assigned_by(&admin, student.id));
+    }
+
+    #[test]
+    fn only_active_verified_instructor_accounts_are_assignable() {
+        let mut candidate = super::AssignmentProfile {
+            id: uuid::Uuid::new_v4(),
+            role: "admin".into(),
+            roles: serde_json::json!(["admin", "instructor"]),
+            status: "activo".into(),
+            otp_verified: true,
+            is_active: Some(true),
+            assigned_instructor_id: None,
+        };
+        assert!(candidate.assignable());
+        for status in ["pendiente", "bloqueado", "rechazado", "inactivo"] {
+            candidate.status = status.into();
+            assert!(!candidate.assignable());
+        }
+        candidate.status = "activo".into();
+        candidate.otp_verified = false;
+        assert!(!candidate.assignable());
+        candidate.otp_verified = true;
+        candidate.is_active = Some(false);
+        assert!(!candidate.assignable());
+        candidate.is_active = None;
+        assert!(!candidate.assignable());
     }
 }

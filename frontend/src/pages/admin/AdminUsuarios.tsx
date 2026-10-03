@@ -1,5 +1,5 @@
 import PanelModal from '@/components/ui/PanelModal';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import {
   Users, Search, Filter, Loader2, CheckCircle, Ban, Trash2, Edit, X, UserCheck, Shield, Download, ClipboardList, BarChart2, AlertCircle, Lock,
@@ -11,6 +11,9 @@ import materialesService from '@/services/materialesService';
 import { extractErrorMessage } from '@/lib/errors';
 import { useToast } from '@/components/ui/use-toast';
 import { getRoles, hasRole, profileHasAdmin, profileHasInstructor } from '@/lib/roles';
+import type { AssignableInstructor } from '@/types/api';
+
+const instructorLabel = (instructor: AssignableInstructor) => `${`${instructor.nombre} ${instructor.apellidos}`.trim() || 'Instructor'} · ${instructor.username ? `@${instructor.username}` : instructor.id}`;
 
 const ROLES = ['alumno', 'instructor', 'admin'];
 const STATUSES = ['pendiente', 'activo', 'bloqueado', 'rechazado'];
@@ -36,9 +39,12 @@ type AdminUsuariosProps = {
   onResultados?: (profile: any) => void;
   onAccesos?: (profile: any) => void;
   allowEdit?: boolean;
+  allowInstructorAssignment?: boolean;
+  assignmentOwnerId?: string;
+  onAssignmentChanged?: () => void;
 };
 
-export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultados, onAccesos, allowEdit = true }: AdminUsuariosProps) {
+export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultados, onAccesos, allowEdit = true, allowInstructorAssignment = false, assignmentOwnerId, onAssignmentChanged }: AdminUsuariosProps) {
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -46,21 +52,69 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
   const [fStatus, setFStatus] = useState('todos');
   const [actionLoading, setActionLoading] = useState({});
   const [editUser, setEditUser] = useState(null);
+  const [instructors, setInstructors] = useState<AssignableInstructor[]>([]);
+  const [loadError, setLoadError] = useState('');
+  const [assignmentErrors, setAssignmentErrors] = useState<Record<string, string>>({});
+  const loadVersion = useRef(0);
+  const pendingAssignments = useRef(new Set<string>());
   const { toast } = useToast();
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    const version = ++loadVersion.current;
+    if (!silent) setLoading(true);
     try {
-      const data = await authService.listProfiles('-created_date', 500);
+      const [data, options] = await Promise.all([
+        authService.listProfiles('-created_date', 500),
+        allowInstructorAssignment ? authService.listInstructors() : Promise.resolve([]),
+      ]);
+      if (version !== loadVersion.current) return;
       setProfiles(scopeRole ? data.filter((p) => {
-        const roles = Array.isArray(p.roles) ? p.roles : [p.role || 'alumno'];
-        return roles.includes(scopeRole);
+        return hasRole(p, scopeRole);
       }) : data);
+      setInstructors(options);
+      setLoadError('');
+    } catch (error) {
+      if (version === loadVersion.current) setLoadError(extractErrorMessage(error, 'No se pudieron cargar los alumnos e instructores.'));
     } finally {
-      setLoading(false);
+      if (version === loadVersion.current) setLoading(false);
     }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    void load();
+    if (!allowInstructorAssignment) return;
+    const unsubscribe = conexionesService.subscribeConexiones(event => {
+      const payload = conexionesService.parseWsPayload(event);
+      if (payload?.type === 'asignacion' || event.type === 'poll') void load(true);
+    });
+    const onFocus = () => { void load(true); };
+    window.addEventListener('focus', onFocus);
+    return () => { unsubscribe(); window.removeEventListener('focus', onFocus); loadVersion.current++; };
+  }, [allowInstructorAssignment, scopeRole]);
+
+  const assignInstructor = async (student, instructorId: string) => {
+    if (!instructorId || instructorId === String(student.assigned_instructor_id) || pendingAssignments.current.has(student.id)) return;
+    pendingAssignments.current.add(student.id);
+    loadVersion.current++;
+    setActionLoading(current => ({ ...current, [student.id]: true }));
+    setAssignmentErrors(current => ({ ...current, [student.id]: '' }));
+    try {
+      const result = await authService.assignAlumnos(instructorId, [student.id]);
+      if (result.assigned_count !== 1 || result.assigned_instructor_id !== instructorId) throw new Error('La asignación no se pudo confirmar.');
+      setProfiles(current => assignmentOwnerId && instructorId !== assignmentOwnerId
+        ? current.filter(profile => profile.id !== student.id)
+        : current.map(profile => profile.id === student.id ? { ...profile, assigned_instructor_id: instructorId } : profile));
+      toast({ title: 'Instructor asignado', description: assignmentOwnerId && instructorId !== assignmentOwnerId ? 'El alumno pasa al listado del instructor seleccionado.' : 'La asignación se ha guardado.' });
+      onAssignmentChanged?.();
+      await load(true);
+    } catch (error) {
+      const message = extractErrorMessage(error, 'No se pudo cambiar el instructor.');
+      setAssignmentErrors(current => ({ ...current, [student.id]: message }));
+      toast({ title: 'Error al asignar instructor', description: message, variant: 'destructive' });
+    } finally {
+      pendingAssignments.current.delete(student.id);
+      setActionLoading(current => ({ ...current, [student.id]: false }));
+    }
+  };
 
   const filtered = useMemo(() => {
     return profiles.filter((p) => {
@@ -150,6 +204,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
 
   return (
     <div className="space-y-5">
+      {loadError && <div role="alert" className="text-sm text-danger">{loadError} <button className="underline" onClick={() => void load()}>Reintentar</button></div>}
       {/* Stat chips */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {(scopeRole === 'alumno'
@@ -222,7 +277,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
                   <th className="px-4 py-3 text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 hidden lg:table-cell">Email</th>
                 )}
                 {scopeRole === 'alumno' && (
-                  <th className="px-4 py-3 text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 hidden lg:table-cell">Instructor</th>
+                  <th className="px-4 py-3 text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60">Instructor</th>
                 )}
                 <th className="px-4 py-3 text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 hidden md:table-cell">Alta</th>
                 <th className="px-4 py-3 text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 text-right">Acciones</th>
@@ -230,9 +285,9 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={scopeRole ? 5 : 5} className="py-12 text-center"><Loader2 className="w-6 h-6 text-primary animate-spin mx-auto" /></td></tr>
+                <tr><td colSpan={scopeRole === 'alumno' ? 6 : 5} className="py-12 text-center"><Loader2 className="w-6 h-6 text-primary animate-spin mx-auto" /></td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={scopeRole ? 5 : 5} className="py-12 text-center text-sm text-muted-foreground">No se encontraron usuarios.</td></tr>
+                <tr><td colSpan={scopeRole === 'alumno' ? 6 : 5} className="py-12 text-center text-sm text-muted-foreground">{scopeRole === 'alumno' ? 'No se encontraron alumnos.' : 'No se encontraron usuarios.'}</td></tr>
               ) : filtered.map((p) => (
                 <tr key={p.id} className="border-b border-border-subtle hover:bg-surface-subtle transition-colors">
                   <td className="px-4 py-3">
@@ -275,10 +330,25 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
                     </td>
                   )}
                   {scopeRole === 'alumno' && (
-                    <td className="px-4 py-3 hidden lg:table-cell">
-                      <span className="text-xs text-muted-foreground">
-                        {p.assigned_instructor_name || '—'}
-                      </span>
+                    <td className="px-4 py-3">
+                      {allowInstructorAssignment ? <div className="w-56 space-y-1">
+                        <select
+                          aria-label={`Instructor de ${`${p.nombre} ${p.apellidos}`.trim() || p.username}`}
+                          aria-describedby={assignmentErrors[p.id] ? `assignment-error-${p.id}` : undefined}
+                          value={p.assigned_instructor_id || ''}
+                          disabled={Boolean(actionLoading[p.id]) || loading || Boolean(loadError) || instructors.length === 0 || !assignmentOwnerId || profileHasAdmin(p) || profileHasInstructor(p)}
+                          onChange={event => void assignInstructor(p, event.target.value)}
+                          className="w-full h-10 px-2 bg-card border border-border-subtle rounded-md text-xs text-foreground focus-visible:outline-primary disabled:opacity-60"
+                        >
+                          <option value="" disabled>Sin instructor asignado</option>
+                          {p.assigned_instructor_id && !instructors.some(instructor => instructor.id === p.assigned_instructor_id) && <option value={p.assigned_instructor_id} disabled>{p.assigned_instructor_name || 'Instructor asignado'} (no disponible)</option>}
+                          {instructors.map(instructor => <option key={instructor.id} value={instructor.id}>{instructorLabel(instructor)}</option>)}
+                        </select>
+                        {actionLoading[p.id] && <span role="status" className="text-xs text-muted-foreground">Guardando asignación…</span>}
+                        {instructors.length === 0 && <span className="text-xs text-muted-foreground">No hay instructores disponibles.</span>}
+                        {(profileHasAdmin(p) || profileHasInstructor(p)) && <span className="text-xs text-muted-foreground">Asignación gestionada por administración.</span>}
+                        {assignmentErrors[p.id] && <p role="alert" id={`assignment-error-${p.id}`} className="text-xs text-danger">{assignmentErrors[p.id]}</p>}
+                      </div> : <span className="text-xs text-muted-foreground">{p.assigned_instructor_name || '—'}</span>}
                     </td>
                   )}
                   <td className="px-4 py-3 hidden md:table-cell text-xs text-muted-foreground">{fmtDate(p.created_date)}</td>
@@ -486,7 +556,7 @@ function EditUserModal({ user, scopeRole, onClose, onSave }) {
                       >
                         <option value="" disabled>{instructors.length === 0 ? 'No hay instructores disponibles' : 'Selecciona un instructor'}</option>
                         {instructors.map((inst) => (
-                          <option key={inst.id} value={inst.id}>{inst.nombre} {inst.apellidos} — {inst.email}</option>
+                          <option key={inst.id} value={inst.id}>{instructorLabel(inst)}</option>
                         ))}
                       </select>
                     )}

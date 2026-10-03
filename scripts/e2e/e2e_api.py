@@ -520,9 +520,9 @@ async def main():
     log(stale == 401, "role_change_revokes_existing_session", str(stale))
     ok, _ = login(instr, INSTR_EMAIL, INSTR_PASSWORD)
     log(ok, "instructor_relogin_after_role_change")
-    for actor, allowed in [(admin, True), (instr, False), (alum, False)]:
+    for actor, allowed in [(admin, True), (instr, True), (alum, False)]:
         status, _ = actor.call("GET", "/api/profiles/instructores/")
-        log(status == (200 if allowed else 403), "instructor_directory_admin_only_" + actor.label, str(status))
+        log(status == (200 if allowed else 403), "instructor_directory_staff_only_" + actor.label, str(status))
     status, _ = alum.call("GET", f"/api/profiles/{id_s}/assigned-alumnos/")
     log(status == 403, "student_cannot_use_assignment_directory", str(status))
     status, _ = admin.call("PATCH", f"/api/profiles/{id_i}/", {"roles": ["root"]})

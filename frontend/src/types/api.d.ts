@@ -16,7 +16,15 @@ export interface UserProfile {
   roles: UserRole[];
   session_role?: UserRole | '';
   assigned_instructor_id: string | null;
+  assigned_instructor_name?: string | null;
   created_date: string;
+}
+
+export interface AssignableInstructor {
+  id: string;
+  nombre: string;
+  apellidos: string;
+  username: string;
 }
 
 export interface AuthSession {
