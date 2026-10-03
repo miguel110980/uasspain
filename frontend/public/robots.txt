@@ -3,7 +3,6 @@ Allow: /
 Disallow: /admin
 Disallow: /instructor
 Disallow: /alumno
-Disallow: /auth-redirect
 Disallow: /restablecer-contrasena
 Disallow: /api/
 Disallow: /ws/

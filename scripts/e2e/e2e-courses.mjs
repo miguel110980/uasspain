@@ -14,7 +14,8 @@ try {
   gate(course.name === payload.name.trim() && course.description === 'Texto seguro\nSegunda línea' && course.duration === '3 semanas (24 horas)', 'trim_and_sanitize');
   const stored = JSON.parse(sql(`SELECT json_build_object('name',name,'description',description,'duration',duration,'modality',modality,'topics',(SELECT json_agg(json_build_object('title',title,'sort_order',sort_order) ORDER BY sort_order) FROM course_sections WHERE course_id='${id}')) FROM courses WHERE id='${id}'`));
   gate(stored.name === course.name && stored.modality === 'presencial' && JSON.stringify(stored.topics) === JSON.stringify([{title:'Tema B',sort_order:0},{title:'Tema A',sort_order:1}]), 'database_and_topic_order');
-  gate((await apiClient().call(`/api/courses/${course.slug}`)).status === 404 && !(await apiClient().call('/api/courses')).body.some(item => item.id === id), 'upcoming_not_public');
+  const announced = (await apiClient().call('/api/courses')).body.find(item => item.id === id);
+  gate((await apiClient().call(`/api/courses/${course.slug}`)).status === 404 && announced?.status === 'upcoming' && announced.content_available === false && announced.description === '' && !('sections' in announced), 'upcoming_listed_content_private');
   for (const [name, patch] of Object.entries({ empty_name: {name:'   '}, empty_description:{description:' \0 '}, modality:{modality:'hibrido'}, duration:{duration:'x'.repeat(121)}, duration_type:{duration:5}, status:{status:'draft'}, topic:{sections:[{title:'\0 '}]}, topics_type:{sections:{title:'bad'}} })) {
     gate((await admin.call(`/api/admin/courses/${id}`, 'PATCH', patch)).status === 400, `invalid_${name}_denied`);
   }

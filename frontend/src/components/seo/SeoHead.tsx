@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import { getSeoForPath, organizationJsonLd, SITE } from '@/lib/seoConfig';
 
-const PRIVATE_PREFIXES = ['/admin', '/instructor', '/alumno', '/elegir-panel', '/auth-redirect', '/restablecer-contrasena'];
+const PRIVATE_PREFIXES = ['/admin', '/instructor', '/alumno', '/elegir-panel', '/restablecer-contrasena'];
 
 function upsertMeta(attr, key, content) {
   let el = document.querySelector(`meta[${attr}="${key}"]`);

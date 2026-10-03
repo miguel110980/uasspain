@@ -361,7 +361,7 @@ def run_content_e2e(admin, instr):
         st_list, courses = admin.call("GET", "/api/courses")
         visible = next((item for item in courses or [] if item.get("id") == course_id), None)
         st_hidden, hidden = admin.call("GET", f"/api/courses/{slug}")
-        log(st_list == 200 and visible is None, "curso_proximamente_no_publicado", f"{st_list}")
+        log(st_list == 200 and visible is not None and visible.get("status") == "upcoming" and visible.get("content_available") is False and visible.get("description") == "" and "sections" not in visible, "curso_proximamente_en_catalogo_sin_contenido", f"{st_list}")
         log(
             st_hidden == 404,
             "curso_proximamente_contenido_protegido",
@@ -417,7 +417,7 @@ def run_content_e2e(admin, instr):
         st_list, courses = admin.call("GET", "/api/courses")
         ids = {item.get("id") for item in courses or []}
         log(
-            st_del_course == 204 and course_id not in ids and sentinel_id not in ids and any(item.get("id") == sentinel_id for item in (admin.call("GET", "/api/admin/courses")[1] or [])),
+            st_del_course == 204 and course_id not in ids and sentinel_id in ids and any(item.get("id") == sentinel_id for item in (admin.call("GET", "/api/admin/courses")[1] or [])),
             "curso_eliminar_solo_seleccionado",
             f"{st_del_course}",
         )

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLocation, useNavigationType } from "react-router-dom";
 
 const getHashId = (hash) => {
@@ -14,16 +14,35 @@ const getHashId = (hash) => {
 export default function ScrollToTop() {
   const { pathname, hash } = useLocation();
   const navigationType = useNavigationType();
+  const initialNavigation = useRef(true);
 
   useEffect(() => {
-    if (navigationType === "POP") return;
+    const isInitialNavigation = initialNavigation.current;
+    initialNavigation.current = false;
+    // Preserve browser history restoration, but handle a fragment on initial load:
+    // replacing prerendered markup can otherwise undo the browser's native scroll.
+    if (navigationType === "POP" && (!isInitialNavigation || !hash)) return;
 
     if (hash) {
       const id = getHashId(hash);
-      const timer = window.setTimeout(() => {
-        document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-      }, 50);
-      return () => window.clearTimeout(timer);
+      let observer: MutationObserver | undefined;
+      const scrollToAnchor = () => {
+        const target = document.getElementById(id);
+        if (!target) return false;
+        target.scrollIntoView({ behavior: isInitialNavigation ? "instant" : "smooth" });
+        observer?.disconnect();
+        return true;
+      };
+      const frame = window.requestAnimationFrame(() => {
+        if (scrollToAnchor()) return;
+        // A lazy route can render the anchor after its code finishes loading.
+        observer = new MutationObserver(scrollToAnchor);
+        observer.observe(document.body, { childList: true, subtree: true });
+      });
+      return () => {
+        window.cancelAnimationFrame(frame);
+        observer?.disconnect();
+      };
     }
 
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });

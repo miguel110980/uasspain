@@ -327,9 +327,9 @@ pub async fn public_courses(
 ) -> Result<Json<Vec<Value>>, AppError> {
     let rows = sqlx::query_scalar::<_, Value>(
         "SELECT jsonb_build_object('id',id,'name',name,'slug',slug,
-         'short_description',short_description,'description',description,'modality',modality,'duration',duration,'cover_image_url',cover_image_url,
-         'status',status,'sort_order',sort_order,'published_at',published_at)
-         FROM courses WHERE status='published' ORDER BY sort_order,name",
+         'short_description',short_description,'description',CASE WHEN status='published' THEN description ELSE '' END,'modality',modality,'duration',duration,'cover_image_url',cover_image_url,
+         'status',status,'content_available',status='published','sort_order',sort_order,'published_at',published_at)
+         FROM courses WHERE status IN ('upcoming','published') ORDER BY sort_order,name",
     )
     .fetch_all(pool(&state)?)
     .await?;

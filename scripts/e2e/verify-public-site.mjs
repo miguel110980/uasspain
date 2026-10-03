@@ -28,16 +28,37 @@ for (const path of paths) {
   assert.equal(response.status, 200, path);
   assert.match(response.body, /<h1\b/, path);
   assert.match(response.body, /<link rel="canonical"/, path);
+  assert.doesNotMatch(response.body, /href="\/#formacion"/, `Broken formation backlink: ${path}`);
   assert.match(response.headers['content-security-policy'], /frame-ancestors/, path);
   const title = response.body.match(/<title>([^<]+)<\/title>/)?.[1];
   assert.ok(title && !titles.has(title), `Missing or duplicate title: ${path}`);
   titles.add(title);
 }
-for (const path of ['/ruta-inexistente-verificacion', '/formacion/curso-inexistente-verificacion']) {
-  assert.equal((await get(path)).status, 404, path);
-}
-for (const path of ['/admin', '/instructor', '/alumno', '/?auth=login', '/api/health/live/']) {
+for (const path of ['/servicios', '/servicios/']) {
   const response = await get(path);
+  assert.equal(response.status, 301, path);
+  assert.equal(response.headers.location, '/#servicios', path);
+  const destination = await get(new URL(response.headers.location, target).pathname);
+  assert.equal(destination.status, 200, path);
+  assert.match(destination.body, /id="servicios"/, path);
+}
+for (const path of [
+  '/ruta-inexistente-verificacion', '/formacion/curso-inexistente-verificacion',
+  '/auth-redirect', '/auth-redirect/',
+  ...['admin', 'instructor', 'alumno', 'elegir-panel', 'restablecer-contrasena']
+    .flatMap(route => [`/${route}/no-existe`, `/${route}/no-existe/`]),
+]) {
+  const response = await get(path);
+  assert.equal(response.status, 404, path);
+  assert.match(response.headers['x-robots-tag'], /noindex/, path);
+}
+for (const path of [
+  ...['admin', 'instructor', 'alumno', 'elegir-panel', 'restablecer-contrasena']
+    .flatMap(route => [`/${route}`, `/${route}/`]),
+  '/?auth=login', '/api/health/live/',
+]) {
+  const response = await get(path);
+  assert.equal(response.status, 200, path);
   assert.match(response.headers['x-robots-tag'], /noindex/, path);
 }
 const courses = await get('/sitemap-courses.xml');
@@ -55,4 +76,4 @@ if (process.env.SSR_TEST_UNPUBLISHED_SLUG) {
   assert.equal((await get(`/formacion/${slug}`)).status, 404);
   assert.ok(!courses.body.includes(`/formacion/${slug}<`));
 }
-console.log(`PASS: ${paths.length} static pages, unique titles, private noindex, 404, published courses and verified HTTPS.`);
+console.log(`PASS: ${paths.length} static pages, unique titles, service redirects, formation backlinks, private noindex, strict 404, published courses and verified HTTPS.`);

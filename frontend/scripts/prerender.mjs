@@ -16,7 +16,7 @@ try {
   const source = await readFile('src/App.tsx', 'utf8');
   const modules = new Map([...source.matchAll(/const (\w+) = lazy\(\(\) => import\('([^']+)'\)\);/g)].map(m => [m[1], m[2]]));
   const routes = [...source.matchAll(/<Route path="([^"]+)" element=\{<(\w+)\s*\/>\}/g)]
-    .filter(m => !m[1].includes(':') && !m[1].includes('*') && !/^\/(auth-redirect|elegir-panel|restablecer-contrasena)/.test(m[1]));
+    .filter(m => !m[1].includes(':') && !m[1].includes('*') && !/^\/(elegir-panel|restablecer-contrasena)/.test(m[1]));
   if (routes.length < 20) throw new Error('Public route discovery failed; check App route declarations.');
   const { SITE, getSeoForPath, organizationJsonLd } = await server.ssrLoadModule('/src/lib/seoConfig.ts');
   const origin = new URL(SITE.url);

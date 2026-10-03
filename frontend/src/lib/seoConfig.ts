@@ -22,7 +22,7 @@ export const ROUTE_SEO = {
     description: 'Conoce UASSPAIN: equipo instructor certificado, experiencia operativa y compromiso con la seguridad aérea y la excelencia en formación UAS.',
   },
   '/formacion': {
-    title: 'Cursos disponibles | UASSPAIN — Formación UAS',
+    title: 'Todos los cursos | UASSPAIN — Formación UAS',
     description: 'Programas publicados y próximas convocatorias de formación UAS administrados desde UASSpain.',
   },
   '/tecnologia': {
@@ -55,10 +55,6 @@ export const ROUTE_SEO = {
   '/restablecer-contrasena': {
     title: 'Restablecer Contraseña | UASSPAIN',
     description: 'Establece una nueva contraseña para acceder a tu cuenta de formación UASSPAIN.',
-    noindex: true,
-  },
-  '/auth-redirect': {
-    title: 'Acceso | UASSPAIN',
     noindex: true,
   },
   '/servicios/seguridad': {

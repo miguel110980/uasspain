@@ -11,6 +11,7 @@ test('course management updates the catalog, stable URL and ordered topics in re
   const name = `Curso completo ${Date.now()}`;
   let id: string | undefined;
   const publicPage = await page.context().newPage();
+  const catalogPage = await page.context().newPage();
   await publicPage.setViewportSize({ width: 1440, height: 900 });
   await publicPage.goto('/');
   await publicPage.getByRole('button', { name: 'Formación', exact: true }).click();
@@ -44,6 +45,10 @@ test('course management updates the catalog, stable URL and ordered topics in re
     expect(course.sections.map(topic => [topic.title, topic.sort_order])).toEqual([['Tema B', 0], ['Tema A', 1]]);
     expect((await page.request.get(`/api/courses/${course.slug}`)).status()).toBe(404);
     await expect(publicPage.getByRole('link', { name, exact: true })).toHaveCount(0);
+    await catalogPage.goto('/formacion');
+    const catalogCard = catalogPage.getByRole('article').filter({ has: catalogPage.getByRole('heading', { name, exact: true }) });
+    await expect(catalogCard.getByText('Próximamente', { exact: true })).toBeVisible();
+    await expect(catalogCard.getByRole('link')).toHaveCount(0);
     const card = () => page.getByRole('article').filter({ has: page.getByRole('heading', { name, exact: true }) });
     await card().getByRole('button', { name: 'Editar', exact: true }).click();
     const edit = page.getByRole('form', { name: 'Editar curso', exact: true });
@@ -51,6 +56,8 @@ test('course management updates the catalog, stable URL and ordered topics in re
     await edit.getByLabel('Estado', { exact: true }).selectOption('published');
     await edit.getByRole('button', { name: 'Guardar', exact: true }).click();
     await expect(publicPage.getByRole('link', { name, exact: true })).toBeVisible();
+    await expect(catalogCard.getByText('Publicado', { exact: true })).toBeVisible();
+    await expect(catalogCard.getByRole('link', { name: 'Ver curso', exact: true })).toHaveAttribute('href', `/formacion/${course.slug}`);
     await publicPage.getByRole('link', { name, exact: true }).click();
     await expect(publicPage).toHaveURL(new RegExp(`/formacion/${course.slug}$`));
     await expect(publicPage.getByRole('heading', { name, exact: true })).toBeVisible();
@@ -94,6 +101,9 @@ test('course management updates the catalog, stable URL and ordered topics in re
     await publicPage.goto('/');
     await publicPage.getByRole('button', { name: 'Formación', exact: true }).click();
     await expect(publicPage.getByRole('link', { name: `${name} actualizado`, exact: true })).toHaveCount(0);
+    const updatedCatalogCard = catalogPage.getByRole('article').filter({ has: catalogPage.getByRole('heading', { name: `${name} actualizado`, exact: true }) });
+    await expect(updatedCatalogCard.getByText('Próximamente', { exact: true })).toBeVisible();
+    await expect(updatedCatalogCard.getByRole('link')).toHaveCount(0);
     await editedCard.getByRole('button', { name: 'Editar', exact: true }).click();
     await edit.getByLabel('Estado', { exact: true }).selectOption('published');
     await edit.getByRole('button', { name: 'Guardar', exact: true }).click();
@@ -106,6 +116,7 @@ test('course management updates the catalog, stable URL and ordered topics in re
     await editedCard.getByRole('button', { name: 'Eliminar', exact: true }).click();
     await page.getByRole('button', { name: 'Eliminar curso', exact: true }).click();
     await expect(editedCard).toHaveCount(0);
+    await expect(updatedCatalogCard).toHaveCount(0);
     await expect(publicPage.getByRole('heading', { name: `${name} actualizado`, exact: true })).toHaveCount(0);
     expect((await page.request.get(`/api/courses/${course.slug}`)).status()).toBe(404);
     await publicPage.goto('/');
@@ -115,5 +126,6 @@ test('course management updates the catalog, stable URL and ordered topics in re
   } finally {
     if (id) await page.request.delete(`/api/admin/courses/${id}`, { headers: { 'X-UASSpain-Window-ID': await page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || '') } });
     await publicPage.close();
+    await catalogPage.close();
   }
 });
