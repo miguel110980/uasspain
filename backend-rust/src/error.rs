@@ -10,6 +10,8 @@ use uuid::Uuid;
 pub enum AppError {
     #[error("authentication required")]
     Unauthorized,
+    #[error("session window mismatch")]
+    SessionWindowMismatch,
     #[error("permission denied")]
     Forbidden,
     #[error("resource not found")]
@@ -41,6 +43,11 @@ impl IntoResponse for AppError {
                 StatusCode::UNAUTHORIZED,
                 "not_authenticated",
                 "Credenciales no válidas.".to_owned(),
+            ),
+            Self::SessionWindowMismatch => (
+                StatusCode::UNAUTHORIZED,
+                "session_window_mismatch",
+                "Acceda desde esta ventana para continuar.".to_owned(),
             ),
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,

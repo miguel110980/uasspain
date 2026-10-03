@@ -36,15 +36,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             axum_server::bind_rustls(address, tls)
                 .handle(handle)
-                .serve(app.into_make_service())
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .await?;
         }
         (None, None) => {
             tracing::warn!(%address, transport = "http", "TLS disabled; intended for local tests only");
             let listener = tokio::net::TcpListener::bind(address).await?;
-            axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown_signal())
-                .await?;
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
         }
         _ => return Err("TLS_CERT_FILE and TLS_KEY_FILE must be configured together".into()),
     }

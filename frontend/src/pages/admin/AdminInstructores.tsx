@@ -1,5 +1,7 @@
+import PanelModal from '@/components/ui/PanelModal';
+import { resolveMediaUrl } from '@/lib/mediaUrl';
 import React, { useEffect, useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import {
   UserCheck, UserPlus, Search, Filter, Loader2, CheckCircle, Ban, Trash2, Edit, X, Eye, KeyRound, ShieldCheck,
 } from 'lucide-react';
@@ -172,7 +174,7 @@ export default function AdminInstructores() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       {p.foto_perfil ? (
-                        <img src={p.foto_perfil} alt={p.nombre} className="w-8 h-8 rounded-full object-cover border border-primary/20" />
+                        <img src={resolveMediaUrl(p.foto_perfil)} alt={p.nombre} className="w-8 h-8 rounded-full object-cover border border-primary/20" />
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-primary/15 text-primary flex items-center justify-center text-xs font-bold shrink-0">
                           {(p.nombre || '?').charAt(0).toUpperCase()}
@@ -242,8 +244,8 @@ export default function AdminInstructores() {
         user={editUser}
         onClose={() => setEditUser(null)}
         onSave={async (id, patch) => {
-          await authService.updateProfile(id, patch);
-          setProfiles((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+          const updated = await authService.updateProfile(id, patch);
+          setProfiles((prev) => prev.map((p) => (p.id === id ? updated : p)));
           setEditUser(null);
         }}
       />
@@ -267,23 +269,13 @@ function CreateInstructorModal({ open, onClose, onCreated }) {
   return (
     <AnimatePresence>
       {open && (
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm overflow-y-auto"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.98 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-2xl my-8"
-          >
+        <PanelModal label="Nuevo instructor" onClose={onClose} className="max-w-2xl">
             <div className="flex items-center justify-between mb-4 px-1">
               <h3 className="font-heading text-lg font-bold text-foreground">Nuevo instructor</h3>
-              <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+              <button onClick={onClose} aria-label="Cerrar" className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
             </div>
             <NuevoInstructorForm key={formKey} onCreated={onCreated} />
-          </motion.div>
-        </motion.div>
+          </PanelModal>
       )}
     </AnimatePresence>
   );
@@ -327,19 +319,10 @@ function EditInstructorModal({ user, onClose, onSave }) {
   return (
     <AnimatePresence>
       {user && form && (
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.98 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg glass-card p-6"
-          >
+        <PanelModal label="Editar instructor" onClose={onClose} className="max-w-lg glass-card p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-heading text-lg font-bold text-foreground">Editar instructor</h3>
-              <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+              <button onClick={onClose} aria-label="Cerrar" className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={submit} className="space-y-4">
               <div className="grid sm:grid-cols-2 gap-4">
@@ -348,8 +331,8 @@ function EditInstructorModal({ user, onClose, onSave }) {
                 <Field label="Email" value={form.email} onChange={(v) => setForm({ ...form, email: v })} />
                 <Field label="Usuario" value={form.username} onChange={(v) => setForm({ ...form, username: v })} />
                 <div className="space-y-1">
-                  <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Estado</label>
-                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent">
+                  <label htmlFor="edit-instructor-status" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Estado</label>
+                  <select id="edit-instructor-status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent">
                     {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
@@ -373,8 +356,7 @@ function EditInstructorModal({ user, onClose, onSave }) {
                 </button>
               </div>
             </form>
-          </motion.div>
-        </motion.div>
+          </PanelModal>
       )}
     </AnimatePresence>
   );
@@ -391,7 +373,7 @@ function InstructorDetailModal({ user, onClose, onResetPassword }) {
     let cancelled = false;
     (async () => {
       try {
-        const regs = await conexionesService.registros.list('-fecha_hora', 1, {});
+        const regs = await conexionesService.registros.list('-fecha_hora', 1, { profile_id: user.id });
         const match = (Array.isArray(regs) ? regs : []).find(
           (r) => r.profile === user.id || r.profile_id === user.id,
         );
@@ -425,23 +407,14 @@ function InstructorDetailModal({ user, onClose, onResetPassword }) {
   return (
     <AnimatePresence>
       {user && (
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm overflow-y-auto"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.98 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg glass-card p-6 my-8"
-          >
+        <PanelModal label="Detalles del instructor" onClose={onClose} className="max-w-lg glass-card p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-heading text-lg font-bold text-foreground">Detalles del instructor</h3>
-              <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+              <button onClick={onClose} aria-label="Cerrar" className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
             </div>
             <div className="flex items-center gap-3 mb-5">
               {user.foto_perfil ? (
-                <img src={user.foto_perfil} alt={user.nombre} className="w-12 h-12 rounded-full object-cover border border-primary/20" />
+                <img src={resolveMediaUrl(user.foto_perfil)} alt={user.nombre} className="w-12 h-12 rounded-full object-cover border border-primary/20" />
               ) : (
                 <div className="w-12 h-12 rounded-full bg-primary/15 text-primary flex items-center justify-center text-lg font-bold">
                   {(user.nombre || '?').charAt(0).toUpperCase()}
@@ -494,16 +467,15 @@ function InstructorDetailModal({ user, onClose, onResetPassword }) {
             {/* Permissions (prepared for RBAC) */}
             <div className="mt-4">
               <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Permisos</p>
-              <p className="text-[10px] text-muted-foreground/50">Gestión de permisos preparada para la implementación RBAC futura.</p>
+              <p className="text-[10px] text-muted-foreground/50">Roles activos: {getRoles(user).join(', ')}. Los permisos se validan en el servidor.</p>
             </div>
             <div className="flex justify-end gap-3 pt-5 mt-5 border-t border-border-subtle">
               <button onClick={onResetPassword} className="inline-flex items-center gap-1.5 px-4 py-2 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-all">
                 <KeyRound className="w-3.5 h-3.5" /> Restablecer contraseña
               </button>
-              <button onClick={onClose} className="px-5 py-2 bg-primary text-primary-foreground text-sm font-bold uppercase tracking-tighter hover:bg-primary/80 transition-all">Cerrar</button>
+              <button onClick={onClose} aria-label="Cerrar" className="px-5 py-2 bg-primary text-primary-foreground text-sm font-bold uppercase tracking-tighter hover:bg-primary/80 transition-all">Cerrar</button>
             </div>
-          </motion.div>
-        </motion.div>
+          </PanelModal>
       )}
 
       {assignModalOpen && (
@@ -582,19 +554,10 @@ function AssignStudentsModal({ instructorId, currentlyAssigned, onClose, onAssig
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={onClose}
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm"
-    >
-      <motion.div
-        initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.98 }}
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg glass-card p-6"
-      >
+    <PanelModal label="Asignar alumnos" onClose={onClose} className="max-w-lg glass-card p-6">
         <div className="flex items-center justify-between mb-5">
           <h3 className="font-heading text-lg font-bold text-foreground">Asignar alumnos</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label="Cerrar" className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
         </div>
         <div className="flex items-center gap-2 px-3 h-10 mb-4 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30">
           <Search className="w-4 h-4 text-muted-foreground/60" />
@@ -653,21 +616,20 @@ function AssignStudentsModal({ instructorId, currentlyAssigned, onClose, onAssig
             Asignar {selected.size > 0 && `(${selected.size})`}
           </button>
         </div>
-      </motion.div>
-    </motion.div>
+      </PanelModal>
   );
 }
 
 function Field({ label, value, onChange }) {
   return (
-    <div className="space-y-1">
-      <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label}</label>
+    <label className="space-y-1 block">
+      <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label}</span>
       <input
         value={value || ''}
         onChange={(e) => onChange(e.target.value.replace(/[<>{}]/g, ''))}
         className="w-full h-10 px-3 bg-surface-muted border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent"
       />
-    </div>
+    </label>
   );
 }
 

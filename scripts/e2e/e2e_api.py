@@ -34,6 +34,7 @@ INSTR_PASSWORD = os.environ.get("E2E_INSTRUCTOR_PASSWORD", "E2eInstr_2026!")
 ALUM_EMAIL = os.environ.get("E2E_ALUMNO_EMAIL", "alumno.e2e@test.local")
 ALUM_PASSWORD = os.environ.get("E2E_ALUMNO_PASSWORD", "E2ePass_2026!")
 OUT = []
+WINDOW_LOOKUPS = {}
 
 
 def log(ok, name, extra=""):
@@ -45,6 +46,7 @@ def log(ok, name, extra=""):
 class Session:
     def __init__(self, label):
         self.label = label
+        self.window_id = str(uuid.uuid4())
         self.jar = CookieJar()
         handlers = [urllib.request.HTTPCookieProcessor(self.jar)]
         if TLS_CONTEXT is not None:
@@ -62,7 +64,7 @@ class Session:
         timeout=20,
     ):
         url = BASE + path
-        hdrs = {"Origin": ORIGIN, "Referer": ORIGIN + "/"}
+        hdrs = {"Origin": ORIGIN, "Referer": ORIGIN + "/", "X-UASSpain-Window-Id": self.window_id}
         if headers:
             hdrs.update(headers)
         data = None
@@ -90,6 +92,7 @@ class Session:
     def access_cookie(self):
         for c in self.jar:
             if c.name == "uasspain_access":
+                WINDOW_LOOKUPS[c.value] = self.window_id
                 return c.value
         return None
 
@@ -335,6 +338,7 @@ def run_content_e2e(admin, instr):
         slug = f"curso-e2e-{stamp}"
         course_payload = {
             "name": f"Curso E2E {stamp}",
+            "modality": "online",
             "slug": slug,
             "short_description": "Curso visible como próximo",
             "description": "CONTENIDO PRIVADO E2E",
@@ -357,12 +361,9 @@ def run_content_e2e(admin, instr):
         st_list, courses = admin.call("GET", "/api/courses")
         visible = next((item for item in courses or [] if item.get("id") == course_id), None)
         st_hidden, hidden = admin.call("GET", f"/api/courses/{slug}")
-        log(st_list == 200 and visible and visible.get("status") == "upcoming", "curso_proximamente_visible", f"{st_list}")
+        log(st_list == 200 and visible is None, "curso_proximamente_no_publicado", f"{st_list}")
         log(
-            st_hidden == 200
-            and hidden.get("content_available") is False
-            and hidden.get("description") == ""
-            and hidden.get("sections") == [],
+            st_hidden == 404,
             "curso_proximamente_contenido_protegido",
             f"{st_hidden}",
         )
@@ -416,7 +417,7 @@ def run_content_e2e(admin, instr):
         st_list, courses = admin.call("GET", "/api/courses")
         ids = {item.get("id") for item in courses or []}
         log(
-            st_del_course == 204 and course_id not in ids and sentinel_id in ids,
+            st_del_course == 204 and course_id not in ids and sentinel_id not in ids and any(item.get("id") == sentinel_id for item in (admin.call("GET", "/api/admin/courses")[1] or [])),
             "curso_eliminar_solo_seleccionado",
             f"{st_del_course}",
         )
@@ -434,7 +435,7 @@ async def ws_collect(url, cookie, expect_n, timeout=6):
     async with websockets.connect(
         url,
         ssl=TLS_CONTEXT,
-        additional_headers={"Origin": ORIGIN, "Cookie": f"uasspain_access={cookie}"},
+        additional_headers={"Origin": ORIGIN, "Cookie": f"uasspain_access={cookie}", "X-UASSpain-Window-Id": WINDOW_LOOKUPS.get(cookie, "")},
         open_timeout=8,
     ) as ws:
         deadline = time.time() + timeout
@@ -456,7 +457,7 @@ async def ws_expect_reject(url, cookie, origin):
             ssl=TLS_CONTEXT,
             additional_headers={
                 "Origin": origin,
-                "Cookie": f"uasspain_access={cookie}",
+                "Cookie": f"uasspain_access={cookie}", "X-UASSpain-Window-Id": WINDOW_LOOKUPS.get(cookie, ""),
             },
             open_timeout=8,
         ) as ws:
@@ -508,6 +509,62 @@ async def main():
     id_a = me_a["id"]
     id_i = me_i["id"]
     id_s = me_s["id"]
+
+    st, _ = admin.call("PATCH",f"/api/profiles/{id_i}/",{"roles":["admin","instructor","alumno"]})
+    st2, overlapping = admin.call("GET","/api/system/status/")
+    st3, _ = admin.call("PATCH",f"/api/profiles/{id_i}/",{"roles":["instructor"]})
+    counts=overlapping.get("users",{})
+    log(st==200 and st2==200 and st3==200 and counts.get("admin")==2 and counts.get("instructor")==1 and counts.get("alumno")==3 and counts.get("unique_active")==4,"role_counts_multirole_without_duplicate_profiles",str(st2))
+    stale, _ = instr.call("GET", "/api/auth/me/")
+    log(stale == 401, "role_change_revokes_existing_session", str(stale))
+    ok, _ = login(instr, INSTR_EMAIL, INSTR_PASSWORD)
+    log(ok, "instructor_relogin_after_role_change")
+    for actor, allowed in [(admin, True), (instr, False), (alum, False)]:
+        status, _ = actor.call("GET", "/api/profiles/instructores/")
+        log(status == (200 if allowed else 403), "instructor_directory_admin_only_" + actor.label, str(status))
+    status, _ = alum.call("GET", f"/api/profiles/{id_s}/assigned-alumnos/")
+    log(status == 403, "student_cannot_use_assignment_directory", str(status))
+    status, _ = admin.call("PATCH", f"/api/profiles/{id_i}/", {"roles": ["root"]})
+    log(status == 400, "unknown_role_grant_denied", str(status))
+    status, _ = admin.call("PATCH", f"/api/profiles/{id_i}/", {"role": "admin", "roles": ["instructor"]})
+    log(status == 400, "inconsistent_primary_and_roles_denied", str(status))
+    status, _ = admin.call("PATCH", f"/api/profiles/{id_s}/", {"assigned_instructor_id": str(uuid.uuid4())})
+    log(status == 400, "assignment_unknown_instructor_denied", str(status))
+    status, updated = admin.call("PATCH", f"/api/profiles/{id_s}/", {"assigned_instructor_id": id_i})
+    log(status == 200 and updated.get("assigned_instructor_id") == id_i, "profile_assignment_persisted", str(status))
+    first, overridden = admin.call("PATCH", f"/api/profiles/{id_i}/", {"login_2fa_enabled_override": False})
+    second, inherited = admin.call("PATCH", f"/api/profiles/{id_i}/", {"login_2fa_enabled_override": None})
+    log(first == 200 and overridden.get("login_2fa_enabled_override") is False and second == 200 and inherited.get("login_2fa_enabled_override") is None, "two_factor_override_returns_to_inheritance")
+    status, scoped = instr.call("GET", "/api/profiles/?role=alumno&status=activo")
+    log(status == 200 and len(scoped) == 2 and all(p.get("role") == "alumno" and p.get("status") == "activo" for p in scoped), "instructor_directory_filters_and_scope", str(status))
+    st, _ = instr.call("POST","/api/mensajes-staff/",{"destinatario_id":id_i,"contenido":"self fixture"})
+    log(st in (400,403),"self_chat_denied",str(st))
+
+    # Runtime configuration and secrets are tested only in this isolated DB.
+    st, smtp_view = admin.call("PUT","/api/system/smtp/",{"enabled":False,"host":"mail.example.invalid","port":587,"security":"STARTTLS","username":"fixture@example.invalid","from_email":"fixture@example.invalid","timeout_seconds":2,"password":"EphemeralSMTP_47!"})
+    log(st==200 and smtp_view.get("password_configured") and "password" not in smtp_view and "ciphertext" not in smtp_view,"smtp_secret_never_serialized",str(st))
+    st, smtp_view = admin.call("PUT","/api/system/smtp/",{"enabled":False,"host":"mail.example.invalid","port":587,"security":"STARTTLS","username":"fixture@example.invalid","from_email":"fixture@example.invalid","timeout_seconds":2,"password":""})
+    log(st==200 and smtp_view.get("password_configured"),"smtp_partial_save_keeps_password",str(st))
+    st,_=instr.call("GET","/api/system/smtp/")
+    log(st==403,"smtp_admin_only",str(st))
+    st,_=admin.call("PUT","/api/system/smtp/",{"enabled":True,"security":"NONE","host":"mail.example.invalid","port":587})
+    log(st==400,"smtp_plaintext_rejected",str(st))
+    st,_=admin.call("POST","/api/system/smtp/test/",{"recipient":"fixture@example.invalid"})
+    log(st==503,"smtp_unconfigured_test_is_not_success",str(st))
+    public_id="123456-fixture.apps.googleusercontent.com"
+    st,_=admin.call("PUT","/api/system/google-oauth/",{"enabled":True,"client_id":public_id})
+    st2, public=admin.call("GET","/api/public/oauth/google/")
+    st3, challenge=admin.call("POST","/api/auth/google/challenge/",{})
+    log(st==200 and st2==200 and public.get("client_id")==public_id and st3==200 and bool(challenge.get("nonce")),"google_runtime_client_and_challenge",str(st3))
+    st,_=admin.call("POST","/api/auth/google/",{"id_token":"synthetic-invalid-token"})
+    log(st==401,"google_runtime_does_not_bypass_token_validation",str(st))
+    st,_=admin.call("PUT","/api/system/google-oauth/",{"enabled":False,"client_id":""})
+    st2,public=admin.call("GET","/api/public/oauth/google/")
+    log(st==200 and st2==200 and not public.get("configured") and public.get("client_id") is None,"google_disabled_overrides_runtime",str(st))
+    st,_=admin.call("PUT","/api/system/google-oauth/",{"enabled":True,"client_id":"invalid"})
+    log(st==400,"google_invalid_client_rejected",str(st))
+    st,real_status=admin.call("GET","/api/system/status/")
+    log(st==200 and real_status.get("database",{}).get("connected") and real_status.get("redis",{}).get("connected") and real_status.get("users",{}).get("admin")==1,"system_status_real_contract",str(st))
 
     run_content_e2e(admin, instr)
     if os.environ.get("E2E_CONTENT_ONLY") == "1":
@@ -815,7 +872,7 @@ async def main():
                 ssl=TLS_CONTEXT,
                 additional_headers={
                     "Origin": ORIGIN,
-                    "Cookie": f"uasspain_access={alum.access_cookie()}",
+                    "Cookie": f"uasspain_access={alum.access_cookie()}", "X-UASSpain-Window-Id": alum.window_id,
                 },
                 open_timeout=8,
             ) as wsS,
@@ -824,7 +881,7 @@ async def main():
                 ssl=TLS_CONTEXT,
                 additional_headers={
                     "Origin": ORIGIN,
-                    "Cookie": f"uasspain_access={instr.access_cookie()}",
+                    "Cookie": f"uasspain_access={instr.access_cookie()}", "X-UASSpain-Window-Id": instr.window_id,
                 },
                 open_timeout=8,
             ) as wsI,
@@ -898,7 +955,7 @@ async def main():
     staff_room = "staff-" + "-".join(sorted([id_a, id_i]))
     staff_url = f"{WS_BASE}/ws/chat/{staff_room}/"
     async with websockets.connect(staff_url, ssl=TLS_CONTEXT, additional_headers={
-        "Origin": ORIGIN, "Cookie": f"uasspain_access={instr.access_cookie()}"
+        "Origin": ORIGIN, "Cookie": f"uasspain_access={instr.access_cookie()}", "X-UASSpain-Window-Id": instr.window_id
     }, open_timeout=8) as staff_socket:
         st, _ = admin.call("POST", "/api/mensajes-staff/", {
             "destinatario_id": id_i, "contenido": "Staff realtime E2E"
@@ -985,6 +1042,7 @@ async def main():
         "/api/backups/servers/",
         {
             "name": "E2E ext",
+            "role": "local",
             "ip_address": "172.30.99.10",
             "transfer_protocol": "sftp",
             "sftp_host": "sftp-e2e",
@@ -1008,6 +1066,11 @@ async def main():
 
     # ─── §12 en copia aislada: full local, externos 1/2, checksum,
     #     historial auditado y restauraciones por origen ──────────
+    st, _ = admin.call("POST", "/api/backups/servers/", {"name":"Duplicate", "role":"local", "ip_address":"127.0.0.1", "is_active":False})
+    log(st==409,"backup_slot_duplicado_denegado",str(st))
+    admin.call("DELETE", f"/api/backups/servers/{srv_id}/")
+    st, local_destination=admin.call("POST","/api/backups/servers/",{"name":"E2E local","role":"local","ip_address":"127.0.0.1","transfer_protocol":"copy","smb_share":"/app/backups/destination-local","is_active":True})
+    log(st==201,"backup_destino_local_creado",str(st))
     key_path = "/app/backup_keys/backup_sftp_ed25519"
     kh_path = "/app/backup_keys/known_hosts"
 
@@ -1017,6 +1080,7 @@ async def main():
             "/api/backups/servers/",
             {
                 "name": name,
+                "role": "external_2" if offsite else "external_1",
                 "ip_address": ip,
                 "transfer_protocol": "sftp",
                 "sftp_host": host,
@@ -1152,27 +1216,13 @@ async def main():
     )
 
     # credenciales inválidas: usuario inexistente en el servidor SFTP
-    st_b, bad_cred = create_ext(
-        "E2E bad-cred", "172.30.99.14", "sftp-ext1-e2e", "nosuchuser", False
-    )
-    st, tc = admin.call(
-        "POST",
-        "/api/backups/test-connection/",
-        {"server_id": bad_cred},
-        timeout=60,
-    )
-    log(
-        st_b == 201 and st == 200 and isinstance(tc, dict) and tc.get("ok") is False,
-        "e2e_credenciales_invalidas_rechazadas",
-        f"{st} {str(tc.get('detail', ''))[:90] if isinstance(tc, dict) else ''}",
-    )
-    admin.call("DELETE", f"/api/backups/servers/{bad_cred}/")
+    st_b, _ = admin.call("PUT",f"/api/backups/servers/{ext1x}/",{"sftp_user":"nosuchuser"})
+    st, tc = admin.call("POST","/api/backups/test-connection/",{"server_id":ext1x},timeout=60)
+    log(st_b==200 and st==200 and tc.get("ok") is False,"e2e_credenciales_invalidas_rechazadas",str(st))
+    admin.call("PUT",f"/api/backups/servers/{ext1x}/",{"sftp_user":"backupsftp"})
 
-    # fallo de conexión: host inexistente activo -> backup parcial;
-    # tras desactivarlo, el siguiente backup vuelve a completarse
-    st_h, bad_host = create_ext(
-        "E2E bad-host", "172.30.99.13", "no-such-host.e2e", "backupsftp", False
-    )
+    bad_host=ext1x
+    st_h,_=admin.call("PUT",f"/api/backups/servers/{ext1x}/",{"sftp_host":"no-such-host.e2e"})
     st, fl = call_post_retry(
         admin,
         "/api/backups/create/",
@@ -1181,7 +1231,7 @@ async def main():
     )
     fljob = fl.get("job") if isinstance(fl, dict) else None
     log(
-        st_h == 201
+        st_h == 200
         and st == 200
         and fljob is not None
         and fljob.get("status") == "partial",
@@ -1189,7 +1239,7 @@ async def main():
         f"{st} {fljob.get('status') if fljob else fl}",
     )
     st_pu, _pu = admin.call(
-        "PUT", f"/api/backups/servers/{bad_host}/", {"is_active": False}
+        "PUT", f"/api/backups/servers/{bad_host}/", {"sftp_host": "sftp-ext1-e2e"}
     )
     st, rec = call_post_retry(
         admin,

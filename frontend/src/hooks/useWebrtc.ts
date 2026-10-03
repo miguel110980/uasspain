@@ -1,3 +1,4 @@
+import { windowBoundUrl } from '@/lib/windowSession';
 import { useEffect, useState } from 'react';
 import apiClient from '@/api/apiClient';
 import { endpoints } from '@/api/endpoints';
@@ -61,7 +62,7 @@ export function useWebrtc(callId: string) {
         const response = await apiClient.get<RTCConfiguration>('/api/videollamadas/ice/');
         if (disposed) return;
         const config = response.data;
-        const current = new WebSocket(endpoints.ws.videollamada(callId));
+        const current = new WebSocket(windowBoundUrl(endpoints.ws.videollamada(callId)));
         socket = current;
         current.onmessage = event => {
           processing = processing.then(async () => {

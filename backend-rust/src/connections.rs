@@ -96,6 +96,7 @@ pub struct ConnectionRecord {
 
 #[derive(Debug, Deserialize)]
 pub struct AccessLogQuery {
+    profile_id: Option<Uuid>,
     rol: Option<String>,
     estado_acceso: Option<String>,
     estado_sesion: Option<String>,
@@ -339,8 +340,8 @@ pub async fn list_access_logs(
 ) -> Result<Json<Vec<AccessLogRecord>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin", "instructor"])?;
-    let rows = sqlx::query_as::<_, AccessLogRecord>("SELECT id,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,host(direccion_ip)::text AS direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion::integer,fecha_cierre,created_date FROM conexiones_registroconexion WHERE ($1::text IS NULL OR rol=$1) AND ($2::text IS NULL OR estado_acceso=$2) AND ($3::text IS NULL OR estado_sesion=$3) AND ($5='admin' OR profile_id=$6 OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=profile_id AND p.assigned_instructor_id=$6)) ORDER BY fecha_hora DESC NULLS LAST,created_date DESC LIMIT $4")
-        .bind(query.rol).bind(query.estado_acceso).bind(query.estado_sesion).bind(query.limit.unwrap_or(200).clamp(1,500)).bind(&claims.role).bind(claims.profile_id).fetch_all(pool(&state)?).await?;
+    let rows = sqlx::query_as::<_, AccessLogRecord>("SELECT id,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,host(direccion_ip)::text AS direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion::integer,fecha_cierre,created_date FROM conexiones_registroconexion WHERE ($1::text IS NULL OR rol=$1) AND ($2::text IS NULL OR estado_acceso=$2) AND ($3::text IS NULL OR estado_sesion=$3) AND ($5='admin' OR profile_id=$6 OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=profile_id AND p.assigned_instructor_id=$6)) AND ($7::uuid IS NULL OR profile_id=$7) ORDER BY fecha_hora DESC NULLS LAST,created_date DESC LIMIT $4")
+        .bind(query.rol).bind(query.estado_acceso).bind(query.estado_sesion).bind(query.limit.unwrap_or(200).clamp(1,500)).bind(&claims.role).bind(claims.profile_id).bind(query.profile_id).fetch_all(pool(&state)?).await?;
     decrypt_access_logs(rows, &state)
 }
 

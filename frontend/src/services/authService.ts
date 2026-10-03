@@ -1,4 +1,5 @@
 import apiClient from '@/api/apiClient';
+import type { SystemStatusResponse } from '@/api/systemStatus';
 import { getRoles, panelRouteForUser, isBlockedStatus } from '@/lib/roles';
 import { endpoints } from '@/api/endpoints';
 import { collectClientMeta } from '@/lib/clientMeta';
@@ -198,7 +199,6 @@ export const authService = {
       uid: clean.uid,
       token: clean.token,
       password: clean.password ?? clean.new_password,
-      new_password: clean.new_password ?? clean.password,
     });
     await apiClient.post(endpoints.auth.resetPassword, body, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -241,10 +241,22 @@ export const authService = {
   // --- Perfiles de usuario (UserProfile) ---
 
   async listProfiles(sort?: string, limit?: number, filters: Record<string, unknown> = {}) {
-    const res = await apiClient.get(endpoints.profiles, {
-      params: buildListParams(sort, limit, filters),
-    });
-    return unwrapList(res);
+    const requested = Math.max(1, limit ?? 200);
+    const profiles = [];
+    const seen = new Set<string>();
+    const initialOffset = Math.max(0, Number(filters.offset) || 0);
+    while (profiles.length < requested) {
+      const pageSize = Math.min(200, requested - profiles.length);
+      const res = await apiClient.get(endpoints.profiles, {
+        params: buildListParams(sort, pageSize, { ...filters, offset: initialOffset + profiles.length }),
+      });
+      const page = unwrapList(res);
+      if (!Array.isArray(page)) throw new Error('Respuesta de perfiles no válida.');
+      const fresh = page.filter(profile => !seen.has(String(profile.id)));
+      for (const profile of fresh) { seen.add(String(profile.id)); profiles.push(profile); }
+      if (page.length < pageSize || fresh.length === 0) break;
+    }
+    return profiles;
   },
 
   async listInstructors() {
@@ -310,7 +322,7 @@ export const authService = {
   },
 
   async getSystemStatus() {
-    const res = await apiClient.get(endpoints.systemStatus);
+    const res = await apiClient.get<SystemStatusResponse>(endpoints.systemStatus);
     return res.data;
   },
 

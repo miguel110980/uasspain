@@ -215,6 +215,8 @@ export default function AuthModal({ isOpen, onClose }) {
             autoComplete="username"
             autoCapitalize="none"
             spellCheck={false}
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? 'login-error' : undefined}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             maxLength={254}
@@ -233,6 +235,8 @@ export default function AuthModal({ isOpen, onClose }) {
               type={showPassword ? 'text' : 'password'}
               required
               autoComplete="current-password"
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? 'login-error' : undefined}
               value={password}
               onChange={(e) => setPassword(sanitizeInput(e.target.value, 'password'))}
               placeholder="••••••••"
@@ -292,7 +296,7 @@ export default function AuthModal({ isOpen, onClose }) {
         </div>
 
         {error && (
-          <p role="alert" className="text-xs text-danger bg-danger-soft border border-danger-border px-3 py-2 rounded-sm">
+          <p id="login-error" role="alert" className="text-xs text-danger bg-danger-soft border border-danger-border px-3 py-2 rounded-sm">
             {error}
           </p>
         )}

@@ -59,7 +59,7 @@ export default function AdminNotificaciones() {
       });
     }
 
-    const dbOk = status.platform?.database_connected ?? status.platform?.storage_connected;
+    const dbOk = status.platform?.database_connected;
     if (status.platform && dbOk === false) {
       lista.push({
         id: 'storage-error',

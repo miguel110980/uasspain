@@ -85,7 +85,7 @@ pub async fn create_practical(
         return Err(AppError::Validation("Nota fuera de rango.".into()));
     }
     let assigned: Option<Uuid> = sqlx::query_scalar(
-        "SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$1 AND role='alumno'",
+        "SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$1 AND (role='alumno' OR roles ? 'alumno')",
     )
     .bind(input.alumno_id)
     .fetch_optional(pool(&state)?)

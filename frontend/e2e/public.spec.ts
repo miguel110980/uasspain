@@ -89,7 +89,9 @@ for (const email of ['E2E-ADMIN@TEST.LOCAL', 'E2e-Admin@Test.Local', '  e2e-admi
     await page.getByLabel('Contraseña *', { exact: true }).fill('E2eAdmin_2026!'); // pragma: allowlist secret - isolated fixture
     await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
     await expect(page).toHaveURL(/\/admin$/);
-    const me = await page.request.get('/api/auth/me/');
+    const me = await page.request.get('/api/auth/me/', { headers: {
+      'X-UASSpain-Window-Id': await page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || ''),
+    } });
     expect(me.ok()).toBe(true);
     expect((await me.json()).email).toBe('e2e-admin@test.local');
   });

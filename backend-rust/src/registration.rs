@@ -106,12 +106,14 @@ struct ResetUser {
 
 pub async fn register(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<RegisterRequest>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), AppError> {
     if !env_true("REGISTRATION_ENABLED", true) {
         return Err(AppError::Forbidden);
     }
     let email = normalize_email(&input.email)?;
+    crate::auth::enforce_login_rate(&headers, &format!("register:{email}"))?;
     let username = if input.username.trim().is_empty() {
         email.clone()
     } else {
@@ -160,8 +162,12 @@ pub async fn register(
         .bind(profile_id).bind(state.cipher.encrypt(input.nombre.trim())?).bind(state.cipher.encrypt(input.apellidos.trim())?)
         .bind(state.cipher.encrypt(&email)?).bind(state.cipher.encrypt(&username)?).bind(state.cipher.encrypt(input.dni_nie.trim())?)
         .bind(state.cipher.encrypt(&input.foto_perfil)?).bind(otp_hash).bind(user_id).bind(username_lookup).bind(email_lookup).bind(dni_lookup)
-        .bind(input.fecha_nacimiento.map(|date| date.to_string()).unwrap_or_default()).execute(&mut *tx).await?;
-    deliver_otp(&email, &otp).await?;
+        .bind(state.cipher.encrypt(&input.fecha_nacimiento.map(|date| date.to_string()).unwrap_or_default())?).execute(&mut *tx).await?;
+    sqlx::query("UPDATE accounts_userprofile SET otp_created_at=NOW() WHERE id=$1")
+        .bind(profile_id)
+        .execute(&mut *tx)
+        .await?;
+    deliver_otp(&state, &email, &otp).await?;
     tx.commit().await?;
     Ok((
         axum::http::StatusCode::CREATED,
@@ -173,22 +179,27 @@ pub async fn register(
 
 pub async fn verify_otp(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<OtpRequest>,
 ) -> Result<Json<Value>, AppError> {
     let email = normalize_email(&input.email)?;
+    crate::auth::enforce_login_rate(&headers, &format!("registration-otp:{email}"))?;
     let code = otp_code(input.code)?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let lookup = state.cipher.blind_index(&email)?;
-    let row: Option<(Uuid, String)> =
-        sqlx::query_as("SELECT id,otp_hash FROM accounts_userprofile WHERE email_lookup=$1")
-            .bind(lookup)
-            .fetch_optional(pool)
-            .await?;
-    let (id, hash) = row.ok_or(AppError::NotFound)?;
+    let row: Option<(Uuid, String)> = sqlx::query_as("SELECT id,otp_hash FROM accounts_userprofile WHERE email_lookup=$1 AND NOT otp_verified AND otp_created_at>NOW()-INTERVAL '15 minutes' AND otp_attempts<5")
+        .bind(lookup).fetch_optional(pool).await?;
+    let (id, hash) =
+        row.ok_or_else(|| AppError::Validation("Codigo incorrecto o caducado.".into()))?;
     if !verify_password_hash(&code, &hash) {
-        return Err(AppError::Validation("Codigo incorrecto.".to_owned()));
+        sqlx::query("UPDATE accounts_userprofile SET otp_attempts=LEAST(5,otp_attempts+1) WHERE id=$1 AND otp_hash=$2 AND NOT otp_verified").bind(id).bind(hash).execute(pool).await?;
+        return Err(AppError::Validation("Codigo incorrecto o caducado.".into()));
     }
-    sqlx::query("UPDATE accounts_userprofile SET otp_hash='',otp_verified=TRUE,updated_date=NOW() WHERE id=$1").bind(id).execute(pool).await?;
+    let consumed = sqlx::query("UPDATE accounts_userprofile SET otp_hash='',otp_created_at=NULL,otp_verified=TRUE,updated_date=NOW() WHERE id=$1 AND otp_hash=$2 AND NOT otp_verified AND otp_created_at>NOW()-INTERVAL '15 minutes' AND otp_attempts<5")
+        .bind(id).bind(hash).execute(pool).await?;
+    if consumed.rows_affected() != 1 {
+        return Err(AppError::Validation("Codigo incorrecto o caducado.".into()));
+    }
     Ok(Json(
         json!({"detail":"Email verificado correctamente. Un instructor revisara su solicitud de acceso."}),
     ))
@@ -196,17 +207,32 @@ pub async fn verify_otp(
 
 pub async fn resend_otp(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<OtpRequest>,
 ) -> Result<Json<Value>, AppError> {
+    let started = std::time::Instant::now();
     let email = normalize_email(&input.email)?;
+    crate::auth::enforce_login_rate(&headers, &format!("resend-otp:{email}"))?;
     let lookup = state.cipher.blind_index(&email)?;
     let otp = format!("{:06}", rand::rng().random_range(100_000..1_000_000));
     let hash = hash_argon2(&otp)?;
-    let result=sqlx::query("UPDATE accounts_userprofile SET otp_hash=$1,updated_date=NOW() WHERE email_lookup=$2 AND otp_verified=FALSE AND status='pendiente'").bind(hash).bind(lookup).execute(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
+    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+    let result=sqlx::query("UPDATE accounts_userprofile SET otp_hash=$1,otp_created_at=NOW(),otp_attempts=0,updated_date=NOW() WHERE email_lookup=$2 AND NOT otp_verified AND status='pendiente' AND (otp_created_at IS NULL OR otp_created_at<NOW()-INTERVAL '1 minute')").bind(&hash).bind(lookup).execute(pool).await?;
     if result.rows_affected() > 0 {
-        deliver_otp(&email, &otp).await?;
+        tokio::spawn(async move {
+            if deliver_otp(&state, &email, &otp).await.is_err() {
+                tracing::warn!("registration code delivery unavailable");
+                if let Some(pool) = &state.pool {
+                    let _ = sqlx::query("UPDATE accounts_userprofile SET otp_hash='',otp_created_at=NULL WHERE email_lookup=$1 AND otp_hash=$2").bind(state.cipher.blind_index(&email).unwrap_or_default()).bind(hash).execute(pool).await;
+                }
+            }
+        });
     }
-    Ok(Json(json!({"detail":"Codigo reenviado."})))
+    tokio::time::sleep(std::time::Duration::from_millis(250).saturating_sub(started.elapsed()))
+        .await;
+    Ok(Json(
+        json!({"detail":"Si hay una verificacion pendiente, recibiras un nuevo codigo."}),
+    ))
 }
 
 pub async fn change_password(
@@ -226,77 +252,183 @@ pub async fn change_password(
     let dni = state.cipher.decrypt(&dni)?;
     validate_password(&input.new_password, &username, &email, &dni)?;
     let hash = hash_argon2(&input.new_password)?;
-    sqlx::query("UPDATE auth_user SET password=$1 WHERE id=$2")
+    let user_id = i32::try_from(claims.user_id).map_err(|_| AppError::Internal)?;
+    let mut tx = pool.begin().await?;
+    let updated = sqlx::query("UPDATE auth_user SET password=$1 WHERE id=$2 AND password=$3")
         .bind(hash)
-        .bind(i32::try_from(claims.user_id).map_err(|_| AppError::Internal)?)
-        .execute(pool)
+        .bind(user_id)
+        .bind(old)
+        .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,login_otp_hash='',login_otp_created_at=NULL,updated_date=NOW() WHERE id=$2")
-        .bind(Uuid::new_v4().simple().to_string()).bind(claims.profile_id).execute(pool).await?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::Unauthorized);
+    }
+    sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,active_refresh_jti='',active_window_lookup='',login_otp_hash='',login_otp_created_at=NULL,updated_date=NOW() WHERE id=$2")
+        .bind(Uuid::new_v4().simple().to_string()).bind(claims.profile_id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE accounts_passwordresettoken SET consumed_at=NOW() WHERE user_id=$1 AND consumed_at IS NULL").bind(user_id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(Json(json!({"detail":"Contrasena actualizada."})))
 }
 
+const RESET_RESPONSE: &str = "Si existe una cuenta asociada a ese correo, recibirás un enlace para restablecer tu contraseña.";
+
 pub async fn password_reset_request(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<PasswordResetRequest>,
 ) -> Result<Json<Value>, AppError> {
+    let started = std::time::Instant::now();
     let email = normalize_email(&input.email)?;
+    crate::auth::enforce_login_rate(&headers, &format!("reset:{email}"))?;
     let lookup = state.cipher.blind_index(&email)?;
-    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,u.username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE p.email_lookup=$1 LIMIT 1")
-        .bind(lookup).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?.ok_or(AppError::NotFound)?;
-    if user.password.starts_with('!') {
-        return Err(AppError::Validation("Esta cuenta no tiene contraseña configurada. Inicia sesión con Google o contacta con el centro.".into()));
+    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,p.username AS username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE p.email_lookup=$1 AND u.is_active LIMIT 1")
+        .bind(lookup).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
+    // Delivery happens independently of the public response, including failures.
+    // Neither status, message nor SMTP latency discloses whether an account exists.
+    if let Some(user) = user {
+        tokio::spawn(async move {
+            if send_reset_link(&state, &user, &email).await.is_err() {
+                tracing::warn!("password recovery delivery unavailable");
+            }
+        });
     }
-    let timestamp = reset_timestamp();
-    let uid = URL_SAFE_NO_PAD.encode(user.id.to_string());
-    let token = compatible_reset_token(&user, timestamp)?;
-    let frontend = std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".into());
-    crate::email::send(&email, "Restablecer contraseña UASSpain", &format!("Use este enlace para restablecer su contraseña: {frontend}/restablecer-contrasena?uid={uid}&token={token}")).await?;
-    Ok(Json(
-        json!({"detail":"Hemos enviado un enlace para restablecer su contraseña."}),
-    ))
+    tokio::time::sleep(std::time::Duration::from_millis(250).saturating_sub(started.elapsed()))
+        .await;
+    Ok(Json(json!({"detail":RESET_RESPONSE})))
+}
+
+fn digest_hex(value: &str) -> String {
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn new_reset_token() -> String {
+    format!("r2_{}", URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>()))
+}
+
+fn reset_link(frontend: &str, user_id: i32, token: &str) -> Result<String, AppError> {
+    let mut link = reqwest::Url::parse(frontend).map_err(|_| AppError::Unavailable)?;
+    if link.scheme() != "https"
+        || link.host_str().is_none()
+        || !link.username().is_empty()
+        || link.password().is_some()
+    {
+        return Err(AppError::Unavailable);
+    }
+    link.set_path("/restablecer-contrasena");
+    link.set_query(None);
+    link.set_fragment(None);
+    link.query_pairs_mut()
+        .append_pair("uid", &URL_SAFE_NO_PAD.encode(user_id.to_string()))
+        .append_pair("token", token);
+    Ok(link.into())
+}
+
+async fn send_reset_link(state: &AppState, user: &ResetUser, email: &str) -> Result<(), AppError> {
+    let token = new_reset_token();
+    let frontend = std::env::var("FRONTEND_URL").unwrap_or_else(|_| "https://localhost".into());
+    let link = reset_link(&frontend, user.id, &token)?;
+    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+    let id = Uuid::new_v4();
+    let mut tx = pool.begin().await?;
+    // Lock the user so concurrent issuances leave exactly one current token.
+    sqlx::query("SELECT id FROM auth_user WHERE id=$1 FOR UPDATE")
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await?;
+    let recently_sent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_passwordresettoken WHERE user_id=$1 AND consumed_at IS NULL AND expires_at>NOW() AND created_at>NOW()-INTERVAL '1 minute')")
+        .bind(user.id).fetch_one(&mut *tx).await?;
+    if recently_sent {
+        return Ok(());
+    }
+    sqlx::query("DELETE FROM accounts_passwordresettoken WHERE user_id=$1")
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO accounts_passwordresettoken (id,user_id,token_hash,credential_hash,expires_at) VALUES ($1,$2,$3,$4,NOW()+INTERVAL '1 hour')")
+        .bind(id).bind(user.id).bind(digest_hex(&token)).bind(digest_hex(&user.password)).execute(&mut *tx).await?;
+    tx.commit().await?;
+    if let Err(error) = crate::email::send(
+        state,
+        email,
+        "Restablecer contrasena UASSpain",
+        &format!("Use este enlace para restablecer su contrasena: {link}"),
+    )
+    .await
+    {
+        let _ = sqlx::query("DELETE FROM accounts_passwordresettoken WHERE id=$1")
+            .bind(id)
+            .execute(pool)
+            .await;
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub async fn password_reset_confirm(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Form(input): Form<PasswordResetConfirmRequest>,
 ) -> Result<Json<Value>, AppError> {
+    if input.uid.len() > 32 || input.token.len() > 128 {
+        return Err(AppError::Validation("Enlace invalido.".into()));
+    }
+    crate::auth::enforce_login_rate(&headers, &format!("reset-confirm:{}", input.uid))?;
     let decoded = URL_SAFE_NO_PAD
         .decode(input.uid.as_bytes())
-        .map_err(|_| AppError::Validation("Enlace inválido.".into()))?;
+        .map_err(|_| AppError::Validation("Enlace invalido.".into()))?;
     let user_id: i32 = String::from_utf8(decoded)
         .ok()
         .and_then(|value| value.parse().ok())
-        .ok_or_else(|| AppError::Validation("Enlace inválido.".into()))?;
-    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,u.username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE u.id=$1")
-        .bind(user_id).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?.ok_or_else(|| AppError::Validation("Enlace inválido.".into()))?;
-    if !valid_reset_token(&user, &input.token)? {
-        return Err(AppError::Validation("Token inválido o expirado.".into()));
+        .filter(|id| *id > 0)
+        .ok_or_else(|| AppError::Validation("Enlace invalido.".into()))?;
+    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+    let mut tx = pool.begin().await?;
+    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,p.username AS username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE u.id=$1 AND u.is_active FOR UPDATE OF u")
+        .bind(user_id).fetch_optional(&mut *tx).await?.ok_or_else(|| AppError::Validation("Token invalido o expirado.".into()))?;
+    let valid = if input.token.starts_with("r2_") {
+        sqlx::query("UPDATE accounts_passwordresettoken SET consumed_at=NOW() WHERE user_id=$1 AND token_hash=$2 AND credential_hash=$3 AND consumed_at IS NULL AND expires_at>NOW()")
+            .bind(user_id).bind(digest_hex(&input.token)).bind(digest_hex(&user.password)).execute(&mut *tx).await?.rows_affected() == 1
+    } else {
+        // Preserve already sent legacy links; the row lock makes consumption atomic.
+        valid_reset_token(&user, &input.token)?
+    };
+    if !valid {
+        return Err(AppError::Validation("Token invalido o expirado.".into()));
     }
     let profile_email = state.cipher.decrypt(&user.profile_email)?;
     let dni = state.cipher.decrypt(&user.dni_nie)?;
-    validate_password(&input.password, &user.username, &profile_email, &dni)?;
+    validate_password(
+        &input.password,
+        &state.cipher.decrypt(&user.username)?,
+        &profile_email,
+        &dni,
+    )?;
     let hashes: Vec<String> = sqlx::query_scalar("SELECT password FROM auth_user WHERE id<>$1")
         .bind(user_id)
-        .fetch_all(state.pool.as_ref().ok_or(AppError::Unavailable)?)
+        .fetch_all(&mut *tx)
         .await?;
     if hashes
         .iter()
         .any(|hash| verify_password_hash(&input.password, hash))
     {
         return Err(AppError::Validation(
-            "Esta contraseña ya está en uso por otro usuario.".into(),
+            "Esta contrasena ya esta en uso por otro usuario.".into(),
         ));
     }
     let hash = hash_argon2(&input.password)?;
     sqlx::query("UPDATE auth_user SET password=$1 WHERE id=$2")
         .bind(hash)
         .bind(user_id)
-        .execute(state.pool.as_ref().ok_or(AppError::Unavailable)?)
+        .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,login_otp_hash='',login_otp_created_at=NULL,updated_date=NOW() WHERE user_id=$2")
-        .bind(Uuid::new_v4().simple().to_string()).bind(user_id).execute(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
-    Ok(Json(json!({"detail":"Contraseña actualizada."})))
+    sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,active_refresh_jti='',active_window_lookup='',login_otp_hash='',login_otp_created_at=NULL,updated_date=NOW() WHERE user_id=$2")
+        .bind(Uuid::new_v4().simple().to_string()).bind(user_id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE accounts_passwordresettoken SET consumed_at=NOW() WHERE user_id=$1 AND consumed_at IS NULL").bind(user_id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"detail":"Contrasena actualizada."})))
 }
 
 pub async fn admin_password_reset(
@@ -306,16 +438,13 @@ pub async fn admin_password_reset(
 ) -> Result<Json<Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     crate::auth::require_role(&claims, &["admin"])?;
-    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,u.username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE p.id=$1")
+    crate::auth::enforce_login_rate(&headers, &format!("admin-reset:{profile_id}"))?;
+    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,p.username AS username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE p.id=$1 AND u.is_active")
         .bind(profile_id).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?.ok_or(AppError::NotFound)?;
     let email = state.cipher.decrypt(&user.profile_email)?;
-    let timestamp = reset_timestamp();
-    let uid = URL_SAFE_NO_PAD.encode(user.id.to_string());
-    let token = compatible_reset_token(&user, timestamp)?;
-    let frontend = std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".into());
-    crate::email::send(&email, "Restablecer contraseña UASSpain", &format!("Use este enlace para restablecer su contraseña: {frontend}/restablecer-contrasena?uid={uid}&token={token}")).await?;
+    send_reset_link(&state, &user, &email).await?;
     Ok(Json(
-        json!({"detail":format!("Enlace de restablecimiento enviado a {email}." )}),
+        json!({"detail":"Enlace de restablecimiento enviado."}),
     ))
 }
 
@@ -441,6 +570,7 @@ pub async fn invite_user(
     tx.commit().await?;
     let frontend = std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".into());
     crate::email::send(
+        &state,
         &email,
         "Invitación a UASSpain",
         &format!("Has sido invitado a UASSpain.\n\nEmail: {email}\nContraseña temporal: {temporary_password}\n\nAccede en: {frontend}\n\nCambia tu contraseña tras el primer acceso."),
@@ -463,7 +593,7 @@ fn valid_reset_token(user: &ResetUser, token: &str) -> Result<bool, AppError> {
     let Some(timestamp) = from_base36(stamp) else {
         return Ok(false);
     };
-    if reset_timestamp().saturating_sub(timestamp) > 259_200 {
+    if timestamp > reset_timestamp() || reset_timestamp().saturating_sub(timestamp) > 259_200 {
         return Ok(false);
     }
     let expected = compatible_reset_token(user, timestamp)?;
@@ -544,6 +674,7 @@ pub(crate) fn normalize_email(value: &str) -> Result<String, AppError> {
         || value.chars().filter(|c| *c == '@').count() != 1
         || value.starts_with('@')
         || value.ends_with('@')
+        || value.parse::<lettre::Address>().is_err()
     {
         Err(AppError::Validation("Email no valido.".to_owned()))
     } else {
@@ -595,8 +726,9 @@ pub(crate) fn validate_password(
         Ok(())
     }
 }
-async fn deliver_otp(email: &str, code: &str) -> Result<(), AppError> {
+async fn deliver_otp(state: &AppState, email: &str, code: &str) -> Result<(), AppError> {
     crate::email::send(
+        state,
         email,
         "Código de verificación UASSpain",
         &format!("Su código de verificación es: {code}"),
@@ -612,6 +744,35 @@ fn env_true(name: &str, fallback: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{normalize_email, validate_password};
+    #[test]
+    fn reset_tokens_have_256_random_bits_and_only_a_digest_is_stored() {
+        let first = super::new_reset_token();
+        let second = super::new_reset_token();
+        assert_ne!(first, second);
+        use base64::Engine as _;
+        assert_eq!(
+            super::URL_SAFE_NO_PAD.decode(&first[3..]).unwrap().len(),
+            32
+        );
+        let digest = super::digest_hex(&first);
+        assert_eq!(digest.len(), 64);
+        assert!(!digest.contains(&first));
+    }
+    #[test]
+    fn recovery_links_require_https_and_cannot_carry_redirects_or_credentials() {
+        assert!(super::reset_link("http://localhost", 1, "token").is_err());
+        assert!(super::reset_link("https://user:password@example.test", 1, "token").is_err());
+        let link = super::reset_link(
+            "https://example.test/path?redirect=https://evil.test#fragment",
+            1,
+            "token",
+        )
+        .unwrap();
+        assert_eq!(
+            link,
+            "https://example.test/restablecer-contrasena?uid=MQ&token=token"
+        );
+    }
     #[test]
     fn password_policy_rejects_weak_and_identifiers() {
         assert!(validate_password("short", "u", "a@b.c", "").is_err());

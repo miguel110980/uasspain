@@ -32,7 +32,7 @@ export default function InstructorEstadisticas() {
       setResultados(resultadosData);
       setMateriales(materialesData);
       setCompletados(completadosData);
-      setProfiles(profilesData);
+      setProfiles(profilesData.filter(p => p.role === 'alumno' || p.roles?.includes('alumno')));
     } finally {
       setLoading(false);
     }

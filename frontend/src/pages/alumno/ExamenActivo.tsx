@@ -1,3 +1,4 @@
+import PanelModal from '@/components/ui/PanelModal';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, ChevronLeft, ChevronRight, CheckCircle, XCircle, AlertTriangle, Loader2, ShieldAlert } from 'lucide-react';
@@ -429,13 +430,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
 
       {/* Confirm modal */}
       {confirmFinish && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center px-4">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setConfirmFinish(false)} />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="relative w-full max-w-sm glass-card p-8 z-10 text-center"
-          >
+        <PanelModal label="Finalizar examen" onClose={() => setConfirmFinish(false)} className="max-w-sm glass-card p-8 text-center">
             <AlertTriangle className="w-10 h-10 text-warning mx-auto mb-4" />
             <h3 className="font-heading text-lg font-bold text-foreground mb-2">¿Finalizar el examen?</h3>
             <p className="text-sm text-muted-foreground mb-6">
@@ -456,8 +451,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
                 Finalizar
               </button>
             </div>
-          </motion.div>
-        </div>
+          </PanelModal>
       )}
     </div>
   );

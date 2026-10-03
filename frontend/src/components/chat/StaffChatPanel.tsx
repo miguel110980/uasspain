@@ -1,3 +1,4 @@
+import PanelModal from '@/components/ui/PanelModal';
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Send, Loader2, MessageCircle, Users, Trash2, X } from 'lucide-react';
 import conexionesService from '@/services/conexionesService';
@@ -482,7 +483,14 @@ export default function StaffChatPanel({
           onSend={(ids, contenido) => conexionesService.mensajesStaff.broadcast(ids, contenido)}
         />
       )}
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[65vh]">
+    <div className="space-y-4">
+      <div className="glass-card p-4 flex flex-wrap items-center gap-3" aria-label="Identidad de la sesion">
+        <span className="text-primary text-sm">Tú</span>
+        <span className="font-semibold">{myDisplayName || senderLabel}</span>
+        <span className="text-xs text-muted-foreground">{myRole === 'admin' ? 'Administrador' : 'Instructor'}</span>
+        <span className="text-xs text-success">En línea</span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[65vh]">
       <div className="glass-card min-w-0 overflow-y-auto flex flex-col">
         <div className="p-3 border-b border-border-subtle">
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
@@ -632,8 +640,7 @@ export default function StaffChatPanel({
       </div>
 
       {showClearConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
-          <div className="w-full max-w-sm glass-card p-6 space-y-4">
+        <PanelModal label="Limpiar chat" onClose={() => setShowClearConfirm(false)} className="max-w-sm glass-card p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-heading text-lg font-bold text-foreground">Limpiar chat</h3>
               <button onClick={() => setShowClearConfirm(false)} className="text-muted-foreground hover:text-foreground">
@@ -667,10 +674,10 @@ export default function StaffChatPanel({
                 Limpiar chat
               </button>
             </div>
-          </div>
-        </div>
+          </PanelModal>
       )}
     </div>
+      </div>
     </div>
   );
 }

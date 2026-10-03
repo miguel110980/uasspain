@@ -23,6 +23,12 @@ export async function fetchGoogleClientId(): Promise<string> {
 export function useGoogleConfig(enabled: boolean, attempt: number) {
   const [config, setConfig] = useState({ clientId: '', loading: true, failed: false });
 
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const changed = () => setRevision((value) => value + 1);
+    window.addEventListener('uasspain.google-config-updated', changed);
+    return () => window.removeEventListener('uasspain.google-config-updated', changed);
+  }, []);
   useEffect(() => {
     if (!enabled) return;
     let active = true;
@@ -35,7 +41,7 @@ export function useGoogleConfig(enabled: boolean, attempt: number) {
     return () => {
       active = false;
     };
-  }, [enabled, attempt]);
+  }, [enabled, attempt, revision]);
 
   return config;
 }

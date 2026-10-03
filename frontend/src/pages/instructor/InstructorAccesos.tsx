@@ -1,5 +1,6 @@
+import PanelModal from '@/components/ui/PanelModal';
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { Lock, Unlock, X, Loader2, BookOpen, ClipboardList, Shield } from 'lucide-react';
 import apiClient from '@/api/apiClient';
 import { endpoints } from '@/api/endpoints';
@@ -55,20 +56,7 @@ export default function InstructorAccesos({ profile, onClose }) {
   return (
     <AnimatePresence>
       {profile && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
-          onClick={onClose}
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            onClick={(e) => e.stopPropagation()}
-            className="glass-card w-full max-w-2xl p-6 max-h-[85vh] flex flex-col"
-          >
+        <PanelModal label="Gestionar accesos" onClose={onClose} className="glass-card max-w-2xl p-6">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-heading text-lg font-bold text-foreground flex items-center gap-2">
@@ -77,12 +65,12 @@ export default function InstructorAccesos({ profile, onClose }) {
                 </h3>
                 <p className="text-xs text-muted-foreground mt-0.5">{profile.nombre} {profile.apellidos}</p>
               </div>
-              <button onClick={onClose} className="text-muted-foreground hover:text-primary transition-colors">
+              <button onClick={onClose} aria-label="Cerrar" className="text-muted-foreground hover:text-primary transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="flex gap-2 mb-4">
+            <div className="flex flex-wrap gap-2 mb-4">
               <button
                 onClick={() => setTab('materiales')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold uppercase tracking-widest border transition-all ${
@@ -159,8 +147,7 @@ export default function InstructorAccesos({ profile, onClose }) {
                 </div>
               )}
             </div>
-          </motion.div>
-        </motion.div>
+          </PanelModal>
       )}
     </AnimatePresence>
   );

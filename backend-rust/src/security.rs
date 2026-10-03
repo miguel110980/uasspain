@@ -52,7 +52,7 @@ impl FieldCipher {
     }
 
     pub fn encrypt(&self, value: &str) -> Result<String, AppError> {
-        if value.is_empty() || value.starts_with("v1:") {
+        if value.is_empty() {
             return Ok(value.to_owned());
         }
         let key = self.current.ok_or(AppError::Unavailable)?;
@@ -243,6 +243,18 @@ mod tests {
         let encrypted = cipher.encrypt("mensaje privado").unwrap();
         assert!(encrypted.starts_with("v1:"));
         assert_eq!(cipher.decrypt(&encrypted).unwrap(), "mensaje privado");
+    }
+
+    #[test]
+    fn untrusted_text_cannot_impersonate_an_encrypted_envelope() {
+        let cipher = FieldCipher {
+            current: Some([7; 32]),
+            previous: None,
+        };
+        let input = "v1:not-an-encrypted-envelope";
+        let encrypted = cipher.encrypt(input).unwrap();
+        assert_ne!(encrypted, input);
+        assert_eq!(cipher.decrypt(&encrypted).unwrap(), input);
     }
 
     #[test]

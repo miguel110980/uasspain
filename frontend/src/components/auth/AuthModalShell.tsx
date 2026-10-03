@@ -36,7 +36,7 @@ export default function AuthModalShell({
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm"
+          className="fixed inset-0 bg-black/50 dark:bg-black/70"
           onClick={closeOnBackdrop ? onClose : undefined}
         />
         <motion.div

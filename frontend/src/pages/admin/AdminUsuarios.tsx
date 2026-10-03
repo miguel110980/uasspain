@@ -1,5 +1,6 @@
+import PanelModal from '@/components/ui/PanelModal';
 import React, { useEffect, useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import {
   Users, Search, Filter, Loader2, CheckCircle, Ban, Trash2, Edit, X, UserCheck, Shield, Download, ClipboardList, BarChart2, AlertCircle, Lock,
 } from 'lucide-react';
@@ -9,7 +10,7 @@ import conexionesService from '@/services/conexionesService';
 import materialesService from '@/services/materialesService';
 import { extractErrorMessage } from '@/lib/errors';
 import { useToast } from '@/components/ui/use-toast';
-import { getRoles, profileHasAdmin, profileHasInstructor } from '@/lib/roles';
+import { getRoles, hasRole, profileHasAdmin, profileHasInstructor } from '@/lib/roles';
 
 const ROLES = ['alumno', 'instructor', 'admin'];
 const STATUSES = ['pendiente', 'activo', 'bloqueado', 'rechazado'];
@@ -123,7 +124,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
     }
     return {
       total: profiles.length,
-      alumno: profiles.filter((p) => !profileHasAdmin(p) && !profileHasInstructor(p) && p.status === 'activo').length,
+      alumno: profiles.filter((p) => hasRole(p, 'alumno') && p.status === 'activo').length,
       instructor: profiles.filter((p) => profileHasInstructor(p) && p.status === 'activo').length,
       admin: profiles.filter((p) => profileHasAdmin(p) && p.status === 'activo').length,
       pendiente: profiles.filter((p) => p.status === 'pendiente').length,
@@ -354,10 +355,11 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
           onClose={() => setEditUser(null)}
           onSave={async (id, patch) => {
             try {
-              await authService.updateProfile(id, patch);
-              setProfiles((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+              const updated = await authService.updateProfile(id, patch);
+              setProfiles((prev) => prev.map((p) => (p.id === id ? updated : p)));
               setEditUser(null);
               toast({ title: 'Usuario actualizado' });
+              return updated;
             } catch (err) {
               toast({ title: 'Error al guardar', description: extractErrorMessage(err), variant: 'destructive' });
             }
@@ -413,7 +415,8 @@ function EditUserModal({ user, scopeRole, onClose, onSave }) {
         setFormError('Selecciona un instructor asignado.');
         return;
       }
-      const payload = { ...form, assigned_instructor_id: form.assigned_instructor_id };
+      const { assigned_instructor_id, ...fields } = form;
+      const payload = { ...fields, ...(isAlumno && assigned_instructor_id ? { assigned_instructor_id } : {}) };
       const updated = await onSave(user.id, payload);
       if (updated?.assigned_instructor_id !== undefined) {
         setForm((prev) => prev && ({ ...prev, assigned_instructor_id: updated.assigned_instructor_id ? String(updated.assigned_instructor_id) : '' }));
@@ -426,19 +429,10 @@ function EditUserModal({ user, scopeRole, onClose, onSave }) {
   return (
     <AnimatePresence>
       {user && form && (
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.98 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg glass-card p-6"
-          >
+        <PanelModal label="Editar usuario" onClose={onClose} className="max-w-lg glass-card p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-heading text-lg font-bold text-foreground">Editar usuario</h3>
-              <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+              <button onClick={onClose} aria-label="Cerrar" className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={submit} className="space-y-4">
               <div className="grid sm:grid-cols-2 gap-4">
@@ -448,21 +442,21 @@ function EditUserModal({ user, scopeRole, onClose, onSave }) {
                 <Field label="Usuario" value={form.username} onChange={(v) => setForm({ ...form, username: v })} />
                 {!scopeRole && (
                  <div className="space-y-1">
-                   <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Rol</label>
-                   <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-full h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent">
+                   <label htmlFor="edit-user-role" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Rol</label>
+                   <select id="edit-user-role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-full h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent">
                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                    </select>
                  </div>
                 )}
                 <div className="space-y-1">
-                  <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Estado</label>
-                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent">
+                  <label htmlFor="edit-user-status" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Estado</label>
+                  <select id="edit-user-status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent">
                     {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div className="space-y-1 sm:col-span-2">
-                  <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">2FA usuario</label>
-                  <select
+                  <label htmlFor="edit-user-two-factor" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">2FA usuario</label>
+                  <select id="edit-user-two-factor"
                     value={form.login_2fa_enabled_override == null ? 'inherit' : String(form.login_2fa_enabled_override)}
                     onChange={(e) => setForm({ ...form, login_2fa_enabled_override: e.target.value === 'inherit' ? null : e.target.value === 'true' })}
                     className="w-full h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent"
@@ -474,13 +468,13 @@ function EditUserModal({ user, scopeRole, onClose, onSave }) {
                 </div>
                 {(form.role === 'alumno' || (Array.isArray(user.roles) && user.roles.includes('alumno'))) && (
                   <div className="space-y-1 sm:col-span-2">
-                    <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Instructor asignado</label>
+                    <label htmlFor="edit-user-instructor" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Instructor asignado</label>
                     {instructorsLoading ? (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground bg-surface-subtle border border-border-subtle px-3 py-2 rounded">
                         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Cargando instructores…
                       </div>
                     ) : (
-                      <select
+                      <select id="edit-user-instructor"
                         value={form.assigned_instructor_id || ''}
                         onChange={(e) => {
                           setForm({ ...form, assigned_instructor_id: e.target.value });
@@ -511,8 +505,7 @@ function EditUserModal({ user, scopeRole, onClose, onSave }) {
                 </button>
               </div>
             </form>
-          </motion.div>
-        </motion.div>
+          </PanelModal>
       )}
     </AnimatePresence>
   );
@@ -520,13 +513,13 @@ function EditUserModal({ user, scopeRole, onClose, onSave }) {
 
 function Field({ label, value, onChange }) {
   return (
-    <div className="space-y-1">
-      <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label}</label>
+    <label className="space-y-1 block">
+      <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label}</span>
       <input
         value={value || ''}
         onChange={(e) => onChange(e.target.value.replace(/[<>{}]/g, ''))}
         className="w-full h-10 px-3 bg-surface-muted border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent"
       />
-    </div>
+    </label>
   );
 }

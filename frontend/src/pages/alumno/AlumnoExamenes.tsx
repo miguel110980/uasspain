@@ -1,3 +1,4 @@
+import PanelModal from '@/components/ui/PanelModal';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Lock, Play, Loader2, Clock, CheckCircle, ClipboardList, ShieldAlert } from 'lucide-react';
@@ -184,14 +185,7 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
 
       {/* Modal configuración */}
       {selectedExamen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center px-4">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setSelectedExamen(null)} />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="relative w-full max-w-md glass-card p-8 z-10"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <PanelModal label="Configurar examen" onClose={() => setSelectedExamen(null)} className="max-w-md glass-card p-8">
             <h3 className="font-heading text-xl font-bold text-foreground mb-1">{selectedExamen.nombre}</h3>
             <p className="text-sm text-muted-foreground mb-6">Categoría {selectedExamen.categoria} · {selectedExamen.num_preguntas || 40} preguntas</p>
 
@@ -233,8 +227,7 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
                 <Play className="w-3.5 h-3.5" /> Comenzar examen
               </button>
             </div>
-          </motion.div>
-        </div>
+          </PanelModal>
       )}
     </motion.div>
   );

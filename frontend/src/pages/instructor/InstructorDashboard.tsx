@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import KpiCard from '@/components/admin/KpiCard';
 import { compareDatesDesc } from '@/lib/dates';
+import { hasRole } from '@/lib/roles';
 
 const CYAN = '#22D3EE';
 const ORANGE = '#F97316';
@@ -17,7 +18,7 @@ const EMERALD = '#34D399';
 const RED = '#F87171';
 
 export default function InstructorDashboard({ profiles, resultados, examenes, material, mensajes, conexiones, loading }) {
-  const alumnos = profiles.filter((p) => (p.role || 'alumno') === 'alumno');
+  const alumnos = profiles.filter((p) => hasRole(p, 'alumno'));
   const pendientes = alumnos.filter((p) => p.status === 'pendiente');
   const activos = alumnos.filter((p) => p.status === 'activo');
   const realizados = resultados;
@@ -45,7 +46,7 @@ export default function InstructorDashboard({ profiles, resultados, examenes, ma
     return {
       name: d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }),
       examenes: realizados.filter((r) => (r.fecha || '').slice(0, 10) === key).length,
-      altas: profiles.filter((p) => (p.created_date || '').slice(0, 10) === key).length,
+      altas: alumnos.filter((p) => (p.created_date || '').slice(0, 10) === key).length,
     };
   });
 
@@ -56,7 +57,7 @@ export default function InstructorDashboard({ profiles, resultados, examenes, ma
       fecha: r.fecha || r.created_date,
       ok: r.aprobado,
     })),
-    ...profiles.slice(0, 6).map((p) => ({
+    ...alumnos.slice(0, 6).map((p) => ({
       titulo: `${p.nombre} ${p.apellidos}`,
       sub: `Alumno · ${p.status}`,
       fecha: p.created_date,

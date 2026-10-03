@@ -172,7 +172,6 @@ pub struct ServerWrite {
     sftp_key_path: Option<String>,
     sftp_known_hosts: Option<String>,
     is_offsite: Option<bool>,
-    status: Option<String>,
     is_active: Option<bool>,
 }
 
@@ -241,7 +240,8 @@ pub async fn test_connection(
     headers: HeaderMap,
     Json(input): Json<ServerIdRequest>,
 ) -> Result<Json<Value>, AppError> {
-    admin(&state, &headers)?;
+    let claims = admin(&state, &headers)?;
+    crate::runtime_config::audit(&state, claims.profile_id, "backup_connection_test").await?;
     let id = input
         .server_id
         .ok_or_else(|| AppError::Validation("server_id es requerido.".into()))?;
@@ -249,9 +249,27 @@ pub async fn test_connection(
         .await?
         .ok_or(AppError::NotFound)?;
     if server.transfer_protocol != "sftp" {
-        let ok = !server.smb_share.trim().is_empty();
+        let path = std::path::Path::new(&server.smb_share);
+        let mut ok = path.is_absolute()
+            && !server.smb_share.contains("..")
+            && tokio::fs::metadata(path).await.is_ok_and(|m| m.is_dir());
+        if ok {
+            let probe = path.join(format!(".uasspain-probe-{}", Uuid::new_v4()));
+            match tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&probe)
+                .await
+            {
+                Ok(file) => {
+                    drop(file);
+                    ok = tokio::fs::remove_file(&probe).await.is_ok();
+                }
+                Err(_) => ok = false,
+            }
+        }
         return Ok(Json(
-            json!({"ok":ok,"detail":if ok {"Destino local/SMB configurado."} else {"Sin destino configurado."}}),
+            json!({"ok":ok,"detail":if ok {"Directorio del destino accesible en el contenedor."}else{"Destino no montado o no accesible desde el contenedor."}}),
         ));
     }
     enforce_vpn_destination(&server)?;
@@ -272,6 +290,7 @@ pub async fn test_connection(
         .map_err(|_| AppError::Internal)?;
     let mut command = tokio::process::Command::new("sftp");
     command
+        .kill_on_drop(true)
         .arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
@@ -1086,7 +1105,7 @@ async fn transfer_to_servers(
     let Ok(pool) = pool(state) else {
         return TransferSummary {
             status: "completed".into(),
-            destinations: json!({}),
+            destinations: json!({"local":{"status":"NOT_CONFIGURED"},"external_1":{"status":"NOT_CONFIGURED"},"external_2":{"status":"NOT_CONFIGURED"}}),
             remote_paths: json!([]),
             error: String::new(),
         };
@@ -1098,13 +1117,16 @@ async fn transfer_to_servers(
         .collect();
     if active.is_empty() {
         return TransferSummary {
-            status: "completed".into(),
-            destinations: json!({}),
+            status: "partial".into(),
+            destinations: json!({"local":{"status":"NOT_CONFIGURED"},"external_1":{"status":"NOT_CONFIGURED"},"external_2":{"status":"NOT_CONFIGURED"}}),
             remote_paths: json!([]),
             error: String::new(),
         };
     }
     let mut results = serde_json::Map::new();
+    for role in ["local", "external_1", "external_2"] {
+        results.insert(role.into(), json!({"status":"NOT_CONFIGURED"}));
+    }
     let mut remote_paths = Vec::new();
     let mut successes = 0_usize;
     for server in &active {
@@ -1128,8 +1150,9 @@ async fn transfer_to_servers(
             Err(error) => ("failed", String::new(), error),
         };
         results.insert(
-            server.id.to_string(),
+            server.role.clone(),
             json!({
+                "server_id": server.id,
                 "server_name": server.name,
                 "status": status,
                 "path": path,
@@ -1146,7 +1169,11 @@ async fn transfer_to_servers(
             .execute(pool)
             .await;
     }
-    let status = if successes == active.len() {
+    let status = if successes == active.len()
+        && ["local", "external_1", "external_2"]
+            .iter()
+            .all(|role| active.iter().any(|s| s.role == *role))
+    {
         "completed"
     } else if successes > 0 {
         "partial"
@@ -1547,7 +1574,7 @@ pub async fn origins(
         .ok_or(AppError::NotFound)?;
     let mut available = Vec::new();
     for job in jobs {
-        let Some(destination) = job.destinations.get(&origin) else {
+        let Some(destination) = destination_for_origin(&job.destinations, &origin) else {
             continue;
         };
         if destination.get("status").and_then(Value::as_str) != Some("success") {
@@ -1825,9 +1852,17 @@ fn remote_filename(path: &str) -> Option<String> {
     safe_backup_filename(filename).then(|| filename.to_owned())
 }
 
+fn destination_for_origin<'a>(destinations: &'a Value, origin: &str) -> Option<&'a Value> {
+    // Read historical UUID-keyed manifests and the new stable slot model.
+    destinations.get(origin).or_else(|| {
+        destinations.as_object()?.values().find(|destination| {
+            destination.get("server_id").and_then(Value::as_str) == Some(origin)
+        })
+    })
+}
+
 fn remote_job_matches(job: &BackupJob, origin: &str, filename: &str) -> bool {
-    job.destinations
-        .get(origin)
+    destination_for_origin(&job.destinations, origin)
         .filter(|destination| destination.get("status").and_then(Value::as_str) == Some("success"))
         .and_then(|destination| destination.get("path"))
         .and_then(Value::as_str)
@@ -2842,9 +2877,29 @@ pub async fn list_servers(
 pub async fn create_server(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(input): Json<ServerWrite>,
+    Json(mut input): Json<ServerWrite>,
 ) -> Result<(StatusCode, Json<BackupServer>), AppError> {
     admin(&state, &headers)?;
+    if input.ip_address.is_none() {
+        let host = input.sftp_host.as_deref().unwrap_or_default();
+        let mut addresses = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            tokio::net::lookup_host((host, 22)),
+        )
+        .await
+        .map_err(|_| AppError::Validation("No se pudo resolver el hostname.".into()))?
+        .map_err(|_| AppError::Validation("Hostname no valido.".into()))?;
+        input.ip_address = Some(
+            addresses
+                .next()
+                .ok_or_else(|| AppError::Validation("Hostname sin direccion IP.".into()))?
+                .ip()
+                .to_string(),
+        );
+    }
+    if let Some(role) = &input.role {
+        input.is_offsite = Some(role != "local");
+    }
     validate_server(&input, true)?;
     let name = input
         .name
@@ -2854,7 +2909,13 @@ pub async fn create_server(
         .ok_or_else(|| AppError::Validation("La direccion IP es obligatoria.".into()))?;
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO backups_backupserver (id,name,role,ip_address,vpn_ip,vpn_port,vpn_status,smb_share,transfer_protocol,sftp_host,sftp_port,sftp_user,sftp_remote_path,sftp_key_path,sftp_known_hosts,is_offsite,status,is_active,last_backup_status,disk_total_bytes,disk_used_bytes,error,created_date) VALUES ($1,$2,$3,$4::inet,NULLIF($5,'')::inet,$6,'unknown',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'',0,0,'',NOW())")
-        .bind(id).bind(name).bind(input.role.unwrap_or_else(|| "backup".into())).bind(ip_address).bind(input.vpn_ip.unwrap_or_default()).bind(input.vpn_port.unwrap_or(51820)).bind(input.smb_share.unwrap_or_default()).bind(input.transfer_protocol.unwrap_or_else(|| "copy".into())).bind(input.sftp_host.unwrap_or_default()).bind(input.sftp_port.unwrap_or(22)).bind(input.sftp_user.unwrap_or_default()).bind(input.sftp_remote_path.unwrap_or_default()).bind(input.sftp_key_path.unwrap_or_default()).bind(input.sftp_known_hosts.unwrap_or_default()).bind(input.is_offsite.unwrap_or(false)).bind(input.status.unwrap_or_else(|| "unknown".into())).bind(input.is_active.unwrap_or(true)).execute(pool(&state)?).await?;
+        .bind(id).bind(name).bind(input.role.unwrap_or_else(|| "local".into())).bind(ip_address).bind(input.vpn_ip.unwrap_or_default()).bind(input.vpn_port.unwrap_or(51820)).bind(input.smb_share.unwrap_or_default()).bind(input.transfer_protocol.unwrap_or_else(|| "copy".into())).bind(input.sftp_host.unwrap_or_default()).bind(input.sftp_port.unwrap_or(22)).bind(input.sftp_user.unwrap_or_default()).bind(input.sftp_remote_path.unwrap_or_default()).bind(input.sftp_key_path.unwrap_or_default()).bind(input.sftp_known_hosts.unwrap_or_default()).bind(input.is_offsite.unwrap_or(false)).bind("unknown").bind(input.is_active.unwrap_or(true)).execute(pool(&state)?).await?;
+    crate::runtime_config::audit(
+        &state,
+        admin(&state, &headers)?.profile_id,
+        "backup_destination_create",
+    )
+    .await?;
     Ok((
         StatusCode::CREATED,
         Json(
@@ -2882,15 +2943,24 @@ pub async fn update_server(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<Uuid>,
-    Json(input): Json<ServerWrite>,
+    Json(mut input): Json<ServerWrite>,
 ) -> Result<Json<BackupServer>, AppError> {
     admin(&state, &headers)?;
+    if let Some(role) = &input.role {
+        input.is_offsite = Some(role != "local");
+    }
     validate_server(&input, false)?;
     let result = sqlx::query("UPDATE backups_backupserver SET name=COALESCE($2,name),role=COALESCE($3,role),ip_address=COALESCE($4::inet,ip_address),vpn_ip=CASE WHEN $5::text IS NULL THEN vpn_ip ELSE NULLIF($5,'')::inet END,vpn_port=COALESCE($6,vpn_port),smb_share=COALESCE($7,smb_share),transfer_protocol=COALESCE($8,transfer_protocol),sftp_host=COALESCE($9,sftp_host),sftp_port=COALESCE($10,sftp_port),sftp_user=COALESCE($11,sftp_user),sftp_remote_path=COALESCE($12,sftp_remote_path),sftp_key_path=COALESCE($13,sftp_key_path),sftp_known_hosts=COALESCE($14,sftp_known_hosts),is_offsite=COALESCE($15,is_offsite),status=COALESCE($16,status),is_active=COALESCE($17,is_active) WHERE id=$1")
-        .bind(id).bind(input.name).bind(input.role).bind(input.ip_address).bind(input.vpn_ip).bind(input.vpn_port).bind(input.smb_share).bind(input.transfer_protocol).bind(input.sftp_host).bind(input.sftp_port).bind(input.sftp_user).bind(input.sftp_remote_path).bind(input.sftp_key_path).bind(input.sftp_known_hosts).bind(input.is_offsite).bind(input.status).bind(input.is_active).execute(pool(&state)?).await?;
+        .bind(id).bind(input.name).bind(input.role).bind(input.ip_address).bind(input.vpn_ip).bind(input.vpn_port).bind(input.smb_share).bind(input.transfer_protocol).bind(input.sftp_host).bind(input.sftp_port).bind(input.sftp_user).bind(input.sftp_remote_path).bind(input.sftp_key_path).bind(input.sftp_known_hosts).bind(input.is_offsite).bind(Some("unknown")).bind(input.is_active).execute(pool(&state)?).await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
+    crate::runtime_config::audit(
+        &state,
+        admin(&state, &headers)?.profile_id,
+        "backup_destination_update",
+    )
+    .await?;
     Ok(Json(
         fetch_server(pool(&state)?, id)
             .await?
@@ -3195,6 +3265,19 @@ fn validate_config(value: &Value) -> Result<(), AppError> {
     Ok(())
 }
 fn validate_server(input: &ServerWrite, create: bool) -> Result<(), AppError> {
+    if input
+        .role
+        .as_deref()
+        .is_some_and(|role| !matches!(role, "local" | "external_1" | "external_2"))
+    {
+        return Err(AppError::Validation("Destino de backup no valido.".into()));
+    }
+    if create && input.role.is_none() {
+        return Err(AppError::Validation(
+            "El slot del destino es obligatorio.".into(),
+        ));
+    }
+
     if create
         && (input.name.as_deref().unwrap_or("").is_empty()
             || input
@@ -3275,6 +3358,15 @@ fn validate_server(input: &ServerWrite, create: bool) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn destination_catalog_reads_old_and_new_manifests_without_crossing_servers() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let old = serde_json::json!({id.clone(): {"status":"success"}});
+        let new = serde_json::json!({"external_1":{"server_id":id,"status":"success"}});
+        assert!(super::destination_for_origin(&old, &id).is_some());
+        assert!(super::destination_for_origin(&new, &id).is_some());
+        assert!(super::destination_for_origin(&new, &uuid::Uuid::new_v4().to_string()).is_none());
+    }
     use super::{
         ServerWrite, checksum_matches, parse_time, replace_media_contents, safe_backup_filename,
         sha256, validate_config, validate_server,
@@ -3325,7 +3417,6 @@ mod tests {
             sftp_key_path: None,
             sftp_known_hosts: None,
             is_offsite: None,
-            status: None,
             is_active: None,
         };
         assert!(validate_server(&server, true).is_err());

@@ -70,6 +70,7 @@ struct LoginRow {
     otp_verified: bool,
     login_otp_hash: Option<String>,
     login_otp_created_at: Option<chrono::DateTime<Utc>>,
+    login_otp_attempts: i32,
     login_2fa_enabled_override: Option<bool>,
     profile_username: String,
     profile_nombre: String,
@@ -82,21 +83,31 @@ pub async fn login(
     headers: HeaderMap,
     Json(input): Json<LoginRequest>,
 ) -> Result<Response, AppError> {
-    enforce_login_rate(&headers, &input.email)?;
+    window_id(&headers)?;
+    if input.password.len() > 128 {
+        return Err(AppError::Unauthorized);
+    }
+    let canonical_email = crate::registration::normalize_email(&input.email)?;
+    enforce_login_rate(&headers, &canonical_email)?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let lookup = state
-        .cipher
-        .blind_index(&input.email.trim().to_lowercase())?;
+    let lookup = state.cipher.blind_index(&canonical_email)?;
     let row = sqlx::query_as::<_, LoginRow>(
-        "SELECT p.id, p.user_id, u.password, u.is_active, p.status, p.role, p.roles, p.otp_verified, p.login_otp_hash, p.login_otp_created_at, p.login_2fa_enabled_override,p.username AS profile_username,p.nombre AS profile_nombre,p.apellidos AS profile_apellidos,p.email AS profile_email \
+        "SELECT p.id, p.user_id, u.password, u.is_active, p.status, p.role, p.roles, p.otp_verified, p.login_otp_hash, p.login_otp_created_at, p.login_otp_attempts, p.login_2fa_enabled_override,p.username AS profile_username,p.nombre AS profile_nombre,p.apellidos AS profile_apellidos,p.email AS profile_email \
          FROM accounts_userprofile p JOIN auth_user u ON u.id = p.user_id WHERE p.email_lookup = $1 LIMIT 1",
-    ).bind(lookup).fetch_optional(pool).await?.ok_or(AppError::Unauthorized)?;
-
-    if !row.is_active
-        || row.status != "activo"
-        || !row.otp_verified
-        || !verify_password_hash(&input.password, &row.password)
-    {
+    ).bind(lookup).fetch_optional(pool).await?;
+    let Some(row) = row else {
+        static DUMMY_HASH: OnceLock<String> = OnceLock::new();
+        let dummy = DUMMY_HASH.get_or_init(|| {
+            crate::registration::hash_argon2(&Uuid::new_v4().to_string()).unwrap_or_default()
+        });
+        if dummy.is_empty() {
+            return Err(AppError::Internal);
+        }
+        let _ = verify_password_hash(&input.password, dummy);
+        return Err(AppError::Unauthorized);
+    };
+    let password_correct = verify_password_hash(&input.password, &row.password);
+    if !row.is_active || row.status != "activo" || !row.otp_verified || !password_correct {
         return Err(AppError::Unauthorized);
     }
     let roles = roles_from_json(&row.roles, &row.role);
@@ -119,18 +130,22 @@ pub async fn login(
         use rand::Rng as _;
         let code = format!("{:06}", rand::rng().random_range(100_000..1_000_000));
         let hash = crate::registration::hash_argon2(&code)?;
-        sqlx::query("UPDATE accounts_userprofile SET login_otp_hash=$1,login_otp_created_at=NOW() WHERE id=$2").bind(hash).bind(row.id).execute(pool).await?;
+        let issued = sqlx::query("UPDATE accounts_userprofile SET login_otp_hash=$1,login_otp_created_at=NOW(),login_otp_attempts=0 WHERE id=$2 AND (login_otp_created_at IS NULL OR login_otp_created_at<NOW()-INTERVAL '1 minute')").bind(&hash).bind(row.id).execute(pool).await?;
+        if issued.rows_affected() != 1 {
+            return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"detail":"Ya hay un codigo vigente. Revise su correo o espere un minuto para solicitar otro.","code":"otp_required"}))).into_response());
+        }
         if let Err(error) = crate::email::send(
-            &input.email,
+            &state,
+            &canonical_email,
             "Código temporal de acceso UASSpain",
             &format!("Su código temporal de acceso es: {code}"),
         )
         .await
         {
-            let _ = sqlx::query("UPDATE accounts_userprofile SET login_otp_hash='',login_otp_created_at=NULL WHERE id=$1").bind(row.id).execute(pool).await;
+            let _ = sqlx::query("UPDATE accounts_userprofile SET login_otp_hash='',login_otp_created_at=NULL WHERE id=$1 AND login_otp_hash=$2").bind(row.id).bind(hash).execute(pool).await;
             return Err(error);
         }
-        return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"detail":"Código de acceso enviado. Introduzca el OTP para completar el login.","code":"otp_required","roles":roles}))).into_response());
+        return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"detail":"Código de acceso enviado. Introduzca el OTP para completar el login.","code":"otp_required"}))).into_response());
     }
     if needs_2fa {
         let code = input.code.as_deref().unwrap_or_default();
@@ -138,16 +153,21 @@ pub async fn login(
             .login_otp_created_at
             .is_some_and(|created| created > Utc::now() - chrono::Duration::minutes(15));
         if !fresh
+            || row.login_otp_attempts >= 5
             || !crate::security::verify_password_hash(
                 code,
                 row.login_otp_hash.as_deref().unwrap_or_default(),
             )
         {
+            sqlx::query("UPDATE accounts_userprofile SET login_otp_attempts=LEAST(5,login_otp_attempts+1) WHERE id=$1 AND login_otp_hash=$2 AND login_otp_created_at>NOW()-INTERVAL '15 minutes'").bind(row.id).bind(row.login_otp_hash.as_deref().unwrap_or_default()).execute(pool).await?;
             return Err(AppError::Validation(
                 "Código 2FA incorrecto o caducado.".into(),
             ));
         }
-        sqlx::query("UPDATE accounts_userprofile SET login_otp_hash='',login_otp_created_at=NULL WHERE id=$1").bind(row.id).execute(pool).await?;
+        let consumed = sqlx::query("UPDATE accounts_userprofile SET login_otp_hash='',login_otp_created_at=NULL,login_otp_attempts=0 WHERE id=$1 AND login_otp_hash=$2 AND login_otp_created_at>NOW()-INTERVAL '15 minutes' AND login_otp_attempts<5").bind(row.id).bind(row.login_otp_hash.as_deref().unwrap_or_default()).execute(pool).await?;
+        if consumed.rows_affected() != 1 {
+            return Err(AppError::Unauthorized);
+        }
     }
     finish_login(&state, &headers, &row, role, "password").await
 }
@@ -178,13 +198,7 @@ pub async fn google_challenge(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    if std::env::var("GOOGLE_CLIENT_ID")
-        .unwrap_or_default()
-        .trim()
-        .is_empty()
-    {
-        return Err(AppError::Unavailable);
-    }
+    crate::runtime_config::google_client_id(&state).await?;
     enforce_login_rate(&headers, "google-challenge")?;
     let nonce = Uuid::new_v4().simple().to_string();
     let proof = state
@@ -240,11 +254,8 @@ pub async fn google_login(
     headers: HeaderMap,
     Json(input): Json<GoogleLoginRequest>,
 ) -> Result<Response, AppError> {
-    let client_id = std::env::var("GOOGLE_CLIENT_ID")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or(AppError::Unavailable)?;
+    let client_id = crate::runtime_config::google_client_id(&state).await?;
+    window_id(&headers)?;
     if !(16..=8192).contains(&input.id_token.len()) {
         return Err(AppError::Validation("Token de Google no válido.".into()));
     }
@@ -262,7 +273,7 @@ pub async fn google_login(
         token["sub"].as_str().ok_or(AppError::Unauthorized)?
     ))?;
     let row = sqlx::query_as::<_, LoginRow>(
-        "SELECT p.id, p.user_id, u.password, u.is_active, p.status, p.role, p.roles, p.otp_verified, p.login_otp_hash, p.login_otp_created_at, p.login_2fa_enabled_override,p.username AS profile_username,p.nombre AS profile_nombre,p.apellidos AS profile_apellidos,p.email AS profile_email \
+        "SELECT p.id, p.user_id, u.password, u.is_active, p.status, p.role, p.roles, p.otp_verified, p.login_otp_hash, p.login_otp_created_at, p.login_otp_attempts, p.login_2fa_enabled_override,p.username AS profile_username,p.nombre AS profile_nombre,p.apellidos AS profile_apellidos,p.email AS profile_email \
          FROM accounts_userprofile p JOIN auth_user u ON u.id = p.user_id WHERE p.google_subject_lookup=$2 OR (p.google_subject_lookup IS NULL AND p.email_lookup=$1) ORDER BY (p.google_subject_lookup=$2) DESC NULLS LAST LIMIT 1",
     )
     .bind(lookup)
@@ -362,9 +373,9 @@ async fn finish_login(
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let user_id = i64::from(row.user_id.ok_or(AppError::Unauthorized)?);
     let session_key = Uuid::new_v4().simple().to_string();
-    sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,session_role=$2,updated_date=NOW() WHERE id=$3")
-        .bind(&session_key).bind(role).bind(row.id).execute(pool).await?;
-    record_login(state, headers, row, role, method, &session_key).await?;
+    let window_lookup = state
+        .cipher
+        .blind_index(&format!("window:{}", window_id(headers)?))?;
     let access = state.tokens.issue(
         user_id,
         row.id,
@@ -381,6 +392,10 @@ async fn finish_login(
         state.tokens.refresh_days * 24 * 60,
         &session_key,
     )?;
+    let refresh_jti = state.tokens.decode(&refresh, "refresh")?.jti.to_string();
+    sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,session_role=$2,updated_date=NOW(),active_window_lookup=$4,active_refresh_jti=$5 WHERE id=$3")
+        .bind(&session_key).bind(role).bind(row.id).bind(window_lookup).bind(refresh_jti).execute(pool).await?;
+    record_login(state, headers, row, role, method, &session_key).await?;
     let secure = if state.tokens.secure_cookie {
         "; Secure"
     } else {
@@ -490,19 +505,20 @@ pub async fn refresh(
 ) -> Result<Response, AppError> {
     let claims = authenticate(&state, &headers, "refresh")?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let current_session: Option<String> = sqlx::query_scalar(
-        "SELECT p.active_session_key FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active",
-    )
-    .bind(claims.profile_id)
-    .fetch_optional(pool)
-    .await?;
-    if claims.session_key.is_empty() || current_session.as_deref() != Some(&claims.session_key) {
+    let current: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT p.active_session_key,p.active_refresh_jti,COALESCE(NULLIF(p.session_role,''),p.role) FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active",
+    ).bind(claims.profile_id).fetch_optional(pool).await?;
+    let (session, refresh_jti, role) = current.ok_or(AppError::Unauthorized)?;
+    if claims.session_key.is_empty()
+        || session != claims.session_key
+        || refresh_jti != claims.jti.to_string()
+    {
         return Err(AppError::Unauthorized);
     }
     let access = state.tokens.issue(
         claims.user_id,
         claims.profile_id,
-        &claims.role,
+        &role,
         "access",
         state.tokens.access_minutes,
         &claims.session_key,
@@ -510,11 +526,17 @@ pub async fn refresh(
     let rotated = state.tokens.issue(
         claims.user_id,
         claims.profile_id,
-        &claims.role,
+        &role,
         "refresh",
         state.tokens.refresh_days * 24 * 60,
         &claims.session_key,
     )?;
+    let next_jti = state.tokens.decode(&rotated, "refresh")?.jti.to_string();
+    let rotated_once = sqlx::query("UPDATE accounts_userprofile SET active_refresh_jti=$1 WHERE id=$2 AND active_session_key=$3 AND active_refresh_jti=$4")
+        .bind(next_jti).bind(claims.profile_id).bind(&claims.session_key).bind(refresh_jti).execute(pool).await?;
+    if rotated_once.rows_affected() != 1 {
+        return Err(AppError::Unauthorized);
+    }
     let secure = if state.tokens.secure_cookie {
         "; Secure"
     } else {
@@ -720,20 +742,47 @@ pub fn authenticate(
         .decode(bearer.or(cookie).ok_or(AppError::Unauthorized)?, token_type)
 }
 
+pub fn window_id(headers: &HeaderMap) -> Result<&str, AppError> {
+    headers
+        .get("x-uasspain-window-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| {
+            Uuid::parse_str(v).is_ok_and(|u| u.get_version_num() == 4 && u.to_string() == *v)
+        })
+        .ok_or(AppError::SessionWindowMismatch)
+}
+
 pub async fn validate_active_session(
     State(state): State<Arc<AppState>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
-    let path = request.uri().path();
+    let path = request.uri().path().to_owned();
+    // Browser WebSocket/image elements cannot add custom headers. Only these
+    // protected GET endpoints accept the non-token window binding in the URL.
+    if request.method() == axum::http::Method::GET
+        && (path.starts_with("/ws/") || path.starts_with("/api/media/"))
+        && let Some((_, id)) =
+            url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+                .find(|(k, _)| k == "window_id")
+        && let Ok(value) = id.parse()
+    {
+        request.headers_mut().insert("x-uasspain-window-id", value);
+    }
     if matches!(
-        path,
+        path.as_str(),
         "/" | "/api/health/live/" | "/api/health/ready/" | "/api/contact/"
     ) || path.starts_with("/api/public/")
+        || (matches!(
+            *request.method(),
+            axum::http::Method::GET | axum::http::Method::HEAD
+        ) && (path == "/api/courses"
+            || path.starts_with("/api/courses/")
+            || path == "/api/blog/posts"
+            || path.starts_with("/api/blog/posts/")))
         || matches!(
-            path,
+            path.as_str(),
             "/api/auth/login/"
-                | "/api/auth/logout/"
                 | "/api/auth/register/"
                 | "/api/auth/google/"
                 | "/api/auth/google/challenge/"
@@ -776,6 +825,17 @@ pub async fn validate_active_session(
     let claims = state.tokens.decode(token, token_type)?;
     if claims.session_key.is_empty() {
         return Err(AppError::Unauthorized);
+    }
+    let lookup = state
+        .cipher
+        .blind_index(&format!("window:{}", window_id(request.headers())?))?;
+    let expected: Option<String> =
+        sqlx::query_scalar("SELECT active_window_lookup FROM accounts_userprofile WHERE id=$1")
+            .bind(claims.profile_id)
+            .fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?)
+            .await?;
+    if expected.as_deref() != Some(lookup.as_str()) {
+        return Err(AppError::SessionWindowMismatch);
     }
     if !session_is_active(&state, &claims).await? {
         return Err(AppError::Unauthorized);
@@ -882,7 +942,7 @@ fn client_agent(value: &str) -> (&'static str, &'static str, &'static str) {
     (browser, os, device)
 }
 
-fn enforce_login_rate(headers: &HeaderMap, email: &str) -> Result<(), AppError> {
+pub(crate) fn enforce_login_rate(headers: &HeaderMap, email: &str) -> Result<(), AppError> {
     static ATTEMPTS: OnceLock<Mutex<HashMap<String, VecDeque<Instant>>>> = OnceLock::new();
     let ip = headers
         .get("x-forwarded-for")
@@ -918,7 +978,7 @@ pub fn require_role(claims: &Claims, allowed: &[&str]) -> Result<(), AppError> {
         .ok_or(AppError::Forbidden)
 }
 
-fn roles_from_json(value: &serde_json::Value, fallback: &str) -> Vec<String> {
+pub(crate) fn roles_from_json(value: &serde_json::Value, fallback: &str) -> Vec<String> {
     value
         .as_array()
         .map(|values| {
@@ -953,6 +1013,18 @@ fn env_i64(name: &str, fallback: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn window_binding_requires_a_canonical_random_uuid() {
+        let mut headers = axum::http::HeaderMap::new();
+        assert!(super::window_id(&headers).is_err());
+        for invalid in ["", "not-an-id", "00000000-0000-0000-0000-000000000000"] {
+            headers.insert("x-uasspain-window-id", invalid.parse().unwrap());
+            assert!(super::window_id(&headers).is_err());
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        headers.insert("x-uasspain-window-id", id.parse().unwrap());
+        assert_eq!(super::window_id(&headers).unwrap(), id);
+    }
     use super::{Claims, TokenService, consume_google_proof, require_role, validated_google_email};
     use uuid::Uuid;
 

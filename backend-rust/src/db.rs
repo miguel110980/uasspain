@@ -182,6 +182,23 @@ pub async fn ensure_bootstrap_admin(pool: &PgPool, cipher: &FieldCipher) -> Resu
             .bind(profile_id)
             .execute(&mut *tx)
             .await?;
+        // Only explicitly supplied bootstrap names may overwrite existing PII.
+        for (column, variable) in [
+            ("nombre", "BOOTSTRAP_ADMIN_FIRST_NAME"),
+            ("apellidos", "BOOTSTRAP_ADMIN_LAST_NAME"),
+        ] {
+            if let Ok(value) = std::env::var(variable)
+                && !value.trim().is_empty()
+            {
+                sqlx::query(&format!(
+                    "UPDATE accounts_userprofile SET {column}=$1 WHERE id=$2"
+                ))
+                .bind(cipher.encrypt(value.trim())?)
+                .bind(profile_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
         tx.commit().await?;
         return Ok(());
     }

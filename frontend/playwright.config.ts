@@ -20,6 +20,7 @@ export default defineConfig({
     env: {
       VITE_DEV_PROXY_API_ORIGIN: 'http://127.0.0.1:8010',
       VITE_DEV_PROXY_WS_ORIGIN: 'ws://127.0.0.1:8010',
+      VITE_DEV_PROXY_MEDIA_ORIGIN: 'http://127.0.0.1:8012',
     },
   },
 });

@@ -1,5 +1,18 @@
 import apiClient from '@/api/apiClient';
 import endpoints from '@/api/endpoints';
+import { queryClientInstance } from '@/lib/query-client';
+
+export function refreshCourseQueries() {
+  void queryClientInstance.invalidateQueries({ queryKey: ['public', 'courses'] });
+  void queryClientInstance.invalidateQueries({ queryKey: ['public', 'course'] });
+}
+function coursesChanged() {
+  refreshCourseQueries();
+  if (typeof BroadcastChannel !== 'undefined') {
+    const channel = new BroadcastChannel('uasspain-courses');
+    channel.postMessage('changed'); channel.close();
+  }
+}
 
 export type ContentStatus = 'draft' | 'published';
 export type CourseStatus = 'upcoming' | 'published';
@@ -42,11 +55,15 @@ export interface Course {
   syllabus?: string;
   cover_image_url: string;
   cover_image_path?: string;
+  modality: 'online' | 'presencial';
+  duration: string;
   status: CourseStatus;
   sort_order: number;
   content_available?: boolean;
   sections?: CourseSection[];
 }
+
+export type CourseInput = Omit<Partial<Course>, 'sections'> & { sections?: Partial<CourseSection>[] };
 
 export const contentService = {
   publicPosts: async () => (await apiClient.get<BlogPost[]>(endpoints.public.blogPosts)).data,
@@ -66,20 +83,17 @@ export const contentService = {
   deletePostImage: async (postId: string, imageId: string) => apiClient.delete(endpoints.adminContent.blogImage(postId, imageId)),
 
   adminCourses: async () => (await apiClient.get<Course[]>(endpoints.adminContent.courses)).data,
-  createCourse: async (payload: Partial<Course>) => (await apiClient.post<Course>(endpoints.adminContent.courses, payload)).data,
-  updateCourse: async (id: string, payload: Partial<Course>) => (await apiClient.patch<Course>(endpoints.adminContent.course(id), payload)).data,
-  deleteCourse: async (id: string) => apiClient.delete(endpoints.adminContent.course(id)),
-  uploadCourseCover: async (id: string, file: File) => {
-    const data = new FormData();
-    data.append('file', file);
-    return (await apiClient.post(endpoints.adminContent.courseCover(id), data)).data;
+  createCourse: async (payload: CourseInput) => {
+    const result = (await apiClient.post<Course>(endpoints.adminContent.courses, payload)).data;
+    coursesChanged(); return result;
   },
-  createSection: async (courseId: string, payload: Partial<CourseSection>) =>
-    (await apiClient.post<CourseSection>(endpoints.adminContent.courseSections(courseId), payload)).data,
-  updateSection: async (courseId: string, sectionId: string, payload: Partial<CourseSection>) =>
-    (await apiClient.patch<CourseSection>(endpoints.adminContent.courseSection(courseId, sectionId), payload)).data,
-  deleteSection: async (courseId: string, sectionId: string) =>
-    apiClient.delete(endpoints.adminContent.courseSection(courseId, sectionId)),
+  updateCourse: async (id: string, payload: CourseInput) => {
+    const result = (await apiClient.patch<Course>(endpoints.adminContent.course(id), payload)).data;
+    coursesChanged(); return result;
+  },
+  deleteCourse: async (id: string) => {
+    await apiClient.delete(endpoints.adminContent.course(id)); coursesChanged();
+  },
 };
 
 export default contentService;

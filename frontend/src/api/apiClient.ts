@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { ensureWindowSession } from '@/lib/windowSession';
 import { encodeFormBody, urlEncodedParamsSerializer } from '@/lib/urls';
 import { getEncodedClientMeta } from '@/lib/clientMeta';
 
@@ -16,6 +17,7 @@ const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use(async (config) => {
+  config.headers['X-UASSpain-Window-Id'] = await ensureWindowSession();
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type'];
   }
@@ -49,6 +51,7 @@ apiClient.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    if (error.response?.data?.code === 'session_window_mismatch') return Promise.reject(error);
     if (!refreshPromise) {
       refreshPromise = axios
         .post(
@@ -56,7 +59,7 @@ apiClient.interceptors.response.use(
           encodeFormBody({}),
           {
             withCredentials: true,
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-UASSpain-Window-Id': await ensureWindowSession() },
           },
         )
         .then((res) => res.data)

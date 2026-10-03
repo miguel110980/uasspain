@@ -121,9 +121,10 @@ export default function NuevoInstructorForm({ onCreated }: { onCreated?: () => v
 
   const field = (name, label, type = 'text', extra = {}) => (
     <div className="space-y-1">
-      <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label} *</label>
+      <label htmlFor={`new-instructor-${name}`} className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label} *</label>
       <input
         type={type}
+        id={`new-instructor-${name}`}
         name={name}
         value={form[name] ?? ''}
         onChange={handleChange}

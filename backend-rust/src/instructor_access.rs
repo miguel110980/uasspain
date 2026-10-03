@@ -249,7 +249,7 @@ where
 {
     let row: Option<(String, String, Option<Uuid>)> = sqlx::query_as(
         "SELECT nombre,apellidos,assigned_instructor_id FROM accounts_userprofile \
-         WHERE id=$1 AND role='alumno'",
+         WHERE id=$1 AND (role='alumno' OR roles ? 'alumno')",
     )
     .bind(student_id)
     .fetch_optional(executor)

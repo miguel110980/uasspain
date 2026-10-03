@@ -26,6 +26,69 @@ async function login(page: Page, account: typeof roles[number]) {
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
 }
 
+async function windowHeaders(page: Page) {
+  return { 'X-UASSpain-Window-Id': await page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || '') };
+}
+
+test('admin runtime settings and all three empty backup slots are editable', async ({ page }) => {
+  await login(page, roles[0]);
+  const headers = await windowHeaders(page);
+  await page.locator('aside:visible nav').getByRole('button', { name: 'Configuración', exact: true }).click();
+  await page.getByRole('button', { name: 'SMTP / Correo', exact: true }).click();
+  const smtp = page.getByRole('form', { name: 'Configuración SMTP', exact: true });
+  await expect(smtp.getByRole('button', { name: 'Guardar configuración' })).toBeEnabled();
+  await smtp.getByLabel('Servidor SMTP', { exact: true }).fill('mail.example.invalid');
+  await smtp.getByLabel('Contraseña SMTP', { exact: true }).fill('EphemeralSMTP_UI_91!');
+  await smtp.getByRole('button', { name: 'Guardar configuración' }).click();
+  await expect(smtp.getByRole('status')).toHaveText('Configuración guardada.');
+  await expect(smtp.getByLabel('Contraseña SMTP', { exact: true })).toHaveValue('');
+  const response = await page.request.get('/api/system/smtp/', { headers });
+  const view = await response.json();
+  expect(view.password_configured).toBe(true);
+  expect(view).not.toHaveProperty('password');
+  expect(view).not.toHaveProperty('ciphertext');
+  await page.getByRole('button', { name: 'Integraciones', exact: true }).click();
+  const google = page.getByRole('form', { name: 'Configuración Google OAuth', exact: true });
+  await expect(google.getByRole('button', { name: 'Guardar configuración' })).toBeEnabled();
+  await google.getByLabel('Google OAuth Client ID').fill('123456-ui_fixture.apps.googleusercontent.com');
+  await google.getByLabel('Habilitado', { exact: true }).check();
+  await google.getByRole('button', { name: 'Guardar configuración' }).click();
+  await expect(google.getByRole('status')).toHaveText('Configuración guardada.');
+  await google.getByRole('button', { name: 'Generar challenge OAuth' }).click();
+  await expect(google.getByRole('status')).toHaveText('Challenge OAuth generado correctamente.');
+  await google.getByLabel('Habilitado', { exact: true }).uncheck();
+  await google.getByLabel('Google OAuth Client ID').fill('');
+  await google.getByRole('button', { name: 'Guardar configuración' }).click();
+  await expect(google.getByRole('status')).toHaveText('Configuración guardada.');
+
+  // Delete only fixtures in the isolated E2E installation.
+  const servers = await (await page.request.get('/api/backups/servers/', { headers })).json();
+  for (const server of servers) expect((await page.request.delete(`/api/backups/servers/${server.id}/`, { headers })).status()).toBe(204);
+  await page.locator('aside:visible nav').getByRole('button', { name: 'Backups', exact: true }).click();
+  for (const label of ['Servidor local', 'Servidor externo 1', 'Servidor externo 2']) {
+    const form = page.getByRole('form', { name: label, exact: true });
+    await expect(form.getByLabel('Nombre', { exact: true })).toBeEditable();
+    await form.getByLabel('Nombre', { exact: true }).fill(`Fixture ${label}`);
+    await form.getByLabel('IP/hostname', { exact: true }).fill('127.0.0.1');
+    await form.getByLabel('Usuario', { exact: true }).fill('fixture');
+    await form.getByLabel('Ruta destino', { exact: true }).fill('/backups');
+    await form.getByRole('button', { name: 'Guardar destino', exact: true }).click();
+    await expect(form.getByRole('status')).toHaveText('Destino guardado.');
+    await form.getByLabel('Nombre', { exact: true }).fill(`Updated ${label}`);
+    await form.getByRole('button', { name: 'Guardar destino', exact: true }).click();
+    await expect(form.getByRole('status')).toHaveText('Destino guardado.');
+    const connection = page.waitForRequest((request) => request.url().endsWith('/api/backups/test-connection/'));
+    await form.getByRole('button', { name: 'Probar conexión', exact: true }).click();
+    const request = await connection;
+    const saved = await (await page.request.get('/api/backups/servers/', { headers })).json();
+    expect(request.postDataJSON().server_id).toBe(saved.find((server) => server.name === `Updated ${label}`).id);
+    await expect(form.getByRole('status')).not.toHaveText('Conectando…');
+  }
+  for (const server of await (await page.request.get('/api/backups/servers/', { headers })).json()) {
+    expect((await page.request.delete(`/api/backups/servers/${server.id}/`, { headers })).status()).toBe(204);
+  }
+});
+
 for (const account of roles) {
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
     test(`${account.role}: navigation, persistence and logout at ${viewport.width}px`, async ({ page }, testInfo) => {
@@ -72,7 +135,7 @@ test('student cannot enter administration', async ({ page }) => {
   await login(page, roles[2]);
   await page.goto('/admin');
   await expect(page.getByRole('heading', { name: 'Acceso denegado' })).toBeVisible();
-  const response = await page.request.get('/api/backups/config/');
+  const response = await page.request.get('/api/backups/config/', { headers: await windowHeaders(page) });
   expect(response.status()).toBe(403);
 });
 
@@ -150,7 +213,7 @@ test('three participants exchange real WebRTC media and release devices on hangu
     await pages[0].getByRole('button', { name: 'Colgar', exact: true }).click();
     await expect.poll(() => pages[2].evaluate(() => (window as Window & { auditTracks: MediaStreamTrack[] }).auditTracks
       .every(track => track.readyState === 'ended')), { timeout: 45_000 }).toBe(true);
-    const active = await pages[0].request.get('/api/videollamadas/?estado=activa');
+    const active = await pages[0].request.get('/api/videollamadas/?estado=activa', { headers: await windowHeaders(pages[0]) });
     expect(await active.json()).toEqual([]);
   } finally { await Promise.all(contexts.map(context => context.close())); }
 });
@@ -159,12 +222,9 @@ test('admin creates, publishes, edits and deletes a dynamic course from the UI',
   await login(page, roles[0]);
   await page.locator('aside:visible nav').getByRole('button', { name: 'Formación / Cursos', exact: true }).click();
   const name = `Curso interfaz ${Date.now()}`;
-  const slug = `curso-interfaz-${Date.now()}`;
-  await page.getByPlaceholder('Nombre', { exact: true }).fill(name);
-  await page.getByPlaceholder('slug-opcional').fill(slug);
-  await page.getByPlaceholder('Descripción breve').fill('Curso creado desde administración.');
-  await page.getByPlaceholder('Descripción completa').fill('Contenido público del curso de prueba.');
-  await page.locator('main select').selectOption('published');
+  await page.getByLabel('Nombre del curso', { exact: true }).fill(name);
+  await page.getByLabel('Descripción', { exact: true }).fill('Contenido público del curso de prueba.');
+  await page.getByLabel('Estado', { exact: true }).selectOption('published');
   const create = page.waitForResponse(response => response.url().endsWith('/api/admin/courses') && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Guardar', exact: true }).click();
   const result = await create;
@@ -182,7 +242,7 @@ test('admin creates, publishes, edits and deletes a dynamic course from the UI',
     await expect(publicPage.getByText('Contenido público del curso de prueba.', { exact: true })).toBeVisible();
     await publicPage.close();
     await page.locator('article').filter({ has: page.getByRole('heading', { name, exact: true }) }).getByRole('button', { name: 'Editar', exact: true }).click();
-    await page.getByPlaceholder('Nombre', { exact: true }).fill(`${name} editado`);
+    await page.getByLabel('Nombre del curso', { exact: true }).fill(`${name} editado`);
     const edit = page.waitForResponse(response => response.url().endsWith(`/api/admin/courses/${course.id}`) && response.request().method() === 'PATCH');
     await page.getByRole('button', { name: 'Guardar', exact: true }).click();
     expect((await edit).status()).toBe(200);
@@ -193,7 +253,7 @@ test('admin creates, publishes, edits and deletes a dynamic course from the UI',
     await card.getByRole('button', { name: 'Eliminar', exact: true }).click();
     await page.getByRole('button', { name: 'Eliminar curso', exact: true }).click();
     await expect(card).toHaveCount(0);
-  } finally { await page.request.delete(`/api/admin/courses/${course.id}`, { timeout: 5000 }).catch(() => {}); }
+  } finally { await page.request.delete(`/api/admin/courses/${course.id}`, { headers: await windowHeaders(page), timeout: 5000 }).catch(() => {}); }
 });
 
 test('student saves, resumes and submits an exam through the UI', async ({ browser }) => {
@@ -204,12 +264,12 @@ test('student saves, resumes and submits an exam through the UI', async ({ brows
     const instructor = await staffContext.newPage();
     const student = await studentContext.newPage();
     await login(instructor, roles[1]);
-    const created = await instructor.request.post('/api/examenes/', { data: {
+    const created = await instructor.request.post('/api/examenes/', { headers: await windowHeaders(instructor), data: {
       nombre: 'Examen UI persistencia', categoria: 'A1/A3', activo: true, num_preguntas: 1,
     } });
     expect(created.status()).toBe(201);
     examId = (await created.json()).id;
-    const question = await instructor.request.post('/api/preguntas/', { data: {
+    const question = await instructor.request.post('/api/preguntas/', { headers: await windowHeaders(instructor), data: {
       examen_id: examId, enunciado: 'Selecciona la respuesta correcta de esta prueba.',
       opcion_a: 'Respuesta de prueba correcta', opcion_b: 'Otra respuesta', opcion_c: 'Tercera', opcion_d: 'Cuarta',
       respuesta_correcta: 'a', orden: 1,
@@ -240,10 +300,10 @@ test('student saves, resumes and submits an exam through the UI', async ({ brows
     expect(result.aprobado).toBe(true);
     await student.reload();
     await expect(student.locator('header h1')).toHaveText('Dashboard');
-    const persisted = await student.request.get(`/api/resultados-examen/?examen_id=${examId}`);
+    const persisted = await student.request.get(`/api/resultados-examen/?examen_id=${examId}`, { headers: await windowHeaders(student) });
     expect((await persisted.json()).length).toBe(1);
   } finally {
-    if (examId) await staffContext.request.delete(`/api/examenes/${examId}/`);
+    if (examId) await staffContext.request.delete(`/api/examenes/${examId}/`, { headers: await windowHeaders(await staffContext.pages()[0]) });
     await Promise.all([staffContext.close(), studentContext.close()]);
   }
 });

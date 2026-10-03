@@ -1,4 +1,5 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import PanelModal from '@/components/ui/PanelModal';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Send, Loader2, MessageCircle, Trash2, X } from 'lucide-react';
 import conexionesService from '@/services/conexionesService';
@@ -253,8 +254,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
       </div>
 
       {showClearConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
-          <div className="w-full max-w-sm glass-card p-6 space-y-4">
+        <PanelModal label="Limpiar chat" onClose={() => setShowClearConfirm(false)} className="max-w-sm glass-card p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-heading text-lg font-bold text-foreground">Limpiar chat</h3>
               <button onClick={() => setShowClearConfirm(false)} className="text-muted-foreground hover:text-foreground">
@@ -288,8 +288,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
                 Limpiar chat
               </button>
             </div>
-          </div>
-        </div>
+          </PanelModal>
       )}
     </motion.div>
   );

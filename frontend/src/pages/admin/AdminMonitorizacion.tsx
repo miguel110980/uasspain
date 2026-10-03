@@ -53,8 +53,8 @@ function ServiceCard({ s }) {
   const st = statusUiFor(s.status);
   const Icon = monitorIconFor(s.iconKey);
   return (
-    <div className="glass-card p-5">
-      <div className="flex items-center justify-between mb-3">
+    <div className="glass-card p-5 min-w-0">
+      <div className="flex flex-wrap gap-2 items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Icon className="w-4 h-4 text-primary" />
           <span className="text-sm font-semibold text-foreground">{s.name}</span>
@@ -63,7 +63,7 @@ function ServiceCard({ s }) {
           <span className={`w-2 h-2 rounded-full ${st.dot}`} /> {st.label}
         </span>
       </div>
-      <p className="text-2xl font-heading font-bold text-foreground">{s.value}</p>
+      <p className="text-2xl font-heading font-bold text-foreground break-words">{s.value}</p>
       <p className="text-xs text-muted-foreground mt-1 truncate" title={s.desc}>{s.desc}</p>
       <MetricBar percent={s.percent} status={s.status} />
     </div>
@@ -117,7 +117,7 @@ export default function AdminMonitorizacion() {
 
       <div>
         <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-3">
-          Servidor (CPU · memoria · disco)
+          {status?.host?.scope || 'Recursos disponibles'}
         </h3>
         <div className="grid sm:grid-cols-3 gap-4">
           {recursos.map((s) => (

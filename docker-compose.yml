@@ -177,6 +177,11 @@ services:
         condition: service_healthy
     environment:
       BIND_ADDRESS: 0.0.0.0:8000
+      REVERSE_PROXY: nginx
+      TRUSTED_PROXY_HOST: nginx
+      TRUST_PROXY: "true"
+      ALLOWED_HOSTS_FILE: /app/config/allowed_hosts.conf
+      APP_PRODUCTION: ${APP_PRODUCTION:-false}
       RUST_LOG: ${RUST_LOG:-info,tower_http=info}
       SECRET_KEY_FILE: /run/secrets/secret_key
       FIELD_ENCRYPTION_KEY_FILE: /run/secrets/field_encryption_key
@@ -249,6 +254,7 @@ services:
       - backups_data:/app/backups
       - media_data:/app/media
       - backup_keys:/app/backup_keys
+      - ./nginx/allowed_hosts.conf:/app/config/allowed_hosts.conf:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/uasspain-backend", "--healthcheck"]
       interval: 10s
@@ -362,8 +368,10 @@ services:
       backend:
         condition: service_healthy
     environment:
-      # Reservado para futuros templates; la allowlist de Host vive en nginx.conf
+      # Host allowlist: nginx/allowed_hosts.conf, shared read-only with the backend.
       TZ: ${TZ:-Europe/Madrid}
+    volumes:
+      - ./nginx/allowed_hosts.conf:/etc/nginx/allowed_hosts.conf:ro
     ports:
       - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-80}:8080"
       - "${HTTP_BIND:-127.0.0.1}:${HTTPS_PORT:-443}:8443"

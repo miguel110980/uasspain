@@ -41,6 +41,8 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
   const [examenes, setExamenes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [hasData, setHasData] = useState(false);
 
   useEffect(() => {
     if (!alumnoId) return;
@@ -60,8 +62,10 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
       setMaterial(mat);
       setCompletados(comp);
       setExamenes(exa);
-    } catch (err) {
-      console.error('Error cargando datos del dashboard:', err);
+      setHasData(true);
+      setError('');
+    } catch {
+      setError('No se pudieron actualizar tus datos. Vuelve a intentarlo.');
     } finally {
       setLoading(false);
       if (manual) setRefreshing(false);
@@ -128,8 +132,11 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
       ok: r.aprobado,
     }));
 
+  if (error && !hasData) return <div role="alert" className="p-3 border border-danger-border bg-danger-soft text-danger text-sm">{error} <button onClick={() => loadData(true)} className="underline">Reintentar</button></div>;
+
   return (
     <div className="space-y-6">
+      {error && <p role="alert" className="text-danger text-sm">{error}</p>}
       {/* Saludo */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
         <div>

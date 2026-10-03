@@ -96,6 +96,15 @@ pub async fn course_body(
         escape(text(&course, "name")),
         escape(text(&course, "short_description"))
     );
+    html.push_str(&format!(
+        "<dl class=\"mt-6\"><dt>Modalidad</dt><dd>{}</dd><dt>Duración</dt><dd>{}</dd></dl>",
+        if text(&course, "modality") == "presencial" {
+            "Presencial"
+        } else {
+            "Online"
+        },
+        escape(text(&course, "duration"))
+    ));
     for (key, heading) in [
         ("introduction", "Introducción"),
         ("description", "Descripción"),

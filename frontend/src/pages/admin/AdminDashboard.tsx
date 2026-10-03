@@ -9,14 +9,13 @@ import examenesService from '@/services/examenesService';
 import materialesService from '@/services/materialesService';
 import conexionesService from '@/services/conexionesService';
 import KpiCard from '@/components/admin/KpiCard';
-import { profileHasAdmin, profileHasInstructor } from '@/lib/roles';
 import { buildActivityFeed, formatActivityTimestamp, rolBadgeClass } from '@/lib/adminActivity';
 import { getActivityIcon } from '@/lib/adminActivityIcons';
 import { databaseConnected, statusUiFor, websocketServiceStatus } from '@/lib/systemStatus';
 
 function buildServices(status) {
   if (!status) return [];
-  const dbOk = databaseConnected(status);
+  const dbOk = databaseConnected(status) && status.backend?.status === 'ok';
   const smtp = status.smtp || {};
   const oauth = status.google_oauth || {};
   const ws = websocketServiceStatus(status);
@@ -36,6 +35,7 @@ function buildServices(status) {
 export default function AdminDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const timer = useRef(/** @type {ReturnType<typeof setInterval> | null} */ (null));
 
@@ -48,13 +48,15 @@ export default function AdminDashboard() {
         materialesService.materiales.list(),
         conexionesService.conexiones.list('-created_date', 100),
         conexionesService.registros.list('-created_date', 500),
-        authService.getSystemStatus().catch(() => null),
+        authService.getSystemStatus(),
       ]);
       setData({ profiles, resultados, examenes, material, conexiones, registroConexion, systemStatus });
+      setError('');
+      setLastUpdate(new Date());
     } catch {
+      setError('No se pudieron actualizar los datos del panel. Vuelve a intentarlo.');
     } finally {
       setLoading(false);
-      setLastUpdate(new Date());
     }
   };
 
@@ -66,22 +68,17 @@ export default function AdminDashboard() {
     };
   }, []);
 
-  const profiles = data?.profiles || [];
-  const resultados = data?.resultados || [];
-  const examenes = data?.examenes || [];
-  const material = data?.material || [];
   const registro = data?.registroConexion || [];
 
-  const totalUsuarios = profiles.length;
-  const admins = profiles.filter((p) => profileHasAdmin(p) && p.status === 'activo');
-  const instructores = profiles.filter((p) => profileHasInstructor(p) && p.status === 'activo');
-  const alumnos = profiles.filter((p) => !profileHasAdmin(p) && !profileHasInstructor(p) && p.status === 'activo');
+  const systemStatus = data?.systemStatus;
+  const users = systemStatus?.users;
+  const academic = systemStatus?.academic;
+  const totalUsuarios = users?.total ?? '—';
   const conectados = registro.filter((r) => r.estado_sesion === 'activa');
   const conectadosUnicos = new Set(conectados.map((r) => r.usuario || r.email).filter(Boolean)).size;
-  const cursos = new Set(examenes.map((e) => e.categoria).filter(Boolean)).size;
-  const examenesDisp = examenes.filter((e) => !e.bloqueado).length;
-  const certificados = resultados.filter((r) => r.aprobado).length;
-  const systemStatus = data?.systemStatus;
+  const cursos = academic?.published_courses ?? '—';
+  const examenesDisp = academic?.available_exams ?? '—';
+  const aprobados = academic?.passed_exams ?? '—';
   const services = buildServices(systemStatus);
   const serviciosOk = services.filter((s) => s.status === 'ok').length;
 
@@ -89,6 +86,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="space-y-6">
+      {error && <div role="alert" className="p-3 border border-danger-border bg-danger-soft text-danger text-sm">{error} <button onClick={load} className="underline">Reintentar</button></div>}
       {/* Header + refresh */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
@@ -107,19 +105,19 @@ export default function AdminDashboard() {
       {/* KPIs principales */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
         <KpiCard icon={Users} label="Total usuarios" value={totalUsuarios} trend="up" loading={loading} />
-        <KpiCard icon={Shield} label="Administradores activos" value={admins.length} accent="orange" loading={loading} />
-        <KpiCard icon={UserCheck} label="Instructores activos" value={instructores.length} accent="blue" loading={loading} />
-        <KpiCard icon={GraduationCap} label="Alumnos activos" value={alumnos.length} loading={loading} />
+        <KpiCard icon={Shield} label="Administradores activos" value={users?.admin ?? '—'} accent="orange" loading={loading} />
+        <KpiCard icon={UserCheck} label="Instructores activos" value={users?.instructor ?? '—'} accent="blue" loading={loading} />
+        <KpiCard icon={GraduationCap} label="Alumnos activos" value={users?.alumno ?? '—'} loading={loading} />
         <KpiCard icon={Radio} label="Conectados ahora" value={conectadosUnicos} trend="up" accent="orange" loading={loading} />
         <KpiCard icon={BookOpen} label="Cursos publicados" value={cursos} accent="blue" loading={loading} />
         <KpiCard icon={ClipboardList} label="Exámenes disponibles" value={examenesDisp} loading={loading} />
-        <KpiCard icon={BookOpen} label="Materiales publicados" value={material.length} accent="blue" loading={loading} />
+        <KpiCard icon={BookOpen} label="Materiales publicados" value={academic?.published_materials ?? '—'} accent="blue" loading={loading} />
       </div>
 
       {/* KPIs secundarios */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <KpiCard icon={Award} label="Certificados emitidos" value={certificados} trend="up" loading={loading} />
-        <KpiCard icon={HardDrive} label="Recursos publicados" value={material.length + examenes.length} delta="material + exámenes" accent="orange" loading={loading} />
+        <KpiCard icon={Award} label="Exámenes aprobados" value={aprobados} trend="up" loading={loading} />
+        <KpiCard icon={HardDrive} label="Recursos publicados" value={academic ? academic.published_materials + academic.available_exams : '—'} delta="material + exámenes" accent="orange" loading={loading} />
         <KpiCard icon={Server} label="Estado servicios" value={services.length ? `${serviciosOk}/${services.length}` : '—'} trend="up" loading={loading} />
       </div>
 
@@ -128,10 +126,10 @@ export default function AdminDashboard() {
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-primary" /> Contenido académico
           </h3>
-          <p className="text-xs text-muted-foreground mb-4">{examenes.length} exámenes · {material.length} materiales</p>
+          <p className="text-xs text-muted-foreground mb-4">{academic?.total_exams ?? '—'} exámenes · {academic?.total_materials ?? '—'} materiales</p>
           <div className="space-y-2 text-xs text-muted-foreground">
-            <p>Alumnos activos: <span className="text-foreground font-mono">{alumnos.length}</span></p>
-            <p>Resultados registrados: <span className="text-foreground font-mono">{resultados.length}</span></p>
+            <p>Alumnos activos: <span className="text-foreground font-mono">{users?.alumno ?? '—'}</span></p>
+            <p>Resultados registrados: <span className="text-foreground font-mono">{academic?.exam_results ?? '—'}</span></p>
             <p>Sesiones activas: <span className="text-foreground font-mono">{conectadosUnicos}</span></p>
           </div>
         </div>

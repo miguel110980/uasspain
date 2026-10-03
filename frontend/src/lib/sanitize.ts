@@ -1,3 +1,4 @@
+import { windowBoundUrl } from '@/lib/windowSession';
 export type SanitizeKind = 'text'|'email'|'phone'|'message'|'username'|'dni'|'otp'|'password';
 
 const CONTROL_CHARS = /[\u0000-\u001F\u007F]/g;
@@ -83,7 +84,7 @@ export function getSafeUrl(url) {
     const parsed = new URL(trimmed, window.location.origin);
     const allowed = ['http:', 'https:', 'mailto:'];
     if (!allowed.includes(parsed.protocol)) return '#';
-    return trimmed;
+    return windowBoundUrl(trimmed);
   } catch {
     return '#';
   }

@@ -19,6 +19,8 @@ const baseCourse: Course = {
   introduction: 'Introducción privada',
   syllabus: 'Temario privado',
   cover_image_url: '',
+  modality: 'online',
+  duration: '40 horas',
   status: 'upcoming',
   sort_order: 0,
   sections: [],
@@ -56,5 +58,13 @@ describe('CourseTemplate', () => {
     expect(html).toContain('Operaciones STS');
     expect(html).toContain('Contenido de la sección');
     expect(html).not.toContain('El curso aparecerá disponible');
+  });
+
+  it('escapa texto no confiable y muestra modalidad y duración sin HTML ejecutable', () => {
+    const html = render({ ...baseCourse, status: 'published', modality: 'presencial', duration: '3 semanas', description: '<img src=x onerror=alert(1)>', introduction: '', syllabus: '' });
+    expect(html).toContain('Presencial');
+    expect(html).toContain('3 semanas');
+    expect(html).toContain('&lt;img');
+    expect(html).not.toContain('<img src="x"');
   });
 });

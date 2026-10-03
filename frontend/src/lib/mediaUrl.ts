@@ -1,3 +1,4 @@
+import { windowBoundUrl } from '@/lib/windowSession';
 /**
  * Resuelve URLs de media relativas (/media/...) a URL absoluta para img/src.
  */
@@ -6,10 +7,10 @@ export function resolveMediaUrl(input) {
     ? input
     : (input?.absolute_url || input?.file_url || '');
   if (!raw) return '';
-  if (raw.startsWith('http') || raw.startsWith('blob:') || raw.startsWith('data:')) return raw;
+  if (raw.startsWith('http') || raw.startsWith('blob:') || raw.startsWith('data:')) return windowBoundUrl(raw);
   const path = raw.startsWith('/') ? raw : `/${raw}`;
   if (typeof window !== 'undefined') {
-    return `${window.location.origin}${path}`;
+    return windowBoundUrl(`${window.location.origin}${path}`);
   }
   return path;
 }

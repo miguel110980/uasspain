@@ -7,6 +7,7 @@ $ComposeFile = Join-Path $Root 'docker-compose.e2e.yml'
 $BackendContext = Join-Path $Root 'backend-rust'
 $Docker = (Get-Command docker -ErrorAction Stop).Source
 $ExitCode = 1
+$SetupWindowId = [Guid]::NewGuid().ToString()
 $KeyDirName = 'uasspain-e2e-keys-' + [Guid]::NewGuid().ToString('N')
 $KeyDir = Join-Path ([IO.Path]::GetTempPath()) $KeyDirName
 $PreviousKey = $env:E2E_FIELD_ENCRYPTION_KEY
@@ -28,7 +29,7 @@ function Invoke-E2EJson {
         Uri = "http://127.0.0.1:8010$Path"
         Method = $Method
         ContentType = 'application/json'
-        Headers = @{ Origin = 'http://localhost:8010' }
+        Headers = @{ Origin = 'http://localhost:8010'; 'X-UASSpain-Window-Id' = $SetupWindowId }
         Body = ($Body | ConvertTo-Json -Depth 8 -Compress)
     }
     if ($Session) { $params.WebSession = $Session }
@@ -40,6 +41,12 @@ try {
     if (-not $SkipBuild) {
         & $Docker build -t uasspain-backend:e2e-local $BackendContext
         if ($LASTEXITCODE -ne 0) { throw 'build E2E falló' }
+    }
+    $PythonImage = 'uasspain-e2e-python:local'
+    $PythonImageExists = [string](& $Docker image ls -q $PythonImage)
+    if (-not $SkipBuild -or -not $PythonImageExists) {
+        & $Docker build -f (Join-Path $PSScriptRoot 'Dockerfile.python') -t $PythonImage $PSScriptRoot
+        if ($LASTEXITCODE -ne 0) { throw 'build de herramientas Python E2E fallo' }
     }
 
     $PrivKey = Join-Path $KeyDir 'backup_sftp_ed25519'
@@ -130,21 +137,44 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'permisos de las claves SFTP E2E falló' }
 
     Write-Host '==> Ejecutando suite funcional en Python efímero fijado'
+    & $Docker compose -f $ComposeFile exec -T backend-e2e mkdir -p /app/backups/destination-local
+    if ($LASTEXITCODE -ne 0) { throw 'Directorio del destino local E2E no disponible' }
     & $Docker run --rm `
-        -v "${Root}:/workspace:ro" `
+        --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true `
+        -v "${PSScriptRoot}:/workspace/e2e:ro" `
         --network uasspain-e2e_e2e_net `
         -e E2E_BASE=http://backend-e2e:8000 `
         -e E2E_ORIGIN=http://localhost:8010 `
-        python:3.13.7-slim-bookworm `
-        sh -c 'pip install --disable-pip-version-check --no-cache-dir websockets==15.0.1 && python /workspace/scripts/e2e/e2e_api.py'
+        $PythonImage /workspace/e2e/e2e_api.py
     $ExitCode = $LASTEXITCODE
     if ($ExitCode -ne 0) { throw 'La suite API E2E falló' }
 
+    Write-Host '==> Validando recuperacion y OTP con correo de fixture cifrado (sin SMTP externo)'
+    & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a autenticacion E2E fallo' }
+    & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'readiness previa a autenticacion E2E fallo' }
+    & node (Join-Path $Root 'scripts/e2e/e2e-auth.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de recuperacion y OTP E2E fallo' }
+
+    Write-Host '==> Validando alcance de paneles, asignaciones y contadores contra PostgreSQL'
+    & node (Join-Path $Root 'scripts/e2e/e2e-panels.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de alcance de paneles E2E fallo' }
+
+    Write-Host '==> Validando cursos, temario transaccional y permisos contra PostgreSQL'
+    & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a cursos E2E fallo' }
+    & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'readiness previa a cursos E2E fallo' }
+    & node (Join-Path $Root 'scripts/e2e/e2e-courses.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de cursos E2E fallo' }
+
     function Invoke-Operations {
         param([string]$Mode)
-        & $Docker run --rm -v "${Root}:/workspace:ro" --network uasspain-e2e_e2e_net `
+        & $Docker run --rm --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true `
+            -v "${PSScriptRoot}:/workspace/e2e:ro" --network uasspain-e2e_e2e_net `
             -e E2E_BASE=http://backend-e2e:8000 -e E2E_ORIGIN=http://localhost:8010 `
-            python:3.13.7-slim-bookworm python /workspace/scripts/e2e/e2e_operations.py $Mode
+            $PythonImage /workspace/e2e/e2e_operations.py $Mode
         if ($LASTEXITCODE -ne 0) { throw "Prueba operacional falló: $Mode" }
     }
     Write-Host '==> Validando plazo de examen, concurrencia y carga acotada'
@@ -171,21 +201,29 @@ try {
         Invoke-Operations 'recovered'
     }
     if (-not $SkipBrowser) {
-        Write-Host '==> Verificando reinicio del backend antes de la fase navegador'
-        # Separate test phases so successful fixture logins do not exhaust the
-        # production limit of ten login attempts per identity in five minutes.
-        & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'reinicio del backend E2E falló' }
-        & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'readiness tras reinicio del backend E2E falló' }
-        Write-Host '==> Ejecutando los tres paneles en Chromium'
-        $Npm = if ($env:OS -eq 'Windows_NT') { 'npm.cmd' } else { 'npm' }
-        Push-Location (Join-Path $Root 'frontend')
-        try {
-            & $Npm run test:e2e
-            $ExitCode = $LASTEXITCODE
-            if ($ExitCode -ne 0) { throw 'La suite de navegador E2E falló' }
-        } finally { Pop-Location }
+        # Each group uses the unchanged production login limit. A backend restart
+        # between groups isolates test traffic instead of weakening that limit.
+        $BrowserGroups = @(
+            @{ Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module') },
+            @{ Label = 'modales y datos'; Arguments = @('--grep', '@panel-modals') },
+            @{ Label = 'cursos'; Arguments = @('--grep', '@course-module') }
+        )
+        # Invoke Node directly so Windows cmd does not interpret regex pipes.
+        $PlaywrightCli = Join-Path $Root 'frontend/node_modules/@playwright/test/cli.js'
+        foreach ($BrowserGroup in $BrowserGroups) {
+            Write-Host "==> Preparando navegador: $($BrowserGroup.Label)"
+            & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'reinicio del backend E2E fallo' }
+            & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'readiness tras reinicio del backend E2E fallo' }
+            Push-Location (Join-Path $Root 'frontend')
+            try {
+                $BrowserArguments = $BrowserGroup.Arguments
+                & node $PlaywrightCli test @BrowserArguments
+                $ExitCode = $LASTEXITCODE
+                if ($ExitCode -ne 0) { throw 'La suite de navegador E2E fallo' }
+            } finally { Pop-Location }
+        }
     }
 }
 finally {

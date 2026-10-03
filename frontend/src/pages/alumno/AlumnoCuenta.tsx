@@ -1,3 +1,4 @@
+import { resolveMediaUrl } from '@/lib/mediaUrl';
 ﻿import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Save, Loader2, CheckCircle, AlertCircle, Upload, UserCheck } from 'lucide-react';
@@ -55,7 +56,7 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
     setUploading(true);
     try {
       const { display_url, file_url } = await examenesService.uploadAvatar(file);
-      setForm((prev) => ({ ...prev, foto_perfil: display_url || file_url }));
+      setForm((prev) => ({ ...prev, foto_perfil: file_url || display_url }));
     } catch {
       setError('Error al subir la foto. Inténtalo de nuevo.');
     } finally {
@@ -137,7 +138,7 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
         <div className="flex items-center gap-6">
           <div className="relative shrink-0">
             {form.foto_perfil ? (
-              <img src={form.foto_perfil} alt="Foto perfil" className="w-20 h-20 rounded-full object-cover border-2 border-primary/30" />
+              <img src={resolveMediaUrl(form.foto_perfil)} alt="Foto perfil" className="w-20 h-20 rounded-full object-cover border-2 border-primary/30" />
             ) : (
               <div className="w-20 h-20 rounded-full bg-surface-muted border-2 border-border-subtle flex items-center justify-center text-2xl font-bold text-primary">
                 {form.nombre?.[0]?.toUpperCase() || '?'}

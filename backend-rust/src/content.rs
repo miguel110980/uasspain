@@ -49,6 +49,10 @@ pub struct CourseWrite {
     introduction: String,
     #[serde(default)]
     syllabus: String,
+    modality: String,
+    #[serde(default)]
+    duration: String,
+    sections: Option<Vec<SectionWrite>>,
     #[serde(default = "upcoming")]
     status: String,
     #[serde(default)]
@@ -63,12 +67,16 @@ pub struct CoursePatch {
     description: Option<String>,
     introduction: Option<String>,
     syllabus: Option<String>,
+    modality: Option<String>,
+    duration: Option<String>,
+    sections: Option<Vec<SectionWrite>>,
     status: Option<String>,
     sort_order: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SectionWrite {
+    id: Option<Uuid>,
     title: String,
     #[serde(default)]
     body: String,
@@ -319,9 +327,9 @@ pub async fn public_courses(
 ) -> Result<Json<Vec<Value>>, AppError> {
     let rows = sqlx::query_scalar::<_, Value>(
         "SELECT jsonb_build_object('id',id,'name',name,'slug',slug,
-         'short_description',short_description,'cover_image_url',cover_image_url,
+         'short_description',short_description,'description',description,'modality',modality,'duration',duration,'cover_image_url',cover_image_url,
          'status',status,'sort_order',sort_order,'published_at',published_at)
-         FROM courses ORDER BY sort_order,name LIMIT 200",
+         FROM courses WHERE status='published' ORDER BY sort_order,name",
     )
     .fetch_all(pool(&state)?)
     .await?;
@@ -344,14 +352,14 @@ pub async fn admin_courses(
     admin(&state, &headers)?;
     let rows = sqlx::query_scalar::<_, Value>(
         "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,
-         'short_description',c.short_description,'description',c.description,
+         'modality',c.modality,'duration',c.duration,'short_description',c.short_description,'description',c.description,
          'introduction',c.introduction,'syllabus',c.syllabus,
          'cover_image_url',c.cover_image_url,'cover_image_path',c.cover_image_path,
          'status',c.status,'sort_order',c.sort_order,'created_at',c.created_at,
          'updated_at',c.updated_at,'published_at',c.published_at,
          'sections',COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.sort_order,s.created_at)
           FROM course_sections s WHERE s.course_id=c.id),'[]'::jsonb))
-         FROM courses c ORDER BY c.sort_order,c.name LIMIT 200",
+         FROM courses c ORDER BY c.sort_order,c.name",
     )
     .fetch_all(pool(&state)?)
     .await?;
@@ -361,25 +369,45 @@ pub async fn admin_courses(
 pub async fn create_course(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(input): Json<CourseWrite>,
+    Json(mut input): Json<CourseWrite>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     let claims = admin(&state, &headers)?;
-    let slug = if input.slug.trim().is_empty() {
-        slugify(&input.name)
+    input.name = course_text(&input.name);
+    input.description = course_text(&input.description);
+    input.duration = course_text(&input.duration);
+    if input.short_description.trim().is_empty() {
+        input.short_description = input.description.chars().take(320).collect();
+    }
+    let id = Uuid::new_v4();
+    let generated = input.slug.trim().is_empty();
+    let mut slug = if generated {
+        generated_slug(&input.name, id, false)
     } else {
         normalize_slug(&input.slug)?
     };
     validate_course(&input, &slug)?;
-    let id = Uuid::new_v4();
-    let result = sqlx::query(
-        "INSERT INTO courses (id,name,slug,short_description,description,introduction,syllabus,status,sort_order,created_by,published_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $8='published' THEN NOW() ELSE NULL END)",
-    )
-    .bind(id).bind(input.name.trim()).bind(slug).bind(input.short_description.trim())
-    .bind(input.description.trim()).bind(input.introduction.trim()).bind(input.syllabus.trim())
-    .bind(input.status).bind(input.sort_order).bind(claims.profile_id)
-    .execute(pool(&state)?).await;
-    map_unique(result)?;
+    let mut tx = pool(&state)?.begin().await?;
+    for attempt in 0..2 {
+        let inserted: Option<Uuid> = sqlx::query_scalar(
+            "INSERT INTO courses (id,name,slug,short_description,description,introduction,syllabus,status,sort_order,created_by,published_at,modality,duration) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $8='published' THEN NOW() ELSE NULL END,$11,$12) \
+             ON CONFLICT (slug) DO NOTHING RETURNING id"
+        ).bind(id).bind(&input.name).bind(&slug).bind(input.short_description.trim())
+         .bind(&input.description).bind(input.introduction.trim()).bind(input.syllabus.trim())
+         .bind(&input.status).bind(input.sort_order).bind(claims.profile_id)
+         .bind(&input.modality).bind(&input.duration).fetch_optional(&mut *tx).await?;
+        if inserted.is_some() {
+            break;
+        }
+        if !generated || attempt == 1 {
+            return Err(invalid("El slug ya existe."));
+        }
+        slug = generated_slug(&input.name, id, true);
+    }
+    if let Some(sections) = input.sections {
+        replace_course_sections(&mut tx, id, sections).await?;
+    }
+    tx.commit().await?;
     Ok((
         StatusCode::CREATED,
         Json(course_json_by_id(pool(&state)?, id).await?),
@@ -390,30 +418,81 @@ pub async fn update_course(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
-    Json(input): Json<CoursePatch>,
+    Json(mut input): Json<CoursePatch>,
 ) -> Result<Json<Value>, AppError> {
     admin(&state, &headers)?;
+    input.name = input.name.map(|value| course_text(&value));
+    input.description = input.description.map(|value| course_text(&value));
+    input.duration = input.duration.map(|value| course_text(&value));
+    if input.short_description.is_none() {
+        input.short_description = input
+            .description
+            .as_ref()
+            .map(|value| value.chars().take(320).collect());
+    }
     validate_course_patch(&input)?;
     let slug = input.slug.as_deref().map(normalize_slug).transpose()?;
+    let mut tx = pool(&state)?.begin().await?;
+    let exists: Option<Uuid> = sqlx::query_scalar("SELECT id FROM courses WHERE id=$1 FOR UPDATE")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    exists.ok_or(AppError::NotFound)?;
     let result = sqlx::query(
-        "UPDATE courses SET name=COALESCE($2,name),slug=COALESCE($3,slug),
-         short_description=COALESCE($4,short_description),description=COALESCE($5,description),
-         introduction=COALESCE($6,introduction),syllabus=COALESCE($7,syllabus),
-         status=COALESCE($8,status),sort_order=COALESCE($9,sort_order),updated_at=NOW(),
-         published_at=CASE WHEN COALESCE($8,status)='published' THEN COALESCE(published_at,NOW()) ELSE NULL END
-         WHERE id=$1",
-    )
-    .bind(id).bind(input.name.map(|v| v.trim().to_owned())).bind(slug)
-    .bind(input.short_description.map(|v| v.trim().to_owned()))
-    .bind(input.description.map(|v| v.trim().to_owned()))
-    .bind(input.introduction.map(|v| v.trim().to_owned()))
-    .bind(input.syllabus.map(|v| v.trim().to_owned()))
-    .bind(input.status).bind(input.sort_order).execute(pool(&state)?).await;
-    let changed = map_unique(result)?;
-    if changed.rows_affected() == 0 {
-        return Err(AppError::NotFound);
+        "UPDATE courses SET name=COALESCE($2,name),slug=COALESCE($3,slug), \
+         short_description=COALESCE($4,short_description),description=COALESCE($5,description), \
+         introduction=COALESCE($6,introduction),syllabus=COALESCE($7,syllabus), \
+         status=COALESCE($8,status),sort_order=COALESCE($9,sort_order),updated_at=NOW(), \
+         published_at=CASE WHEN COALESCE($8,status)='published' THEN COALESCE(published_at,NOW()) ELSE NULL END, \
+         modality=COALESCE($10,modality),duration=COALESCE($11,duration) WHERE id=$1"
+    ).bind(id).bind(input.name).bind(slug).bind(input.short_description)
+     .bind(input.description).bind(input.introduction).bind(input.syllabus)
+     .bind(input.status).bind(input.sort_order).bind(input.modality).bind(input.duration)
+     .execute(&mut *tx).await;
+    map_unique(result)?;
+    if let Some(sections) = input.sections {
+        replace_course_sections(&mut tx, id, sections).await?;
     }
+    tx.commit().await?;
     Ok(Json(course_json_by_id(pool(&state)?, id).await?))
+}
+
+async fn replace_course_sections(
+    tx: &mut Transaction<'_, Postgres>,
+    course_id: Uuid,
+    sections: Vec<SectionWrite>,
+) -> Result<(), AppError> {
+    // Existing IDs may only belong to this course. Never move another course's
+    // topics or let duplicate IDs silently replace content.
+    let mut ids = std::collections::HashSet::new();
+    for section in &sections {
+        if let Some(id) = section.id {
+            if !ids.insert(id) {
+                return Err(invalid("Temas duplicados."));
+            }
+            let owns: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM course_sections WHERE id=$1 AND course_id=$2)",
+            )
+            .bind(id)
+            .bind(course_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            if !owns {
+                return Err(invalid("El tema no pertenece a este curso."));
+            }
+        }
+    }
+    sqlx::query("DELETE FROM course_sections WHERE course_id=$1")
+        .bind(course_id)
+        .execute(&mut **tx)
+        .await?;
+    for (order, section) in sections.into_iter().enumerate() {
+        sqlx::query("INSERT INTO course_sections (id,course_id,title,body,sort_order) VALUES ($1,$2,$3,$4,$5)")
+            .bind(section.id.unwrap_or_else(Uuid::new_v4)).bind(course_id)
+            .bind(course_text(&section.title)).bind(course_text(&section.body)).bind(order as i32)
+            .execute(&mut **tx).await?;
+    }
+    Ok(())
 }
 
 pub async fn delete_course(
@@ -550,7 +629,7 @@ async fn post_json(pool: &PgPool, id: Uuid, public_only: bool) -> Result<Value, 
 
 async fn course_json_by_id(pool: &PgPool, id: Uuid) -> Result<Value, AppError> {
     sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'short_description',c.short_description,
+        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
          'description',c.description,'introduction',c.introduction,'syllabus',c.syllabus,
          'cover_image_url',c.cover_image_url,'cover_image_path',c.cover_image_path,'status',c.status,
          'sort_order',c.sort_order,'created_at',c.created_at,'updated_at',c.updated_at,'published_at',c.published_at,
@@ -565,14 +644,14 @@ async fn course_json_by_slug(
     admin_view: bool,
 ) -> Result<Value, AppError> {
     sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'short_description',c.short_description,
+        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
          'description',CASE WHEN c.status='published' OR $2 THEN c.description ELSE '' END,
          'introduction',CASE WHEN c.status='published' OR $2 THEN c.introduction ELSE '' END,
          'syllabus',CASE WHEN c.status='published' OR $2 THEN c.syllabus ELSE '' END,
          'cover_image_url',c.cover_image_url,'status',c.status,'sort_order',c.sort_order,
          'published_at',c.published_at,'content_available',(c.status='published' OR $2),
          'sections',CASE WHEN c.status='published' OR $2 THEN COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.sort_order,s.created_at) FROM course_sections s WHERE s.course_id=c.id),'[]'::jsonb) ELSE '[]'::jsonb END)
-         FROM courses c WHERE c.slug=$1",
+         FROM courses c WHERE c.slug=$1 AND (c.status='published' OR $2)",
     ).bind(slug).bind(admin_view).fetch_optional(pool).await?.ok_or(AppError::NotFound)
 }
 
@@ -606,6 +685,49 @@ fn invalid(message: &str) -> AppError {
 }
 fn draft() -> String {
     "draft".to_owned()
+}
+fn course_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| !ch.is_control() || *ch == '\n' || *ch == '\t')
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+fn generated_slug(name: &str, id: Uuid, suffix: bool) -> String {
+    let base = slugify(name);
+    let base = if base.is_empty() { "curso" } else { &base };
+    if suffix {
+        format!(
+            "{}-{}",
+            base.chars()
+                .take(147)
+                .collect::<String>()
+                .trim_end_matches('-'),
+            id.simple()
+        )
+    } else {
+        base.chars()
+            .take(180)
+            .collect::<String>()
+            .trim_end_matches('-')
+            .to_owned()
+    }
+}
+fn validate_topics(sections: Option<&[SectionWrite]>) -> Result<(), AppError> {
+    if let Some(sections) = sections {
+        if sections.len() > 100 || sections.iter().map(|s| s.body.len()).sum::<usize>() > 100_000 {
+            return Err(invalid("El temario es demasiado largo."));
+        }
+        for section in sections {
+            validate_section(
+                &course_text(&section.title),
+                &course_text(&section.body),
+                section.sort_order,
+            )?;
+        }
+    }
+    Ok(())
 }
 fn upcoming() -> String {
     "upcoming".to_owned()
@@ -649,10 +771,14 @@ fn validate_post_patch(input: &PostPatch) -> Result<(), AppError> {
     Ok(())
 }
 fn validate_course(input: &CourseWrite, slug: &str) -> Result<(), AppError> {
+    validate_topics(input.sections.as_deref())?;
     if input.name.trim().is_empty()
         || input.name.chars().count() > 180
         || input.short_description.chars().count() > 320
+        || input.description.trim().is_empty()
         || input.description.chars().count() > 100_000
+        || !matches!(input.modality.as_str(), "online" | "presencial")
+        || input.duration.chars().count() > 120
         || input.introduction.chars().count() > 50_000
         || input.syllabus.chars().count() > 50_000
         || !matches!(input.status.as_str(), "upcoming" | "published")
@@ -664,9 +790,18 @@ fn validate_course(input: &CourseWrite, slug: &str) -> Result<(), AppError> {
     Ok(())
 }
 fn validate_course_patch(input: &CoursePatch) -> Result<(), AppError> {
+    validate_topics(input.sections.as_deref())?;
+    validate_optional_text(input.duration.as_deref(), 120, false)?;
+    if input
+        .modality
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "online" | "presencial"))
+    {
+        return Err(invalid("Modalidad no válida."));
+    }
     validate_optional_text(input.name.as_deref(), 180, true)?;
     validate_optional_text(input.short_description.as_deref(), 320, false)?;
-    validate_optional_text(input.description.as_deref(), 100_000, false)?;
+    validate_optional_text(input.description.as_deref(), 100_000, true)?;
     validate_optional_text(input.introduction.as_deref(), 50_000, false)?;
     validate_optional_text(input.syllabus.as_deref(), 50_000, false)?;
     if input
@@ -753,6 +888,7 @@ fn map_unique(
 #[cfg(test)]
 mod tests {
     use super::{normalize_slug, slugify, validate_post};
+    use serde_json::json;
     #[test]
     fn slug_is_normalized_and_stable() {
         assert_eq!(slugify("  Curso Ágil / STS  "), "curso-agil-sts");
@@ -766,5 +902,52 @@ mod tests {
     #[test]
     fn invalid_status_is_rejected() {
         assert!(validate_post("", "Texto", "hidden", 0).is_err());
+    }
+
+    #[test]
+    fn course_requires_description_and_known_modality() {
+        let valid = json!({"name":"Curso","description":"Contenido","modality":"online"});
+        let mut input: super::CourseWrite = serde_json::from_value(valid.clone()).unwrap();
+        assert!(super::validate_course(&input, "curso").is_ok());
+        input.description = "   ".into();
+        assert!(super::validate_course(&input, "curso").is_err());
+        input.description = "Contenido".into();
+        input.modality = "hibrido".into();
+        assert!(super::validate_course(&input, "curso").is_err());
+        assert!(
+            serde_json::from_value::<super::CourseWrite>(
+                json!({"name":"Curso","description":"Texto"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn course_topics_reject_empty_titles_and_large_duration() {
+        let input: super::CourseWrite = serde_json::from_value(json!({"name":"Curso","description":"Texto","modality":"presencial","duration":"x".repeat(121)})).unwrap();
+        assert!(super::validate_course(&input, "curso").is_err());
+        let sections: Vec<super::SectionWrite> =
+            serde_json::from_value(json!([{"title":" \0 ","body":"Texto"}])).unwrap();
+        assert!(super::validate_topics(Some(&sections)).is_err());
+    }
+
+    #[test]
+    fn course_text_preserves_plain_text_and_removes_controls() {
+        assert_eq!(
+            super::course_text(" \0Texto\r\nseguro\t \u{7f}"),
+            "Texto\nseguro"
+        );
+    }
+
+    #[test]
+    fn generated_course_urls_are_bounded_and_handle_collisions() {
+        let id = uuid::Uuid::new_v4();
+        let name = "Curso ".repeat(100);
+        let first = super::generated_slug(&name, id, false);
+        let collision = super::generated_slug(&name, id, true);
+        assert!(first.len() <= 180 && collision.len() <= 180);
+        assert_ne!(first, collision);
+        assert!(super::normalize_slug(&collision).is_ok());
+        assert_eq!(super::generated_slug("飞行", id, false), "curso");
     }
 }

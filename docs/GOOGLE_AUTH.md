@@ -14,16 +14,22 @@ comprobarla; no simula un acceso correcto.
 2. Añada **`https://localhost`** a los orígenes JavaScript autorizados si accede
    mediante esa URL. Para otra URL, añada su origen exacto, incluido el puerto,
    sin rutas. El esquema y host deben coincidir con el navegador.
-3. Copie el **Client ID** público terminado en `.apps.googleusercontent.com` y
-   ejecute desde el proyecto:
+3. En **Admin → Configuración → Integraciones**, introduzca el **Client ID**
+   público terminado en `.apps.googleusercontent.com`, habilite Google y guarde.
+   Use «Generar challenge OAuth» para comprobar la preparación del flujo.
+   El backend aplica la configuración guardada inmediatamente y el login vuelve
+   a consultarla al abrirse, sin reconstruir imágenes.
+
+Como alternativa de despliegue inicial, cuando todavía no exista configuración
+de Google guardada en el panel, se conserva el fallback de entorno:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/configure-google-auth.ps1 -ClientId '<CLIENT_ID_PUBLICO>'
 ```
 
 El script actualiza únicamente `GOOGLE_CLIENT_ID` en el `.env` local y arranca la
-pila cifrada con su configuración actualizada. No necesita reconstruir el
-frontend. Este flujo de ID token con popup no necesita Client Secret ni una ruta
+pila cifrada. La configuración del panel tiene prioridad, incluida su
+desactivación explícita. Este flujo de ID token con popup no necesita Client Secret ni una ruta
 de callback/redirect OAuth en la aplicación.
 
 La configuración del cliente y los orígenes está descrita en la

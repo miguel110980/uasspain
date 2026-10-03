@@ -6,6 +6,7 @@ RUN apk upgrade --no-cache
 
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY proxy_params /etc/nginx/proxy_params
+COPY allowed_hosts.conf /etc/nginx/allowed_hosts.conf
 
 RUN chown -R nginx:nginx /var/cache/nginx /var/log/nginx /etc/nginx/conf.d \
     && touch /var/run/nginx.pid \

@@ -1,3 +1,4 @@
+import { windowBoundUrl } from '@/lib/windowSession';
 import apiClient from '@/api/apiClient';
 import { endpoints } from '@/api/endpoints';
 import { buildListParams, unwrapItem, unwrapList } from '@/api/queryParams';
@@ -87,7 +88,7 @@ function createWsSubscription(url: string, onEvent: (event: any) => void, pollMs
       return;
     }
     try {
-      const current = new WebSocket(url);
+      const current = new WebSocket(windowBoundUrl(url));
       ws = current;
       current.onopen = () => { failures = 0; stopPoll(); onEvent({ type: 'poll' }); };
       current.onmessage = (event) => {

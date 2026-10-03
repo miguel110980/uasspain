@@ -70,6 +70,7 @@ export default function InstructorPanel() {
   const [mensajes, setMensajes] = useState([]);
   const [conexiones, setConexiones] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState('');
   const [actionLoading, setActionLoading] = useState({});
   const { user, profile: authProfile } = usePanelAuthContext();
   const [accountProfile, setAccountProfile] = useState(null);
@@ -155,6 +156,9 @@ export default function InstructorPanel() {
       setMaterial(materialData);
       setMensajes(mensajesData);
       setConexiones(registrosData);
+      setDataError('');
+    } catch {
+      setDataError('No se pudieron actualizar los datos del panel. Vuelve a intentarlo.');
     } finally {
       if (!silent) setLoading(false);
     }
@@ -327,6 +331,7 @@ export default function InstructorPanel() {
       />
 
       <div className="flex-1 min-w-0 flex flex-col">
+        {dataError && <div role="alert" className="p-3 border border-danger-border bg-danger-soft text-danger text-sm">{dataError} <button onClick={() => loadAll()} className="underline">Reintentar</button></div>}
         <AdminTopbar
           navigation={NAV_GROUPS.flatMap(group => group.items)}
           onNavigate={handleSelect}

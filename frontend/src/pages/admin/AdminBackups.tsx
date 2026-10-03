@@ -1,8 +1,10 @@
+import PanelModal from '@/components/ui/PanelModal';
+import BackupDestinationForm, { BACKUP_SLOTS } from '@/components/admin/BackupDestinationForm';
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  DatabaseBackup, CheckCircle2, AlertTriangle, Clock3, HardDrive, RefreshCw, PlayCircle, Save, Globe,
-  Server, X, Loader2, ShieldCheck, XCircle, RotateCcw, Trash2,
+  DatabaseBackup, CheckCircle2, AlertTriangle, Clock3, HardDrive, RefreshCw, PlayCircle,
+  X, Loader2, ShieldCheck, XCircle, RotateCcw, Trash2,
 } from 'lucide-react';
 import apiClient from '@/api/apiClient';
 import endpoints from '@/api/endpoints';
@@ -87,17 +89,13 @@ export default function AdminBackups() {
   const [formJobType, setFormJobType] = useState('incremental');
   const [formRetentionFull, setFormRetentionFull] = useState(4);
   const [formRetentionInc, setFormRetentionInc] = useState(30);
-  const [formRemotePath, setFormRemotePath] = useState('');
 
-  const [extHosts, setExtHosts] = useState({ ext1: '', ext2: '' });
-  const [savingExt, setSavingExt] = useState({ ext1: false, ext2: false });
 
   // Modal de restauración por origen (§9): list → confirm → running → done | failed
   const [restore, setRestore] = useState(null);
 
-  const activeSftp = servers.filter((s) => s.is_active && s.transfer_protocol === 'sftp');
-  const ext1 = activeSftp.find((s) => !s.is_offsite) || null;
-  const ext2 = activeSftp.find((s) => s.is_offsite) || null;
+  const ext1 = servers.find((server) => server.role === 'external_1') || null;
+  const ext2 = servers.find((server) => server.role === 'external_2') || null;
 
   const load = async () => {
     setLoading(true);
@@ -115,11 +113,6 @@ export default function AdminBackups() {
       const srvList = Array.isArray(serversRes.data) ? serversRes.data : [];
       setServers(srvList);
 
-      const active = srvList.filter((s) => s.is_active && s.transfer_protocol === 'sftp');
-      const e1 = active.find((s) => !s.is_offsite) || null;
-      const e2 = active.find((s) => s.is_offsite) || null;
-      setExtHosts({ ext1: e1?.sftp_host || '', ext2: e2?.sftp_host || '' });
-
       const cfg = configRes.data?.value || {};
       setFormFreq(cfg.frequency || 'daily');
       setFormDay(cfg.day || '*');
@@ -128,7 +121,6 @@ export default function AdminBackups() {
       setFormJobType(cfg.job_type || 'incremental');
       setFormRetentionFull(cfg.retention_full || 4);
       setFormRetentionInc(cfg.retention_incremental || 30);
-      setFormRemotePath(cfg.remote_path || '');
     } catch (err) {
       setError(apiErr(err, 'No se pudo cargar el estado de backups.'));
     } finally {
@@ -153,7 +145,6 @@ export default function AdminBackups() {
           job_type: formJobType,
           retention_full: formRetentionFull,
           retention_incremental: formRetentionInc,
-          remote_path: formRemotePath,
         },
       };
       const res = await apiClient.put(endpoints.backups.config, payload);
@@ -194,26 +185,6 @@ export default function AdminBackups() {
       await load();
     } catch (err) {
       setError(apiErr(err, 'No se pudo eliminar el backup.'));
-    }
-  };
-
-  const saveExtHost = async (slot, server) => {
-    if (!server) return;
-    const key = slot === 1 ? 'ext1' : 'ext2';
-    const value = (extHosts[key] || '').trim();
-    setSavingExt((prev) => ({ ...prev, [key]: true }));
-    setError('');
-    setConnectionMsg('');
-    try {
-      const payload: { sftp_host: string; ip_address?: string } = { sftp_host: value };
-      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) payload.ip_address = value;
-      await apiClient.put(endpoints.backups.serverDetail(server.id), payload);
-      setConnectionMsg(`Servidor externo ${slot} guardado (destino independiente).`);
-      await load();
-    } catch (err) {
-      setError(apiErr(err, `No se pudo guardar el servidor externo ${slot}.`));
-    } finally {
-      setSavingExt((prev) => ({ ...prev, [key]: false }));
     }
   };
 
@@ -339,22 +310,6 @@ export default function AdminBackups() {
     }
   };
 
-  const testConnection = async () => {
-    const serverId = status?.backup_servers?.[0]?.id;
-    if (!serverId) {
-      setError('No hay servidor de backup configurado para probar.');
-      return;
-    }
-    try {
-      const res = await apiClient.post(endpoints.backups.testConnection, { server_id: serverId });
-      setConnectionMsg(res.data?.detail || 'Conexión OK');
-      setError('');
-    } catch (err) {
-      setConnectionMsg('');
-      setError(err?.response?.data?.detail || 'Fallo al probar la conexión.');
-    }
-  };
-
   const dayLabel = formDay === '*' ? 'Todos los días' : DIAS.find((d) => d.value === formDay)?.label || formDay;
   const proximoBackup = formFreq === 'weekly'
     ? `${dayLabel} a las ${formHour}`
@@ -431,89 +386,13 @@ export default function AdminBackups() {
           <button onClick={applyRetention} className="inline-flex items-center gap-2 rounded border border-border-subtle bg-surface-subtle px-3 py-2 text-sm text-foreground">
             <HardDrive className="w-4 h-4" /> Aplicar retención
           </button>
-          <button onClick={testConnection} className="inline-flex items-center gap-2 rounded border border-border-subtle bg-surface-subtle px-3 py-2 text-sm text-foreground">
-            <RefreshCw className="w-4 h-4" /> Probar conexión
-          </button>
+
         </div>
         {connectionMsg ? <div className="mt-3 rounded border border-success-border bg-success-soft p-3 text-sm text-success">{connectionMsg}</div> : null}
       </div>
 
-      <div className="glass-card p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-heading text-sm font-semibold text-foreground flex items-center gap-2">
-            <Server className="w-4 h-4 text-primary" /> Destinos externos (SFTP)
-          </h3>
-        </div>
-        <div className="grid md:grid-cols-2 gap-4">
-          {[
-            { slot: 1, key: 'ext1', srv: ext1 },
-            { slot: 2, key: 'ext2', srv: ext2 },
-          ].map(({ slot, key, srv }) => (
-            <div key={key} className="rounded border border-border-subtle bg-surface-subtle p-3 space-y-2">
-              <label className="block text-xs text-muted-foreground">
-                Servidor externo {slot} — IP/hostname
-              </label>
-              <input
-                type="text"
-                value={extHosts[key]}
-                onChange={(e) => setExtHosts((prev) => ({ ...prev, [key]: e.target.value }))}
-                disabled={!srv}
-                placeholder={srv ? 'ej. 172.30.20.10 o backup.ejemplo.com' : 'No configurado'}
-                className="w-full rounded border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-foreground font-mono disabled:opacity-50"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] text-muted-foreground">
-                  {srv
-                    ? `${srv.name} · IP: ${srv.ip_address} · ${srv.is_offsite ? 'off-site' : 'externo'}`
-                    : 'Sin servidor SFTP activo para este destino.'}
-                </p>
-                <button
-                  onClick={() => saveExtHost(slot, srv)}
-                  disabled={!srv || savingExt[key]}
-                  className="inline-flex items-center gap-1.5 rounded border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs text-primary disabled:opacity-50"
-                >
-                  <Save className="w-3 h-3" /> {savingExt[key] ? 'Guardando...' : 'Guardar'}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="text-[10px] text-muted-foreground mt-2">
-          Cada destino guarda su propia configuración (PUT independiente por servidor). El valor se valida en el servidor (hostname/IP estricto, sin comandos ni rutas).
-        </p>
-      </div>
-
-      <div className="glass-card p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-heading text-sm font-semibold text-foreground">Almacenamiento remoto</h3>
-          <button onClick={saveConfig} disabled={saving} className="inline-flex items-center gap-2 rounded border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs text-primary disabled:opacity-50">
-            <Save className="w-3.5 h-3.5" /> {saving ? 'Guardando...' : 'Guardar'}
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-muted-foreground mb-1 flex items-center gap-1">
-              <Globe className="w-3 h-3" /> Directorio en Server 2 (via VPN)
-            </label>
-            <input
-              type="text"
-              value={formRemotePath}
-              onChange={(e) => setFormRemotePath(e.target.value)}
-              placeholder="\\10.50.0.2\Backups"
-              className="w-full rounded border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-foreground font-mono"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Ruta SMB en Server 2 (10.50.0.2) — siempre vía VPN
-            </p>
-          </div>
-
-          <div className="rounded border border-border-subtle bg-surface-subtle p-3 text-xs text-muted-foreground">
-            <p className="font-medium text-foreground mb-1">Estado actual</p>
-            <p>Servidor: <span className="font-mono text-foreground">{formRemotePath || 'No configurado'}</span></p>
-            <p>VPN: <span className={status?.remote_available ? 'text-success' : 'text-warning'}>{status?.remote_available ? 'Conectado a 10.50.0.2' : 'Sin conexión'}</span></p>
-          </div>
-        </div>
+      <div className="grid lg:grid-cols-3 gap-4" aria-label="Destinos de backup">
+        {BACKUP_SLOTS.map((slot) => <BackupDestinationForm key={slot.role} {...slot} server={servers.find((server) => server.role === slot.role)} onSaved={load} />)}
       </div>
 
       <div className="glass-card p-5">
@@ -662,20 +541,7 @@ export default function AdminBackups() {
 
       <AnimatePresence>
         {restore ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-            onClick={() => restore.step !== 'running' && setRestore(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.96, y: 8 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.96, y: 8 }}
-              className="glass-card w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5"
-              onClick={(e) => e.stopPropagation()}
-            >
+          <PanelModal label="Restaurar copia de seguridad" onClose={() => restore.step !== 'running' && setRestore(null)} className="glass-card max-w-2xl p-5">
               <div className="flex items-start justify-between gap-3 mb-4">
                 <div>
                   <h3 className="font-heading text-sm font-semibold text-foreground flex items-center gap-2">
@@ -880,8 +746,7 @@ export default function AdminBackups() {
                   </div>
                 </div>
               ) : null}
-            </motion.div>
-          </motion.div>
+            </PanelModal>
         ) : null}
       </AnimatePresence>
     </motion.div>

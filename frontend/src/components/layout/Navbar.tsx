@@ -94,16 +94,17 @@ export default function Navbar() {
   const { data: managedCourses = [] } = useQuery({
     queryKey: ['public', 'courses'],
     queryFn: contentService.publicCourses,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
+    refetchInterval: 30_000,
   });
   const effectiveNavLinks = navLinks.map((link) => link.label !== 'Formación' ? link : {
     ...link,
     groups: [
       { label: 'Catálogo', children: [
         { label: 'Todos los cursos', href: '/formacion', icon: GraduationCap },
-        ...managedCourses.map((course) => ({
-          label: course.status === 'upcoming' ? `${course.name} · Próximamente` : course.name,
-          href: course.status === 'published' ? `/formacion/${course.slug}` : '/formacion',
+        ...managedCourses.filter(course => course.status === 'published').map((course) => ({
+          label: course.name,
+          href: `/formacion/${course.slug}`,
           icon: GraduationCap,
         })),
       ] },

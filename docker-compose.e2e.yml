@@ -52,7 +52,7 @@ services:
       DB_SSLMODE: disable
       REDIS_URL: redis://redis-e2e:6379/0
       CORS_ALLOWED_ORIGINS: http://localhost:8010,http://127.0.0.1:8010,http://127.0.0.1:8011
-      FRONTEND_URL: http://127.0.0.1:8010
+      FRONTEND_URL: https://localhost
       JWT_COOKIE_SECURE: "false"
       BOOTSTRAP_ADMIN_ENABLED: "true"
       BOOTSTRAP_ADMIN_EMAIL: e2e-admin@test.local
@@ -63,6 +63,7 @@ services:
       BOOTSTRAP_ADMIN_BIRTH_DATE: 1990-01-01
       BOOTSTRAP_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD:-E2eAdmin_2026!}
       DEV_EMAIL: "true"
+      DEV_EMAIL_OUTBOX_DIR: /app/backups/e2e-mailbox
       MEDIA_ROOT: /app/media
       BACKUP_STORAGE_PATH: /app/backups
       BACKUP_KEY_DIR: /app/backup_keys
@@ -85,6 +86,31 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
+    networks: [e2e_net]
+
+  media-e2e:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: uasspain-e2e-media:local
+    entrypoint: ["nginx"]
+    command: ["-c", "/etc/nginx/e2e-media.conf", "-g", "daemon off;"]
+    user: "1001:1001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    volumes:
+      - ./scripts/e2e/media-nginx.conf:/etc/nginx/e2e-media.conf:ro
+      - e2e_media:/media_data:ro
+    ports:
+      - "127.0.0.1:8012:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     networks: [e2e_net]
 
   sftp-ext1-e2e:

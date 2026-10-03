@@ -114,9 +114,6 @@ export const endpoints = {
     blogImage: (postId, imageId) => `${API_PREFIX}/admin/blog/posts/${postId}/images/${imageId}`,
     courses: `${API_PREFIX}/admin/courses`,
     course: (id) => `${API_PREFIX}/admin/courses/${id}`,
-    courseCover: (id) => `${API_PREFIX}/admin/courses/${id}/cover`,
-    courseSections: (id) => `${API_PREFIX}/admin/courses/${id}/sections`,
-    courseSection: (courseId, sectionId) => `${API_PREFIX}/admin/courses/${courseId}/sections/${sectionId}`,
   },
   contact: `${API_PREFIX}/contact/`,
 

@@ -10,6 +10,7 @@ import examenesService from '@/services/examenesService';
 import materialesService from '@/services/materialesService';
 import conexionesService from '@/services/conexionesService';
 import { useRefreshableLoad } from '@/hooks/useRefreshableLoad';
+import { hasRole } from '@/lib/roles';
 
 const CYAN = '#22D3EE';
 const ORANGE = '#F97316';
@@ -56,16 +57,16 @@ export default function AdminEstadisticas() {
     return {
       name: m.name,
       total: enMes.length,
-      alumnos: enMes.filter((p) => (p.role || 'alumno') === 'alumno').length,
-      instructores: enMes.filter((p) => p.role === 'instructor').length,
+      alumnos: enMes.filter((p) => hasRole(p, 'alumno')).length,
+      instructores: enMes.filter((p) => hasRole(p, 'instructor')).length,
     };
   });
 
   // Distribución por rol
   const rolesPie = [
-    { name: 'Alumnos', value: profiles.filter((p) => (p.role || 'alumno') === 'alumno').length, color: BLUE },
-    { name: 'Instructores', value: profiles.filter((p) => p.role === 'instructor').length, color: CYAN },
-    { name: 'Admins', value: profiles.filter((p) => p.role === 'admin').length, color: ORANGE },
+    { name: 'Alumnos', value: profiles.filter((p) => hasRole(p, 'alumno')).length, color: BLUE },
+    { name: 'Instructores', value: profiles.filter((p) => hasRole(p, 'instructor')).length, color: CYAN },
+    { name: 'Admins', value: profiles.filter((p) => hasRole(p, 'admin')).length, color: ORANGE },
   ];
 
   // Exámenes realizados por categoría
@@ -151,7 +152,7 @@ export default function AdminEstadisticas() {
         {/* Distribución por rol */}
         <div className="glass-card p-5">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Distribución por rol</h3>
-          <p className="text-xs text-muted-foreground mb-4">Composición de usuarios</p>
+          <p className="text-xs text-muted-foreground mb-4">Usuarios por rol; una persona puede pertenecer a varios roles.</p>
           <ResponsiveContainer width="100%" height={240}>
             <PieChart>
               <Pie data={rolesPie} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={3}>
@@ -207,7 +208,7 @@ export default function AdminEstadisticas() {
       {/* Certificados por mes */}
       <div className="glass-card p-5">
         <h3 className="font-heading text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
-          <Award className="w-4 h-4 text-primary" /> Certificados emitidos por mes
+          <Award className="w-4 h-4 text-primary" /> Exámenes aprobados por mes
         </h3>
         <p className="text-xs text-muted-foreground mb-4">Exámenes aprobados (últimos 12 meses)</p>
         <ResponsiveContainer width="100%" height={220}>
@@ -216,7 +217,7 @@ export default function AdminEstadisticas() {
             <XAxis dataKey="name" tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
             <Tooltip contentStyle={TT} />
-            <Bar dataKey="certificados" fill={EMERALD} radius={[4, 4, 0, 0]} name="Certificados" />
+            <Bar dataKey="certificados" fill={EMERALD} radius={[4, 4, 0, 0]} name="Exámenes aprobados" />
           </BarChart>
         </ResponsiveContainer>
       </div>

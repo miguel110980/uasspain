@@ -4,6 +4,8 @@ import {
   Settings, Shield, Mail, Users, Plug, ScrollText, Loader2,
 } from 'lucide-react';
 import authService from '@/services/authService';
+import RuntimeIntegrationForm from '@/components/admin/RuntimeIntegrationForm';
+import type { SystemStatusResponse } from '@/api/systemStatus';
 import { websocketServiceStatus } from '@/lib/systemStatus';
 
 const SECCIONES = [
@@ -21,7 +23,7 @@ const badge = (ok) => (ok
 
 export default function AdminConfiguracion() {
   const [activa, setActiva] = useState('general');
-  const [status, setStatus] = useState(null);
+  const [status, setStatus] = useState<SystemStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -29,6 +31,8 @@ export default function AdminConfiguracion() {
       try {
         const data = await authService.getSystemStatus();
         setStatus(data);
+      } catch {
+        setStatus(null);
       } finally {
         setLoading(false);
       }
@@ -37,13 +41,13 @@ export default function AdminConfiguracion() {
 
   const detalle = (() => {
     if (!status) return [];
-    const p = status.platform || {};
-    const redis = status.redis || {};
-    const smtp = status.smtp || {};
-    const oauth = status.google_oauth || {};
-    const users = status.users || {};
-    const sec = status.security || {};
-    const twoFactor = status.two_factor || {};
+    const p = status.platform;
+    const redis = status.redis;
+    const smtp = status.smtp;
+    const oauth = status.google_oauth;
+    const users = status.users;
+    const sec = status.security;
+    const twoFactor = status.two_factor;
     const ws = websocketServiceStatus(status);
 
     const map = {
@@ -51,7 +55,7 @@ export default function AdminConfiguracion() {
         { label: 'Nombre de la plataforma', value: p.name || 'UASSPAIN' },
         { label: 'URL frontend', value: p.frontend_url || '—' },
         { label: 'Zona horaria', value: p.timezone || 'Europe/Madrid' },
-        { label: 'Modo', value: p.production ? 'Producción' : (p.debug ? 'Desarrollo (debug)' : 'Desarrollo'), estado: p.production ? 'ok' : 'warning' },
+        { label: 'Modo', value: p.production ? 'Producción' : 'Desarrollo', estado: p.production ? 'ok' : 'warning' },
       ],
       seguridad: [
         { label: 'Cookies JWT seguras', value: sec.jwt_cookie_secure ? 'HTTPS only' : 'HTTP permitido (dev)', estado: sec.jwt_cookie_secure ? 'ok' : 'warning' },
@@ -66,14 +70,14 @@ export default function AdminConfiguracion() {
         { label: 'Impacto en 2FA', value: smtp.configured ? 'Los códigos de acceso pueden enviarse por email' : '2FA no enviará correos hasta configurar SMTP', estado: smtp.configured ? 'ok' : 'warning' },
       ],
       roles: [
-        { label: 'Administradores', value: String(users.admin ?? 0) },
-        { label: 'Instructores', value: String(users.instructor ?? 0) },
-        { label: 'Alumnos', value: String(users.alumno ?? 0) },
+        { label: 'Administradores', value: users.admin == null ? 'N/D' : String(users.admin) },
+        { label: 'Instructores', value: users.instructor == null ? 'N/D' : String(users.instructor) },
+        { label: 'Alumnos', value: users.alumno == null ? 'N/D' : String(users.alumno) },
       ],
       integraciones: [
         { label: 'Google OAuth', value: oauth.configured ? 'Configurado' : 'No configurado', estado: oauth.configured ? 'ok' : 'warning' },
         { label: 'WebSockets', value: ws.value, estado: ws.status === 'ok' ? 'ok' : 'warning' },
-        { label: 'Backend de canales', value: redis.backend || status?.websockets?.backend || 'inmemory' },
+        { label: 'Backend de canales', value: redis.backend || status?.websockets?.backend || 'N/D' },
         { label: '2FA por roles', value: twoFactor.enabled ? ((twoFactor.required_roles || []).join(', ') || 'Sin roles obligatorios') : 'Desactivada', estado: twoFactor.enabled ? 'ok' : 'warning' },
       ],
       auditoria: [
@@ -117,6 +121,7 @@ export default function AdminConfiguracion() {
         </div>
 
         <div className="lg:col-span-3 glass-card p-6">
+          {!status && <p role="alert">No se pudo consultar el estado del sistema.</p>}
           <ul className="space-y-4">
             {detalle.map((item) => (
               <li key={item.label} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border-subtle pb-4 last:border-0 last:pb-0">
@@ -127,6 +132,7 @@ export default function AdminConfiguracion() {
               </li>
             ))}
           </ul>
+          {(activa === 'smtp' || activa === 'integraciones') && <RuntimeIntegrationForm kind={activa === 'smtp' ? 'smtp' : 'google'} onSaved={() => { void authService.getSystemStatus().then(setStatus).catch(() => setStatus(null)); }} />}
         </div>
       </div>
     </motion.div>

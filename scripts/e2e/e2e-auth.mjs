@@ -1,0 +1,142 @@
+import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { adminClient, apiClient, check, mailFiles, readMail, registerFixture, resetPayload, sleep, sql } from './auth-fixtures.mjs';
+
+let passed = 0;
+const gate = (condition, name) => { check(condition, name); passed++; console.log(`PASS | auth_${name}`); };
+const fixtures = [];
+let admin;
+try {
+  admin = await adminClient();
+  const client = apiClient();
+  for (const email of ['', 'invalid', '<script>@', 'a'.repeat(255) + '@test.local']) {
+    gate((await client.call('/api/auth/login/', 'POST', { email, password: 'Invalid' })).status === 400, 'invalid_email_rejected');
+  }
+  const unknown = await client.call('/api/auth/login/', 'POST', { email: 'unknown-auth@test.local', password: 'Invalid' });
+  const incorrect = await client.call('/api/auth/login/', 'POST', { email: 'alumno.e2e@test.local', password: 'Invalid' });
+  gate(unknown.status === 401 && incorrect.status === 401 && unknown.body.detail === incorrect.body.detail && unknown.body.code === incorrect.body.code, 'login_anti_enumeration');
+  const first = await registerFixture('v1:not-an-encrypted-envelope'); fixtures.push(first);
+  gate(sql(`SELECT fecha_nacimiento LIKE 'v1:%' FROM accounts_userprofile WHERE id='${first.id}'`) === 't', 'registration_birth_date_encrypted');
+  const wrong = first.code === '111111' ? '222222' : '111111';
+  gate((await client.call('/api/auth/verify-otp/', 'POST', { email: first.email.toUpperCase(), code: wrong })).status === 400, 'registration_otp_invalid');
+  const verified = await Promise.all([apiClient(), apiClient()].map(c => c.call('/api/auth/verify-otp/', 'POST', { email: first.email, code: first.code })));
+  gate(verified.map(r => r.status).sort().join(',') === '200,400', 'registration_otp_concurrent_single_use');
+  gate((await client.call('/api/auth/verify-otp/', 'POST', { email: first.email, code: first.code })).status === 400, 'registration_otp_replay');
+  const second = await registerFixture(); fixtures.push(second);
+  sql(`UPDATE accounts_userprofile SET otp_created_at=NOW()-INTERVAL '16 minutes' WHERE id='${second.id}'`);
+  gate((await client.call('/api/auth/verify-otp/', 'POST', { email: second.email, code: second.code })).status === 400, 'registration_otp_expired');
+  let before = new Set(mailFiles());
+  gate((await client.call('/api/auth/resend-otp/', 'POST', { email: second.email.toUpperCase() })).status === 200, 'registration_otp_resend');
+  let message = await readMail(second.email, before);
+  const renewed = message.body.match(/\b\d{6}\b/)[0];
+  if (renewed !== second.code) gate((await client.call('/api/auth/verify-otp/', 'POST', { email: second.email, code: second.code })).status === 400, 'resend_invalidates_old_code');
+  gate((await client.call('/api/auth/verify-otp/', 'POST', { email: second.email, code: renewed })).status === 200, 'resend_new_code_valid');
+  const third = await registerFixture(); fixtures.push(third);
+  for (let n = 0; n < 5; n++) await client.call('/api/auth/verify-otp/', 'POST', { email: third.email, code: third.code === '111111' ? '222222' : '111111' });
+  gate((await client.call('/api/auth/verify-otp/', 'POST', { email: third.email, code: third.code })).status === 400 && sql(`SELECT otp_attempts=5 FROM accounts_userprofile WHERE id='${third.id}'`) === 't', 'registration_otp_attempt_limit');
+  const pending = await client.call('/api/auth/login/', 'POST', { email: first.email, password: first.password });
+  gate(pending.status === 401 && pending.body.detail === unknown.body.detail && pending.body.code === unknown.body.code, 'disabled_or_pending_account_neutral');
+  gate((await admin.call(`/api/profiles/${first.id}/`, 'PATCH', { status: 'activo' })).status === 200, 'isolated_fixture_activated');
+  const session = apiClient();
+  gate((await session.call('/api/auth/login/', 'POST', { email: first.email.toUpperCase(), password: first.password })).status === 200, 'uppercase_login');
+  gate((await session.call('/api/auth/me/')).body.profile.nombre === 'v1:not-an-encrypted-envelope', 'untrusted_cipher_prefix_preserved_as_plain_text');
+  const oldRefresh = session.cookies.uasspain_refresh;
+  gate((await session.call('/api/auth/refresh/', 'POST', {})).status === 200 && session.cookies.uasspain_refresh !== oldRefresh, 'refresh_rotation');
+  const replay = apiClient(session.windowId, { ...session.cookies, uasspain_refresh: oldRefresh });
+  gate((await replay.call('/api/auth/refresh/', 'POST', {})).status === 401 && (await session.call('/api/auth/me/')).status === 200, 'refresh_replay_rejected');
+  const [header, encoded] = session.cookies.uasspain_access.split('.');
+  const expiredClaims = JSON.parse(Buffer.from(encoded, 'base64url').toString());
+  expiredClaims.exp = Math.floor(Date.now() / 1000) - 120;
+  const expiredPayload = Buffer.from(JSON.stringify(expiredClaims)).toString('base64url');
+  const unsigned = `${header}.${expiredPayload}`;
+  const signature = createHmac('sha256', 'e2e-only-secret-key-with-at-least-thirty-two-bytes').update(unsigned).digest('base64url');
+  const expiredSession = apiClient(session.windowId, { ...session.cookies, uasspain_access: `${unsigned}.${signature}` });
+  gate((await expiredSession.call('/api/auth/me/')).status === 401 && (await expiredSession.call('/api/auth/refresh/', 'POST', {})).status === 200, 'session_expiry_and_refresh');
+
+  before = new Set(mailFiles());
+  const existing = await client.call('/api/auth/password-reset/', 'POST', { email: first.email.toUpperCase() });
+  const absent = await client.call('/api/auth/password-reset/', 'POST', { email: 'no-account-auth@test.local' });
+  gate(existing.status === 200 && absent.status === 200 && JSON.stringify(existing.body) === JSON.stringify(absent.body), 'recovery_neutral_no_404');
+  message = await readMail(first.email, before, 'Restablecer');
+  const newPassword = `Zz9!${randomBytes(18).toString('hex')}`;
+  const payload = resetPayload(message, newPassword);
+  const digest = createHash('sha256').update(payload.get('token')).digest('hex');
+  gate(sql(`SELECT count(*)=1 FROM accounts_passwordresettoken WHERE user_id=${first.userId} AND token_hash='${digest}'`) === 't', 'random_reset_token_stored_as_hash');
+  before = new Set(mailFiles());
+  await client.call('/api/auth/password-reset/', 'POST', { email: first.email });
+  await sleep(100);
+  gate(mailFiles().length === before.size && sql(`SELECT count(*)=1 FROM accounts_passwordresettoken WHERE user_id=${first.userId} AND token_hash='${digest}'`) === 't', 'recovery_account_send_cooldown');
+  const modified = new URLSearchParams(payload); modified.set('token', payload.get('token') + 'x');
+  const invalidToken = await client.call('/api/auth/password-reset/confirm/', 'POST', modified);
+  gate(invalidToken.status === 400, 'reset_modified_token');
+  const absentUid = new URLSearchParams(modified); absentUid.set('uid', Buffer.from('2147483647').toString('base64url'));
+  const noUser = await client.call('/api/auth/password-reset/confirm/', 'POST', absentUid);
+  gate(noUser.status === 400 && noUser.body.detail === invalidToken.body.detail && noUser.body.code === invalidToken.body.code, 'reset_uid_anti_enumeration');
+  const foreign = new URLSearchParams(payload); foreign.set('uid', Buffer.from(String(second.userId)).toString('base64url'));
+  gate((await client.call('/api/auth/password-reset/confirm/', 'POST', foreign)).status === 400, 'reset_token_other_user');
+  sql(`UPDATE accounts_passwordresettoken SET created_at=NOW()-INTERVAL '2 hours',expires_at=NOW()-INTERVAL '1 hour' WHERE user_id=${first.userId}`);
+  gate((await client.call('/api/auth/password-reset/confirm/', 'POST', payload)).status === 400, 'reset_expired_token');
+  before = new Set(mailFiles());
+  await client.call('/api/auth/password-reset/', 'POST', { email: first.email });
+  message = await readMail(first.email, before, 'Restablecer');
+  const current = resetPayload(message, newPassword);
+  const resets = await Promise.all([apiClient(), apiClient()].map(c => c.call('/api/auth/password-reset/confirm/', 'POST', current)));
+  gate(resets.map(r => r.status).sort().join(',') === '200,400', 'reset_concurrent_single_use');
+  gate((await client.call('/api/auth/password-reset/confirm/', 'POST', current)).status === 400, 'reset_replay');
+  gate((await session.call('/api/auth/me/')).status === 401, 'reset_revokes_old_session');
+  gate((await client.call('/api/auth/login/', 'POST', { email: first.email, password: first.password })).status === 401, 'reset_revokes_old_password');
+  first.password = newPassword;
+  const fresh = apiClient();
+  gate((await fresh.call('/api/auth/login/', 'POST', { email: first.email, password: newPassword })).status === 200, 'reset_new_password_login');
+  before = new Set(mailFiles()); await client.call('/api/auth/password-reset/', 'POST', { email: first.email });
+  message = await readMail(first.email, before, 'Restablecer');
+  const stale = resetPayload(message, `Dd9!${randomBytes(18).toString('hex')}`);
+  const changedPassword = `Ee9!${randomBytes(18).toString('hex')}`;
+  gate((await fresh.call('/api/auth/change-password/', 'POST', { current_password: newPassword, new_password: changedPassword })).status === 200, 'change_password_atomic_revocation');
+  first.password = changedPassword;
+  gate((await client.call('/api/auth/password-reset/confirm/', 'POST', stale)).status === 400, 'password_change_invalidates_reset_tokens');
+
+  gate((await admin.call('/api/system/auth-policy/', 'PUT', { enabled: true, required_roles: ['alumno'] })).status === 200, 'login_otp_policy_enabled');
+  before = new Set(mailFiles());
+  const otpPending = await client.call('/api/auth/login/', 'POST', { email: first.email, password: first.password });
+  gate(otpPending.status === 202, 'login_otp_requested');
+  gate(!('roles' in otpPending.body) && !('role' in otpPending.body) && !('profile_id' in otpPending.body), 'login_otp_no_roles_before_verification');
+  message = await readMail(first.email, before, 'temporal');
+  const loginCode = message.body.match(/\b\d{6}\b/)[0];
+  gate((await client.call('/api/auth/login/', 'POST', { email: first.email, password: first.password, code: loginCode === '111111' ? '222222' : '111111' })).status === 400, 'login_otp_invalid');
+  const successes = await Promise.all([apiClient(), apiClient()].map(c => c.call('/api/auth/login/', 'POST', { email: first.email, password: first.password, code: loginCode })));
+  gate(successes.filter(r => r.status === 200).length === 1 && successes.every(r => [200, 400, 401].includes(r.status)), 'login_otp_concurrent_single_use');
+  gate((await client.call('/api/auth/login/', 'POST', { email: first.email, password: first.password, code: loginCode })).status === 400, 'login_otp_replay');
+  // A separate fixture avoids exhausting the real per-identity rate limit.
+  await admin.call(`/api/profiles/${second.id}/`, 'PATCH', { status: 'activo' });
+  before = new Set(mailFiles()); await client.call('/api/auth/login/', 'POST', { email: second.email, password: second.password });
+  message = await readMail(second.email, before, 'temporal');
+  sql(`UPDATE accounts_userprofile SET login_otp_created_at=NOW()-INTERVAL '16 minutes' WHERE id='${second.id}'`);
+  gate((await client.call('/api/auth/login/', 'POST', { email: second.email, password: second.password, code: message.body.match(/\b\d{6}\b/)[0] })).status === 400, 'login_otp_expired');
+  const fourth = await registerFixture(); fixtures.push(fourth);
+  await client.call('/api/auth/verify-otp/', 'POST', { email: fourth.email, code: fourth.code });
+  await admin.call(`/api/profiles/${fourth.id}/`, 'PATCH', { status: 'activo' });
+  before = new Set(mailFiles());
+  await client.call('/api/auth/login/', 'POST', { email: fourth.email, password: fourth.password });
+  message = await readMail(fourth.email, before, 'temporal');
+  const limitedCode = message.body.match(/\b\d{6}\b/)[0];
+  before = new Set(mailFiles());
+  gate((await client.call('/api/auth/login/', 'POST', { email: fourth.email, password: fourth.password })).status === 202 && mailFiles().length === before.size, 'login_otp_resend_cooldown');
+  for (let n = 0; n < 5; n++) await apiClient().call('/api/auth/login/', 'POST', { email: fourth.email, password: fourth.password, code: limitedCode === '111111' ? '222222' : '111111' });
+  gate(sql(`SELECT login_otp_attempts=5 FROM accounts_userprofile WHERE id='${fourth.id}'`) === 't' && (await client.call('/api/auth/login/', 'POST', { email: fourth.email, password: fourth.password, code: limitedCode })).status === 400, 'login_otp_account_attempt_limit');
+  gate((await client.call('/api/auth/resend-otp/', 'POST', { email: 'absent-otp@test.local' })).status === 200, 'resend_neutral_unknown_account');
+  for (let n = 0; n < 10; n++) await client.call('/api/auth/password-reset/', 'POST', { email: 'rate-reset@test.local' });
+  gate((await client.call('/api/auth/password-reset/', 'POST', { email: 'rate-reset@test.local' })).status === 429, 'recovery_rate_limit');
+  console.log(`AUTH_E2E=${passed}/${passed} PASS; SMTP_TRANSPORT=NOT_TESTED; GOOGLE_EXTERNAL=NOT_TESTED`);
+} catch (error) {
+  console.error(`AUTH_E2E=FAIL; gate=${error.message.split('\n')[0]}`);
+  process.exitCode = 1;
+} finally {
+  if (admin) {
+    await admin.call('/api/system/auth-policy/', 'PUT', { enabled: false, required_roles: [] });
+    for (const fixture of fixtures) {
+      check((await admin.call(`/api/profiles/${fixture.id}/`, 'DELETE')).status === 204, 'Fixture cleanup');
+      fixture.password = ''; fixture.code = '';
+    }
+  }
+  await sleep(100);
+}

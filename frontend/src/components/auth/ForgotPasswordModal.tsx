@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useRef, useState } from 'react';
 import { X, Loader2, ChevronLeft } from 'lucide-react';
 import authService from '@/services/authService';
 import { extractErrorMessage } from '@/lib/errors';
@@ -10,9 +10,12 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [isError, setIsError] = useState(false);
+  const submission = useRef(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submission.current) return;
+    submission.current = true;
     setLoading(true);
     setMessage('');
     setIsError(false);
@@ -21,12 +24,13 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
       setMessage('Introduce un correo electrónico válido.');
       setIsError(true);
       setLoading(false);
+      submission.current = false;
       return;
     }
     try {
       const data = await authService.resetPasswordRequest(cleanEmail);
       setMessage(
-        data?.detail || 'Hemos enviado un enlace para restablecer su contraseña. Revise su correo electrónico.',
+        data?.detail || 'Si existe una cuenta asociada a ese correo, recibirás un enlace para restablecer tu contraseña.',
       );
       setIsError(false);
     } catch (err) {
@@ -37,12 +41,13 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
       setIsError(true);
     } finally {
       setLoading(false);
+      submission.current = false;
     }
   };
 
   return (
     <AuthModalShell onClose={onClose}>
-        <button type="button" onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-primary transition-colors">
+        <button type="button" aria-label="Cerrar recuperación" onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-primary transition-colors">
           <X className="w-5 h-5" />
         </button>
 
@@ -57,19 +62,27 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
           <p className="text-sm text-muted-foreground mt-1">Introduce tu correo para obtener un enlace de recuperación.</p>
         </div>
 
-        {message ? (
-          <div className={`px-4 py-4 border text-sm rounded-sm mb-6 ${isError ? 'border-danger-border bg-danger-soft text-danger' : 'border-primary/30 bg-primary/5 text-primary'}`}>
+        {message && (
+          <div id="recovery-message" role={isError ? 'alert' : 'status'} className={`px-4 py-4 border text-sm rounded-sm mb-6 ${isError ? 'border-danger-border bg-danger-soft text-danger' : 'border-primary/30 bg-primary/5 text-primary'}`}>
             <p>{message}</p>
           </div>
-        ) : (
+        )}
+        {(!message || isError) && (
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-1.5">
-              <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Correo electrónico *</label>
+              <label htmlFor="recovery-email" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Correo electrónico *</label>
               <input
+                id="recovery-email"
                 type="email"
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                maxLength={254}
+                aria-invalid={isError}
+                aria-describedby={message ? 'recovery-message' : undefined}
                 required
                 value={email}
-                onChange={(e) => setEmail(sanitizeInput(e.target.value, 'email'))}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="tu@email.com"
                 className="w-full bg-surface-muted border border-border-subtle focus:border-transparent text-foreground placeholder:text-muted-foreground/40 px-4 py-2.5 text-sm outline-none transition-colors rounded-sm"
               />
@@ -95,7 +108,7 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
           </form>
         )}
 
-        {message && (
+        {message && !isError && (
           <button
             type="button"
             onClick={onClose}

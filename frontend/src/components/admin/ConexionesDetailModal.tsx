@@ -1,5 +1,6 @@
+import PanelModal from '@/components/ui/PanelModal';
 import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { X, Globe, Monitor, Clock, MapPin, Activity } from 'lucide-react';
 
 const FIELD_GROUPS = [
@@ -75,25 +76,13 @@ export default function ConexionesDetailModal({ record, onClose }) {
   return (
     <AnimatePresence>
       {record && (
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={onClose}
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: 16 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 16 }}
-            transition={{ duration: 0.2 }}
-            onClick={(e) => e.stopPropagation()}
-            className="glass-card w-full max-w-3xl max-h-[88vh] overflow-y-auto no-scrollbar"
-          >
+        <PanelModal label="Detalles de la conexion" onClose={onClose} className="glass-card max-w-3xl no-scrollbar">
             <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-border-subtle bg-card/90 backdrop-blur-xl">
               <div>
                 <h3 className="font-heading text-lg font-bold text-foreground">Detalle del registro de conexión</h3>
                 <p className="text-xs text-muted-foreground font-mono mt-0.5">{record.id}</p>
               </div>
-              <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+              <button onClick={onClose} aria-label="Cerrar" className="text-muted-foreground hover:text-foreground transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -116,8 +105,7 @@ export default function ConexionesDetailModal({ record, onClose }) {
                 </div>
               ))}
             </div>
-          </motion.div>
-        </motion.div>
+          </PanelModal>
       )}
     </AnimatePresence>
   );

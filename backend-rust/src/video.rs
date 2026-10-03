@@ -114,7 +114,7 @@ pub async fn create(
         .bind(instructor)
         .execute(&mut *transaction)
         .await?;
-    let assigned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile WHERE id=$1 AND role='alumno' AND status='activo' AND assigned_instructor_id=$2)")
+    let assigned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile WHERE id=$1 AND (role='alumno' OR roles ? 'alumno') AND status='activo' AND assigned_instructor_id=$2)")
         .bind(student).bind(instructor).fetch_one(&mut *transaction).await?;
     if !assigned {
         return Err(AppError::Forbidden);

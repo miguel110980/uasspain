@@ -132,7 +132,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(crate::content::delete_section),
         )
         .route("/api/contact/", post(api::contact))
-        .route("/api/system/status/", get(api::system_status))
+        .route("/api/system/status/", get(crate::system_status::status))
+        .route(
+            "/api/system/smtp/",
+            get(crate::runtime_config::smtp_get).put(crate::runtime_config::smtp_put),
+        )
+        .route(
+            "/api/system/smtp/test/",
+            post(crate::runtime_config::smtp_test),
+        )
+        .route(
+            "/api/system/google-oauth/",
+            get(crate::runtime_config::google_get).put(crate::runtime_config::google_put),
+        )
         .route("/api/vpn/status/", get(crate::vpn::status))
         .route(
             "/api/system/auth-policy/",
@@ -473,16 +485,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .fallback(api::not_found)
         .layer(RequestBodyLimitLayer::new(100 * 1024 * 1024))
-        .layer(cors)
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
         .layer(TraceLayer::new_for_http())
         .layer(CatchPanicLayer::new())
         .layer(middleware::from_fn(normalize_validation_status))
-        .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::validate_active_session,
+        ))
+        .layer(cors)
+        .layer(middleware::from_fn(security_headers))
+        .layer(middleware::from_fn(
+            crate::system_status::sanitize_proxy_headers,
         ))
         .with_state(state)
 }
@@ -567,11 +582,30 @@ fn cors_layer() -> CorsLayer {
             axum::http::header::CONTENT_TYPE,
             HeaderName::from_static("x-csrftoken"),
             HeaderName::from_static("x-client-meta"),
+            HeaderName::from_static("x-uasspain-window-id"),
         ])
 }
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn detailed_administration_endpoints_are_not_public() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+        for path in [
+            "/api/system/status/",
+            "/api/system/smtp/",
+            "/api/system/google-oauth/",
+            "/api/backups/servers/",
+        ] {
+            let response = super::build_router(std::sync::Arc::new(super::AppState::for_test()))
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+        }
+    }
     use super::{AppState, build_router};
     use axum::{
         body::Body,
@@ -580,6 +614,31 @@ mod tests {
     use http_body_util::BodyExt;
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn rejected_sessions_retain_security_and_allowed_origin_headers() {
+        let response = build_router(Arc::new(AppState::for_test()))
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/me/")
+                    .header("authorization", "Bearer invalid")
+                    .header("origin", "http://localhost:5173")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(
+            response.headers()["content-security-policy"],
+            "default-src 'none'; frame-ancestors 'none'"
+        );
+        assert_eq!(
+            response.headers()["access-control-allow-origin"],
+            "http://localhost:5173"
+        );
+    }
 
     #[tokio::test]
     async fn liveness_contract_is_stable() {

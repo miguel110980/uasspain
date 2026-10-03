@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import authService from '@/services/authService';
@@ -17,11 +17,13 @@ export default function RestablecerContrasena() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const submission = useRef(false);
 
   const invalidLink = !uid || !token;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submission.current) return;
     setError('');
     const cleanPassword = sanitizeInput(password, 'password');
     const cleanConfirm = sanitizeInput(confirm, 'password');
@@ -36,6 +38,7 @@ export default function RestablecerContrasena() {
       return;
     }
     setLoading(true);
+    submission.current = true;
     try {
       await authService.resetPassword({ uid, token, password: cleanPassword });
       setDone(true);
@@ -43,6 +46,7 @@ export default function RestablecerContrasena() {
       setError(err.response?.data?.detail || err.message || 'No se pudo restablecer la contraseña.');
     } finally {
       setLoading(false);
+      submission.current = false;
     }
   };
 
@@ -81,15 +85,19 @@ export default function RestablecerContrasena() {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="p-3 border border-danger-border bg-danger-soft text-danger text-sm">
+              <div id="reset-error" role="alert" className="p-3 border border-danger-border bg-danger-soft text-danger text-sm">
                 {error}
               </div>
             )}
             <div className="space-y-1.5">
-              <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              <label htmlFor="reset-password" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
                 Nueva contraseña
               </label>
               <input
+                id="reset-password"
+                autoComplete="new-password"
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? 'reset-error' : undefined}
                 type="password"
                 required
                 minLength={8}
@@ -100,10 +108,14 @@ export default function RestablecerContrasena() {
               <PasswordStrengthBar password={password} />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              <label htmlFor="reset-confirm" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
                 Confirmar contraseña
               </label>
               <input
+                id="reset-confirm"
+                autoComplete="new-password"
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? 'reset-error' : undefined}
                 type="password"
                 required
                 minLength={8}

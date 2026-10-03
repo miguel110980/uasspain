@@ -24,8 +24,8 @@ export function websocketServiceStatus(status) {
   const redis = status?.redis || {};
   const ws = status?.websockets || {};
   const production = isProductionMode(status);
-  const backend = ws.backend || redis.backend || 'inmemory';
-  const operational = ws.operational ?? (backend === 'inmemory' ? true : Boolean(redis.connected));
+  const backend = ws.backend || redis.backend || 'unknown';
+  const operational = ws.operational === true;
 
   if (backend === 'redis') {
     if (redis.connected && operational) {
@@ -52,7 +52,7 @@ export function websocketServiceStatus(status) {
 export function buildMonitorServices(status) {
   if (!status) return [];
 
-  const dbOk = databaseConnected(status);
+  const dbOk = databaseConnected(status) && status.backend?.status === 'ok';
   const redis = status.redis || {};
   const smtp = status.smtp || {};
   const oauth = status.google_oauth || {};
@@ -86,13 +86,13 @@ export function buildMonitorServices(status) {
       iconKey: 'activity',
       status: oauth.configured ? 'ok' : 'warn',
       value: oauth.configured ? 'Listo' : 'Pendiente',
-      desc: oauth.configured ? 'Login social' : 'GOOGLE_CLIENT_ID en .env',
+      desc: oauth.configured ? 'Login social' : 'Configurar en Integraciones',
     },
     {
       name: 'Usuarios activos',
       iconKey: 'server',
       status: 'ok',
-      value: String((users.admin || 0) + (users.instructor || 0) + (users.alumno || 0)),
+      value: users.unique_active == null ? 'N/D' : String(users.unique_active),
       desc: `${users.alumno || 0} alumnos · ${users.instructor || 0} instructores`,
     },
   ];
@@ -119,7 +119,7 @@ export function buildHostResourceCards(status) {
       name: 'CPU',
       iconKey: 'cpu',
       status: cpu.status || 'ok',
-      value: `${cpu.percent}%`,
+      value: cpu.percent == null ? 'N/D' : `${Number(cpu.percent).toFixed(1)}%`,
       desc: `${cpu.cores} núcleos lógicos`,
       percent: cpu.percent,
     },
@@ -127,16 +127,16 @@ export function buildHostResourceCards(status) {
       name: 'Memoria RAM',
       iconKey: 'memory',
       status: memory.status || 'ok',
-      value: `${memory.percent}%`,
-      desc: `${memory.used_gb} / ${memory.total_gb} GB`,
+      value: memory.percent == null ? 'N/D' : `${memory.percent}%`,
+      desc: memory.total_gb == null ? 'Limite no disponible' : `${Number(memory.used_gb).toFixed(2)} / ${Number(memory.total_gb).toFixed(2)} GB`,
       percent: memory.percent,
     },
     {
       name: 'Disco',
       iconKey: 'disk',
       status: disk.status || 'ok',
-      value: `${disk.percent}%`,
-      desc: `${disk.used_gb} / ${disk.total_gb} GB · ${disk.path}`,
+      value: disk.percent == null ? 'N/D' : `${disk.percent}%`,
+      desc: disk.total_gb == null ? 'No disponible' : `${Number(disk.used_gb).toFixed(2)} / ${Number(disk.total_gb).toFixed(2)} GB · ${disk.path}`,
       percent: disk.percent,
     },
   ];

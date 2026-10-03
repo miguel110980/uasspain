@@ -92,14 +92,6 @@ pub async fn public_stats(State(state): State<Arc<AppState>>) -> Json<serde_json
     )
 }
 
-pub async fn system_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let google_configured =
-        std::env::var("GOOGLE_CLIENT_ID").is_ok_and(|value| !value.trim().is_empty());
-    Json(
-        serde_json::json!({"backend":{"status":"ok","runtime":"rust","uptime_seconds":state.started.elapsed().as_secs()},"database":{"status":if state.pool.is_some(){"ok"}else{"error"}},"redis":{"status":if state.events.connected(){"ok"}else if state.events.configured(){"error"}else{"not_configured"}},"websocket":{"status":"ok"},"google_oauth":{"configured":google_configured}}),
-    )
-}
-
 pub async fn not_found() -> impl IntoResponse {
     (
         StatusCode::NOT_FOUND,
@@ -147,12 +139,14 @@ async fn load_auth_policy(state: &AppState) -> Result<Value, AppError> {
     .unwrap_or_else(|| json!({"enabled":false,"required_roles":[]})))
 }
 
-pub async fn public_google_oauth() -> Json<Value> {
-    let client = std::env::var("GOOGLE_CLIENT_ID")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    Json(json!({"configured":client.is_some(),"client_id":client}))
+pub async fn public_google_oauth(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, AppError> {
+    let config = crate::runtime_config::google(&state).await?;
+    let client = (config.enabled && !config.client_id.is_empty()).then_some(config.client_id);
+    Ok(Json(
+        json!({"configured":client.is_some(),"client_id":client}),
+    ))
 }
 pub async fn public_publications(
     State(state): State<Arc<AppState>>,
@@ -171,7 +165,10 @@ pub struct ContactWrite {
     servicio: String,
     mensaje: String,
 }
-pub async fn contact(Json(input): Json<ContactWrite>) -> Result<Json<Value>, AppError> {
+pub async fn contact(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<ContactWrite>,
+) -> Result<Json<Value>, AppError> {
     if input.nombre.trim().is_empty()
         || input.nombre.len() > 120
         || input.email.len() > 254
@@ -186,15 +183,17 @@ pub async fn contact(Json(input): Json<ContactWrite>) -> Result<Json<Value>, App
     {
         return Err(AppError::Validation("Datos de contacto no válidos.".into()));
     }
-    let recipient = std::env::var("CONTACT_EMAIL")
-        .or_else(|_| std::env::var("EMAIL_HOST_USER"))
-        .or_else(|_| {
-            env_true("DEV_EMAIL", false)
-                .then(|| "contacto@localhost".to_owned())
-                .ok_or(std::env::VarError::NotPresent)
-        })
-        .map_err(|_| AppError::Unavailable)?;
+    let (config, _) = crate::runtime_config::smtp(&state).await?;
+    let recipient = if config.contact_recipient.is_empty() {
+        config.username
+    } else {
+        config.contact_recipient
+    };
+    if recipient.is_empty() && !env_true("DEV_EMAIL", false) {
+        return Err(AppError::Unavailable);
+    }
     crate::email::send(
+        &state,
         &recipient,
         "Nuevo contacto UASSpain",
         &format!(
