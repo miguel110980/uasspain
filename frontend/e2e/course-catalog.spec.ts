@@ -60,6 +60,38 @@ for (const width of [320, 390, 768, 1440]) {
   });
 }
 
+test('an open Aeromodelismo card and page refresh when publication changes while the tab is hidden', async ({ page }) => {
+  const course = { ...published, id: 'aeromodelismo-focus', name: 'Aeromodelismo', slug: 'aeromodelismo', category: 'other' };
+  let available = false;
+  let description = course.description;
+  await page.route('**/api/courses', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify([{ ...course, status: available ? 'published' : 'upcoming' }]),
+  }));
+  await page.route('**/api/courses/aeromodelismo', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ ...course, description }),
+  }));
+  const visibility = async (value: 'hidden' | 'visible') => page.evaluate(state => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+  }, value);
+  await page.goto('/formacion');
+  const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: course.name, exact: true }) });
+  await expect(card.getByText('Próximamente', { exact: true })).toBeVisible();
+  await expect(card.getByRole('link', { name: 'Ver curso', exact: true })).toHaveCount(0);
+  await visibility('hidden');
+  available = true;
+  await visibility('visible');
+  await expect(card.getByRole('link', { name: 'Ver curso', exact: true })).toHaveAttribute('href', '/formacion/aeromodelismo');
+  await expect(card.getByText('Publicado', { exact: true })).toBeVisible();
+  await card.getByRole('link', { name: 'Ver curso', exact: true }).click();
+  await expect(page.getByRole('heading', { name: course.name, exact: true })).toBeVisible();
+  await expect(page.getByText(description, { exact: true })).toBeVisible();
+  await visibility('hidden');
+  description = 'Descripción actualizada desde el panel de cursos.';
+  await visibility('visible');
+  await expect(page.getByText(description, { exact: true })).toBeVisible();
+});
+
 test('empty catalog is distinct from upcoming courses', async ({ page }) => {
   await page.route('**/api/courses', route => route.fulfill({ contentType: 'application/json', body: '[]' }));
   await page.goto('/formacion');

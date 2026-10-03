@@ -71,6 +71,7 @@ export default function Navbar() {
     queryKey: ['public', 'courses'],
     queryFn: contentService.publicCourses,
     staleTime: 0,
+    refetchOnWindowFocus: true,
     refetchInterval: 30_000,
   });
   const effectiveNavLinks = navLinks.map((link) => link.label !== 'Formación' ? link : {

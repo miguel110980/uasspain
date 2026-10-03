@@ -8,7 +8,7 @@ import contentService from '@/services/contentService';
 import { courseCategoryLabel, coursePath } from '@/lib/courseCategories';
 
 export default function Formacion() {
-  const { data = [], isLoading, isError, refetch } = useQuery({ queryKey: ['public', 'courses'], queryFn: contentService.publicCourses, staleTime: 0, refetchInterval: 30_000 });
+  const { data = [], isLoading, isError, refetch } = useQuery({ queryKey: ['public', 'courses'], queryFn: contentService.publicCourses, staleTime: 0, refetchOnWindowFocus: true, refetchInterval: 30_000 });
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Navbar />
