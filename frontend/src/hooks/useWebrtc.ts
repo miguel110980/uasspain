@@ -4,13 +4,14 @@ import apiClient from '@/api/apiClient';
 import { endpoints } from '@/api/endpoints';
 
 type Peer = { connection: RTCPeerConnection; candidates: RTCIceCandidateInit[] };
-type Signal = { type: string; peer_id?: string; sender_id?: string; to?: string; sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
+type Signal = { type: string; peer_id?: string; sender_id?: string; to?: string; moderator?: boolean; sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
 
 export function useWebrtc(callId: string) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [status, setStatus] = useState('Conectando…');
   const [error, setError] = useState('');
+  const [moderator, setModerator] = useState(false);
   useEffect(() => {
     let disposed = false;
     let stream: MediaStream | null = null;
@@ -70,6 +71,7 @@ export function useWebrtc(callId: string) {
             const signal: Signal = JSON.parse(event.data);
             if (signal.type === 'welcome') {
               ownId = signal.peer_id || '';
+              setModerator(signal.moderator === true);
               setStatus('Esperando participantes…');
               return;
             }
@@ -124,5 +126,5 @@ export function useWebrtc(callId: string) {
     void start();
     return () => { disposed = true; clearTimeout(reconnect); socket?.close(); release(); };
   }, [callId]);
-  return { localStream, remoteStreams, status, error };
+  return { localStream, remoteStreams, status, error, moderator };
 }

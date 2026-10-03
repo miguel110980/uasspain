@@ -34,8 +34,12 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
   const hasData = useRef(false);
 
   const load = (manual = false, silent = false) => runLoad(async () => {
-    const data = await conexionesService.registros.list('-fecha_hora', 500, { estado_sesion: 'activa' });
-    setRecords(data);
+    const [data, presence] = await Promise.all([
+      conexionesService.registros.list('-fecha_hora', 500, { estado_sesion: 'activa' }),
+      conexionesService.sesionesActivas(),
+    ]);
+    const online = new Set(presence.map(session => session.id));
+    setRecords(data.filter(record => online.has(record.id)));
     hasData.current = true;
   }, { manual, silent: manual ? false : (silent || hasData.current) });
 
@@ -45,7 +49,7 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
       const payload = conexionesService.parseWsPayload(event);
       if (payload?.type === 'conexion' || event.type === 'poll') load(false, true);
     });
-    const durationTimer = setInterval(() => setDurationTick((t) => t + 1), 30000);
+    const durationTimer = setInterval(() => { setDurationTick((t) => t + 1); load(false, true); }, 15000);
     return () => {
       unsubscribe();
       clearInterval(durationTimer);

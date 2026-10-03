@@ -16,7 +16,7 @@ function StreamVideo({ stream, muted = false, label }: { stream: MediaStream; mu
 export default function Videoconferencia({ callId, displayName, onColgar }: {
   callId: string; displayName: string; onColgar: () => void;
 }) {
-  const { localStream, remoteStreams, status, error } = useWebrtc(callId);
+  const { localStream, remoteStreams, status, error, moderator } = useWebrtc(callId);
   const [mic, setMic] = useState(true);
   const [camera, setCamera] = useState(true);
   const toggleMic = () => {
@@ -37,6 +37,7 @@ export default function Videoconferencia({ callId, displayName, onColgar }: {
           <div>
             <h3 className="font-heading text-sm font-bold text-foreground">Videollamada en curso</h3>
             <p role="status" className="text-xs text-muted-foreground">{status}</p>
+            <p className="text-xs text-primary">{moderator ? 'Moderador' : 'Participante'}</p>
           </div>
         </div>
         <div className="flex gap-2">

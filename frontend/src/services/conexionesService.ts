@@ -128,6 +128,10 @@ function createWsSubscription(url: string, onEvent: (event: any) => void, pollMs
 export const conexionesService = {
   conexiones: crud(endpoints.conexiones),
   registros: crud(endpoints.registrosConexion),
+  async sesionesActivas() {
+    const res = await apiClient.get(`${endpoints.registrosConexion}activas/`);
+    return unwrapList(res);
+  },
   mensajes: {
     ...crud(endpoints.mensajes, MENSAJE_SCHEMA),
     async markRead(alumnoId) {

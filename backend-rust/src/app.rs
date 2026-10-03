@@ -349,6 +349,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::connections::list_access_logs),
         )
         .route(
+            "/api/registros-conexion/activas/",
+            get(crate::connections::active_sessions),
+        )
+        .route(
             "/api/registros-conexion/{id}/",
             get(crate::connections::access_log_detail)
                 .patch(crate::connections::update_access_log)

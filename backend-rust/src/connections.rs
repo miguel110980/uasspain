@@ -333,6 +333,27 @@ pub async fn delete_connection(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Shared presence exposes identity and role, never access-log secrets or IP data.
+pub async fn active_sessions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Value>>, AppError> {
+    let claims = authenticate(&state, &headers, "access")?;
+    require_role(&claims, &["admin", "instructor", "alumno"])?;
+    let rows = sqlx::query_scalar::<_, Value>("SELECT jsonb_build_object('id',r.id,'profile_id',p.id,'nombre_completo',r.nombre_completo,'rol',r.rol,'fecha_hora',r.fecha_hora,'ultima_actividad',r.ultima_actividad,'estado_sesion','activa') FROM conexiones_registroconexion r JOIN accounts_userprofile p ON p.id=r.profile_id JOIN auth_user u ON u.id=p.user_id WHERE r.estado_sesion='activa' AND r.estado_acceso='correcto' AND r.session_id=p.active_session_key AND p.status='activo' AND p.otp_verified AND u.is_active AND r.ultima_actividad > NOW()-INTERVAL '90 seconds' AND ($1 IN ('admin','instructor') OR p.id=$2 OR p.id=(SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$2)) ORDER BY r.fecha_hora DESC")
+        .bind(&claims.role).bind(claims.profile_id).fetch_all(pool(&state)?).await?;
+    let mut result = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        row["nombre_completo"] = json!(
+            state
+                .cipher
+                .decrypt(row["nombre_completo"].as_str().ok_or(AppError::Internal)?)?
+        );
+        result.push(row);
+    }
+    Ok(Json(result))
+}
+
 pub async fn list_access_logs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -869,6 +890,10 @@ async fn run_connections_socket(socket: WebSocket, state: Arc<AppState>, claims:
             _ = heartbeat.tick() => {
                 if !session_is_active(&state, &claims).await.unwrap_or(false)
                     || output.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
+                if let Ok(pool) = pool(&state) {
+                    let _ = sqlx::query("UPDATE conexiones_registroconexion SET ultima_actividad=NOW(),updated_date=NOW() WHERE profile_id=$1 AND session_id=$2 AND estado_sesion='activa'")
+                        .bind(claims.profile_id).bind(&claims.session_key).execute(pool).await;
+                }
             },
         }
     }

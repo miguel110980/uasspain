@@ -13,7 +13,7 @@ import BroadcastComposer from '@/components/chat/BroadcastComposer';
 
 /** @type {{ id: 'alumnos' | 'admin', label: string }[]} */
 const TABS = [
-  { id: 'alumnos', label: 'Usuarios' },
+  { id: 'alumnos', label: 'Alumnos' },
   { id: 'admin', label: 'Administración' },
 ];
 
@@ -236,22 +236,22 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
     <div className="space-y-4">
       <BroadcastComposer
         recipients={profiles.filter((item) => !profileHasAdmin(item) && !profileHasInstructor(item))}
-        title="Mensaje para varios usuarios"
-        description="Solo aparecen los usuarios asignados y cada uno recibe una conversación privada."
+        title="Mensaje para varios alumnos"
+        description="Solo aparecen los alumnos asignados y cada uno recibe una conversación privada."
         onSend={(ids, contenido) => conexionesService.mensajes.broadcast(ids, contenido)}
       />
     <div className="grid md:grid-cols-3 gap-6 h-[65vh]">
       <div className="glass-card overflow-y-auto flex flex-col">
         <div className="p-3 border-b border-border-subtle">
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-            Usuarios ({conversaciones.length})
+            Alumnos ({conversaciones.length})
           </p>
         </div>
         <div className="flex-1 overflow-y-auto">
           {conversaciones.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-6">
               <Users className="w-8 h-8 text-muted-foreground mb-2" />
-              <p className="text-xs text-muted-foreground">No hay usuarios activos.</p>
+              <p className="text-xs text-muted-foreground">No hay alumnos activos.</p>
             </div>
           ) : (
             conversaciones.map((conv) => (

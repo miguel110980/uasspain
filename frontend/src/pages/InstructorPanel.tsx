@@ -34,7 +34,7 @@ const NAV_GROUPS = [
   {
     label: 'Gestión',
     items: [
-      { id: 'usuarios', label: 'Usuarios', icon: Users },
+      { id: 'usuarios', label: 'Alumnos', icon: Users },
       { id: 'examenes', label: 'Exámenes', icon: ClipboardList },
       { id: 'material', label: 'Material', icon: BookOpen },
       { id: 'resultados', label: 'Resultados', icon: BarChart2 },
@@ -128,14 +128,14 @@ export default function InstructorPanel() {
   useEffect(() => {
     const checkVideo = async () => {
       try {
-        const entrantes = await conexionesService.videollamadas.filter({ estado: 'activa', iniciada_por: 'alumno' });
-        setVideoEntrante(entrantes.length > 0);
+        const entrantes = await conexionesService.videollamadas.filter({ estado: 'activa' });
+        setVideoEntrante(entrantes.some(call => String(call.iniciador_id) !== String(authProfile?.id)));
       } catch {}
     };
     checkVideo();
     const unsubscribe = conexionesService.subscribeVideollamadas(() => checkVideo());
     return () => unsubscribe();
-  }, []);
+  }, [authProfile?.id]);
 
   const loadAll = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -211,7 +211,7 @@ export default function InstructorPanel() {
   if (pendientesCount > 0) {
     topbarNotifications.push({
       id: 'alumnos-pending',
-      title: `${pendientesCount} usuario(s) pendiente(s)`,
+      title: `${pendientesCount} alumno(s) pendiente(s)`,
       description: 'Valida nuevas solicitudes de acceso.',
       onSelect: () => handleSelect('usuarios'),
     });
@@ -220,9 +220,9 @@ export default function InstructorPanel() {
     topbarNotifications.push({
       id: 'chat-unread-alumno',
       title: chatSinLeerAlumno === 1
-        ? 'Mensaje de usuario sin leer'
-        : `${chatSinLeerAlumno} mensajes de usuarios sin leer`,
-      description: 'Tienes mensajes nuevos de usuarios.',
+        ? 'Mensaje de alumno sin leer'
+        : `${chatSinLeerAlumno} mensajes de alumnos sin leer`,
+      description: 'Tienes mensajes nuevos de alumnos.',
       onSelect: () => openChat('alumnos'),
     });
   }
@@ -240,7 +240,7 @@ export default function InstructorPanel() {
     topbarNotifications.push({
       id: 'video-incoming',
       title: 'Videollamada entrante',
-      description: 'Un alumno está solicitando videollamada.',
+      description: 'Tienes una videollamada entrante de un alumno o administrador.',
       onSelect: () => handleSelect('video'),
     });
   }

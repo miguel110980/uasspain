@@ -466,6 +466,13 @@ pub async fn logout(
             finalize_sessions(pool, claims.profile_id).await?;
             sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,updated_date=NOW() WHERE id=$2")
                 .bind(Uuid::new_v4().simple().to_string()).bind(claims.profile_id).execute(pool).await?;
+            state
+                .events
+                .publish(
+                    "connections",
+                    serde_json::json!({"type":"conexion","action":"logout"}),
+                )
+                .await;
         }
     }
     let secure = if state.tokens.secure_cookie {
@@ -894,6 +901,13 @@ async fn record_login(
         .filter(|value| value.parse::<std::net::IpAddr>().is_ok());
     sqlx::query("INSERT INTO conexiones_registroconexion (id,created_date,updated_date,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion,fecha_cierre) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,NOW(),'correcto',$7,$8,NOW(),$9::inet,$7,$7,$7,$7,$7,$7,$10,$7,$11,$12,$13,'activa',NULL,NULL)")
         .bind(Uuid::new_v4()).bind(row.id).bind(state.cipher.encrypt(&username)?).bind(state.cipher.encrypt(&name)?).bind(state.cipher.encrypt(&email)?).bind(role).bind(&empty).bind(method).bind(ip).bind(state.cipher.encrypt(browser)?).bind(state.cipher.encrypt(os)?).bind(state.cipher.encrypt(device)?).bind(session_key).execute(pool).await?;
+    state
+        .events
+        .publish(
+            "connections",
+            serde_json::json!({"type":"conexion","action":"login"}),
+        )
+        .await;
     Ok(())
 }
 

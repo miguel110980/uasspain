@@ -3,8 +3,13 @@ import { motion } from 'framer-motion';
 import conexionesService from '@/services/conexionesService';
 import { Video, Phone, Loader2, VideoIcon, Bell, Search, User } from 'lucide-react';
 import Videoconferencia from '@/components/videollamada/Videoconferencia';
+import StaffVideo from './StaffVideo';
+import { usePanelAuthContext } from '@/context/PanelAuthContext';
+import { hasRole } from '@/lib/roles';
 
 export default function InstructorVideo({ profiles }) {
+  const { profile: ownProfile } = usePanelAuthContext();
+  const [section, setSection] = useState('alumnos');
   const [llamadas, setLlamadas] = useState([]);
   const [enLlamada, setEnLlamada] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -17,9 +22,10 @@ export default function InstructorVideo({ profiles }) {
     let mounted = true;
     const load = async () => {
       try {
-        const activas = await conexionesService.videollamadas.filter({ estado: 'activa' });
+        const activas = await conexionesService.videollamadas.filter({ canal: 'alumnos', estado: 'activa' });
         if (mounted) {
           setLlamadas(activas);
+          setEnLlamada(previous => previous && activas.some(call => call.room_id === previous.room_id) ? previous : null);
           setLoading(false);
         }
       } catch {
@@ -31,7 +37,9 @@ export default function InstructorVideo({ profiles }) {
     return () => { mounted = false; unsubscribe(); };
   }, []);
 
-  const alumnos = (profiles || []).filter((p) => (p.role || 'alumno') === 'alumno' && p.status === 'activo');
+  const alumnos = (profiles || []).filter((p) => String(p.id) !== String(ownProfile?.id) &&
+    (p.role || p.roles?.length) && hasRole(p, 'alumno') && p.status === 'activo' &&
+    String(p.assigned_instructor_id) === String(ownProfile?.id));
   const filtered = alumnos.filter((p) => {
     const nombre = `${p.nombre || ''} ${p.apellidos || ''}`.toLowerCase();
     return nombre.includes(search.toLowerCase());
@@ -40,6 +48,7 @@ export default function InstructorVideo({ profiles }) {
   const getLlamadaActiva = (alumnoId) => llamadas.find((l) => l.alumno_id === alumnoId && l.estado === 'activa');
 
   const handleIniciar = async (profile) => {
+    if (String(profile.id) === String(ownProfile?.id)) return;
     const nombre = `${profile.nombre || ''} ${profile.apellidos || ''}`.trim();
     setIniciando((prev) => ({ ...prev, [profile.id]: true }));
     try {
@@ -93,7 +102,8 @@ export default function InstructorVideo({ profiles }) {
       if (activa) {
         try {
           await conexionesService.videollamadas.update(activa.id, { estado: 'finalizada' });
-          setLlamadas((prev) => prev.filter((l) => l.id !== activa.id));
+          const rows = await conexionesService.videollamadas.filter({ canal: 'alumnos', estado: 'activa' });
+          setLlamadas(rows);
         } catch { setCallError('No se pudo finalizar la llamada en el servidor. Vuelve a entrar y pulsa Colgar.'); }
       }
     }
@@ -104,7 +114,7 @@ export default function InstructorVideo({ profiles }) {
     return (
       <Videoconferencia
         callId={enLlamada.id}
-        displayName={`Instructor — ${enLlamada.alumno_nombre}`}
+        displayName={`${ownProfile?.nombre || ''} ${ownProfile?.apellidos || ''}`.trim()}
         onColgar={handleColgar}
       />
     );
@@ -114,8 +124,14 @@ export default function InstructorVideo({ profiles }) {
   const llamadasEntrantes = llamadas.filter((l) => l.iniciada_por === 'alumno');
   const llamadasIniciadas = llamadas.filter((l) => l.iniciada_por === 'instructor');
 
+  const tabs = <div role="tablist" aria-label="Tipo de videollamada" className="flex gap-3 mb-6">
+    <button role="tab" aria-selected={section === 'alumnos'} onClick={() => setSection('alumnos')} className="px-4 py-2 border border-primary/30">Alumnos</button>
+    <button role="tab" aria-selected={section === 'administracion'} onClick={() => setSection('administracion')} className="px-4 py-2 border border-primary/30">Administradores</button>
+  </div>;
+  if (section === 'administracion') return <>{tabs}<StaffVideo role="instructor" /></>;
   return (
-    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="max-w-4xl">
+    <motion.div role="region" aria-label="Videollamadas con alumnos" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="max-w-4xl">
+      {tabs}
       <div className="mb-8">
         <div className="inline-flex items-center gap-2 mb-3 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">
           <Video className="w-3.5 h-3.5" /> Videollamada

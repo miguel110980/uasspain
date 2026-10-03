@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   LayoutDashboard, Activity, BarChart2, Radio, Network, Shield, ScrollText,
   Users, UserCheck, Server, Bell, Settings, User, MessageCircle, DatabaseBackup, ShieldCheck,
-  Newspaper, BookOpen,
+  Newspaper, BookOpen, Video,
 } from 'lucide-react';
 import authService from '@/services/authService';
 import conexionesService from '@/services/conexionesService';
@@ -27,6 +27,7 @@ import AdminChat from '@/pages/admin/AdminChat';
 import AdminCuenta from '@/components/admin/AdminCuenta';
 import AdminBlog from '@/pages/admin/AdminBlog';
 import AdminCursos from '@/pages/admin/AdminCursos';
+import StaffVideo from '@/components/videollamada/StaffVideo';
 
 const NAV_GROUPS = [
   {
@@ -48,7 +49,7 @@ const NAV_GROUPS = [
   },
   {
     label: 'Comunicación',
-    items: [{ id: 'chat', label: 'Chat', icon: MessageCircle }],
+    items: [{ id: 'chat', label: 'Chat', icon: MessageCircle }, { id: 'video', label: 'Videollamada', icon: Video }],
   },
   {
     label: 'Gestión',
@@ -83,6 +84,7 @@ export default function AdminPanel() {
   const { user, profile: authProfile } = usePanelAuthContext();
   const [pendingCount, setPendingCount] = useState(0);
   const [staffUnread, setStaffUnread] = useState(0);
+  const [videoIncoming, setVideoIncoming] = useState(0);
   const [accountProfile, setAccountProfile] = useState(null);
   const [visitedTabs, setVisitedTabs] = useState(() => new Set(['dashboard']));
 
@@ -136,7 +138,23 @@ export default function AdminPanel() {
     authService.logout('/');
   };
 
+  useEffect(() => {
+    if (!authProfile?.id) return undefined;
+    const load = async () => {
+      try {
+        const calls = await conexionesService.videollamadas.filter({ canal: 'administracion', estado: 'activa' });
+        setVideoIncoming(calls.filter(call => String(call.iniciador_id) !== String(authProfile.id)).length);
+      } catch { /* The video section displays connection errors. */ }
+    };
+    void load();
+    return conexionesService.subscribeVideollamadas(() => { void load(); });
+  }, [authProfile?.id]);
+
   const topbarNotifications = [];
+  if (videoIncoming > 0) topbarNotifications.push({
+    id: 'video-incoming', title: 'Videollamada entrante', description: 'Un instructor está solicitando una videollamada.',
+    onSelect: () => handleSelectSection('video'),
+  });
   if (pendingCount > 0) {
     topbarNotifications.push({
       id: 'users-pending',
@@ -161,11 +179,11 @@ export default function AdminPanel() {
       items: g.items.map((item) => {
         const badge =
           item.id === 'usuarios' ? pendingCount :
-          item.id === 'chat' ? staffUnread : 0;
+          item.id === 'chat' ? staffUnread : item.id === 'video' ? videoIncoming : 0;
         return { ...item, badge };
       }),
     })),
-    [pendingCount, staffUnread],
+    [pendingCount, staffUnread, videoIncoming],
   );
 
   const SECTION_COMPONENTS = {
@@ -180,6 +198,7 @@ export default function AdminPanel() {
     instructores: <AdminInstructores />,
     blog: <AdminBlog />,
     cursos: <AdminCursos active={section === 'cursos'} />,
+    video: <StaffVideo role="admin" />,
     monitorizacion: <AdminMonitorizacion />,
     notificaciones: <AdminNotificaciones />,
     backups: <AdminBackups />,
@@ -207,7 +226,7 @@ export default function AdminPanel() {
           user={user ? { ...user, full_name: `${authProfile?.nombre || ''} ${authProfile?.apellidos || ''}`.trim() || user.full_name } : null}
           onLogout={handleLogout}
           onAccount={() => handleSelectSection('cuenta')}
-          pendingCount={pendingCount + staffUnread}
+          pendingCount={pendingCount + staffUnread + videoIncoming}
           notifications={topbarNotifications}
           onViewAllNotifications={() => handleSelectSection('notificaciones')}
         />
