@@ -145,12 +145,6 @@ async fn load_auth_policy(state: &AppState) -> Result<Value, AppError> {
     .unwrap_or_else(|| json!({"enabled":false,"required_roles":[]})))
 }
 
-pub async fn public_google_oauth() -> Json<Value> {
-    let client = std::env::var("GOOGLE_CLIENT_ID")
-        .ok()
-        .filter(|v| !v.trim().is_empty());
-    Json(json!({"configured":client.is_some(),"client_id":client}))
-}
 pub async fn public_publications(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<PublicPublication>>, AppError> {

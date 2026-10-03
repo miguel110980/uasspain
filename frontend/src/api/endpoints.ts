@@ -50,7 +50,6 @@ export const endpoints = {
     resetPassword: `${API_PREFIX}/auth/password-reset/confirm/`,
     changePassword: `${API_PREFIX}/auth/change-password/`,
     sessionRole: `${API_PREFIX}/auth/session-role/`,
-    google: `${API_PREFIX}/auth/google/`,
   },
 
   profiles: `${API_PREFIX}/profiles/`,
@@ -99,7 +98,6 @@ export const endpoints = {
   },
   systemAuthPolicy: `${API_PREFIX}/system/auth-policy/`,
   public: {
-    googleOAuth: `${API_PREFIX}/public/oauth/google/`,
     publicaciones: `${API_PREFIX}/public/publicaciones/`,
     blogPosts: `${API_PREFIX}/blog/posts`,
     blogPost: (id) => `${API_PREFIX}/blog/posts/${id}`,

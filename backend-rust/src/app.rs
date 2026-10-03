@@ -70,7 +70,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/health/live/", get(api::live))
         .route("/api/health/ready/", get(api::ready))
         .route("/api/public/stats/", get(api::public_stats))
-        .route("/api/public/oauth/google/", get(api::public_google_oauth))
         .route("/api/public/publicaciones/", get(api::public_publications))
         .route("/api/blog/posts", get(crate::content::public_posts))
         .route("/api/blog/posts/{id}", get(crate::content::public_post))
@@ -139,8 +138,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(api::auth_policy_get).put(api::auth_policy_put),
         )
         .route("/api/auth/login/", post(auth::login))
-        .route("/api/auth/google/", post(auth::google_login))
-        .route("/api/auth/google/challenge/", post(auth::google_challenge))
         .route("/api/auth/refresh/", post(auth::refresh))
         .route("/api/auth/logout/", post(auth::logout))
         .route("/api/auth/me/", get(auth::me))

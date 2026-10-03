@@ -245,7 +245,7 @@ pub async fn password_reset_request(
     let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,u.username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE p.email_lookup=$1 LIMIT 1")
         .bind(lookup).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?.ok_or(AppError::NotFound)?;
     if user.password.starts_with('!') {
-        return Err(AppError::Validation("Esta cuenta no tiene contraseña configurada. Inicia sesión con Google o contacta con el centro.".into()));
+        return Err(AppError::Validation("Esta cuenta no tiene contraseña configurada. Contacta con el centro para configurar el acceso.".into()));
     }
     let timestamp = reset_timestamp();
     let uid = URL_SAFE_NO_PAD.encode(user.id.to_string());

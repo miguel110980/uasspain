@@ -236,7 +236,6 @@ services:
       EMAIL_HOST_PASSWORD_FILE: /run/secrets/smtp_password
       DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
       CONTACT_EMAIL: ${CONTACT_RECIPIENT_EMAIL:-info@uasspain.com}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     networks:
       - edge
       - data

@@ -23,4 +23,4 @@ Preserve evidencias, identifique alcance, rote solo el secreto afectado y recree
 
 ## Escalado
 
-Registre hora UTC, servicio, contenedor, ultimo estado healthy, request ID y acciones. Si depende de OAuth, correo, SFTP, VPN o una imagen upstream, declare el bloqueo externo sin alterar datos locales.
+Registre hora UTC, servicio, contenedor, ultimo estado healthy, request ID y acciones. Si depende de correo, SFTP, VPN o una imagen upstream, declare el bloqueo externo sin alterar datos locales.

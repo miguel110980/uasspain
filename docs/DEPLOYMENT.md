@@ -36,18 +36,12 @@ El script comprueba todas las páginas del sitemap, títulos únicos, contenido
 sin JavaScript, cursos publicados, 404 y noindex. Requiere una pila ya levantada;
 no cambia datos ni omite la verificación TLS.
 
-- Google OAuth: configure la URL HTTPS publica y `GOOGLE_CLIENT_ID`. El backend valida el ID token; no guarde un secreto de cliente en el frontend.
 - SMTP, SFTP y WireGuard: entregue credenciales o claves fuera de Git y montelas desde `.secrets/`.
 - TLS: los certificados internos se generan localmente; las claves privadas nunca se versionan.
 
-Google Identity Services utiliza ID tokens RS256 verificados con JWKS de Google,
-audience/issuer/expiry/nbf y nonce firmado en cookie HttpOnly de cinco minutos, de un
-solo uso. La migración `0007_google_subject.sql` añade un índice de sujeto Google
-para vincular la identidad estable del proveedor. Solo se vinculan cuentas
-activas ya verificadas y correos sobre los que Google es autoridad (Gmail o
-Workspace). No es un flujo de autorización con intercambio de códigos/PKCE.
-Si la cuenta exige OTP local, Google no crea sesión: acceda con correo, contraseña y código temporal. La caché y el registro de nonces usados corresponden a la única instancia del
-backend; al escalar a varias instancias, compartalos antes de habilitar el flujo.
+El acceso se realiza con correo y contraseña y, cuando la política lo exige,
+código OTP. La autenticación con Google se ha retirado. Su migración histórica
+se conserva para mantener el esquema y los checksums de SQLx.
 
 ## Videollamadas WebRTC
 

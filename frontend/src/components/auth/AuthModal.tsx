@@ -3,18 +3,13 @@ import { X, Eye, EyeOff, Loader2 } from 'lucide-react';
 import authService from '@/services/authService';
 import { extractErrorMessage } from '@/lib/errors';
 import { sanitizeInput } from '@/lib/sanitize';
-import GoogleIcon from '@/components/GoogleIcon';
 import AuthModalShell from '@/components/auth/AuthModalShell';
 import RegisterModal from './RegisterModal';
 import ForgotPasswordModal from './ForgotPasswordModal';
 import { Checkbox } from '@/components/ui/checkbox';
 import { loadRememberedLogin, saveRememberedLogin, clearRememberedLogin } from '@/lib/rememberLogin';
-import { useGoogleClientId } from '@/lib/googleOAuth';
-import GoogleAuthShell from '@/components/auth/GoogleAuthShell';
-import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
 export default function AuthModal({ isOpen, onClose }) {
-  const googleClientId = useGoogleClientId();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
@@ -136,38 +131,6 @@ export default function AuthModal({ isOpen, onClose }) {
       submission.current = false;
       setLoading(false);
     }
-  };
-
-  const handleGoogleSuccess = async (credentialResponse) => {
-    if (submission.current) return;
-    submission.current = true;
-    setError('');
-    setLoading(true);
-    try {
-      const credential = credentialResponse?.credential;
-      if (!credential) {
-        throw new Error('Google no devolvió credenciales.');
-      }
-      await authService.loginWithGoogleCredential(credential);
-      await authService.redirectAfterLogin();
-    } catch (err) {
-      const code = err?.response?.data?.code;
-      let message = extractErrorMessage(err, 'No se pudo completar el acceso con Google.');
-      if (code === 'not_configured') {
-        message = 'El acceso con Google no está disponible. Usa tu correo y contraseña.';
-      } else if (code === 'no_account') {
-        message =
-          'No hay cuenta UASSPAIN con ese email de Google. Regístrate primero o usa email y contraseña.';
-      }
-      setError(message);
-    } finally {
-      submission.current = false;
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleError = () => {
-    setError('Acceso con Google cancelado o no disponible en este navegador.');
   };
 
   if (!isOpen) return null;
@@ -325,28 +288,6 @@ export default function AuthModal({ isOpen, onClose }) {
           </div>
         )}
 
-        {googleClientId && (
-          <>
-            <div className="relative pt-2">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-border-subtle" />
-              </div>
-              <div className="relative flex justify-center">
-                <span className="bg-card px-3 text-xs text-muted-foreground uppercase tracking-widest">o</span>
-              </div>
-            </div>
-
-            <GoogleSignInButton
-              disabled={loading}
-              onSuccess={handleGoogleSuccess}
-              onError={handleGoogleError}
-            >
-              <GoogleIcon className="w-5 h-5" />
-              Continuar con Google
-            </GoogleSignInButton>
-          </>
-        )}
-
         <div className="flex flex-col items-center gap-2 pt-2">
           <button
             type="button"
@@ -367,5 +308,5 @@ export default function AuthModal({ isOpen, onClose }) {
     </AuthModalShell>
   );
 
-  return <GoogleAuthShell clientId={googleClientId}>{modalBody}</GoogleAuthShell>;
+  return modalBody;
 }

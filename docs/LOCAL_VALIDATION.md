@@ -1,5 +1,37 @@
 # Validación local — 2 de octubre de 2026
 
+## Estado vigente — 3 de octubre de 2026: cuentas de prueba y retirada de Google
+
+La instalación principal conserva el administrador y ahora contiene también un
+instructor y un alumno de prueba activos, con un único rol por cuenta. El alumno
+está asignado al instructor. Las contraseñas se generan aleatoriamente, se
+hashean con Argon2id mediante el backend y su copia de acceso local está protegida
+por DPAPI. Consulte [las cuentas de prueba](TEST_ACCOUNTS.md).
+
+Se retira la autenticación Google por petición del usuario: botón, componentes,
+librería npm, handlers y endpoints, variable de configuración, permisos CSP
+específicos e indicadores/notificaciones del panel. Las siete migraciones y el
+esquema histórico se mantienen sin cambios.
+
+Validación ejecutada sobre las imágenes finales y la aplicación principal:
+
+- Rust: 49 tests pasan; formato, check y Clippy con `-D warnings` pasan.
+- Frontend: tipos, lint, 4 tests y build con prerender pasan.
+- API HTTPS con CA y hostname verificados: login de los tres roles, emails de
+  prueba en mayúsculas, asignación instructor/alumno y permisos pasan.
+- Chromium móvil: login, panel y persistencia tras recarga de ambas cuentas
+  pasan; no hay errores JavaScript ni solicitudes al SDK/configuración Google.
+- Instructor y alumno: API administrativa y cambio a rol admin devuelven 403;
+  el alumno no puede consultar el perfil del administrador.
+- Las tres rutas antiguas de Google devuelven 404 con sesión autenticada.
+- PostgreSQL: tres perfiles activos, PII no vacía cifrada, hashes Argon2id,
+  cuentas de prueba sin `is_staff`/`is_superuser` y 7 migraciones válidas.
+- Los cinco servicios Docker están saludables; PostgreSQL conserva su volumen
+  cifrado y el arranque exige la clave DPAPI.
+
+La evidencia local está en `.run/uasspain/test-accounts-verification.json`.
+Los resultados fechados que siguen documentan las auditorías anteriores.
+
 La validación utiliza el entorno disponible en este equipo. La pila principal y sus datos se han conservado. Las pruebas destructivas de fixtures, restauración y caída de dependencias se ejecutan exclusivamente en `uasspain-e2e`; la comprobación de los cinco servicios con TLS utiliza `uasspain-audit`, con volúmenes independientes y puertos 8085/8445.
 
 ## Correcciones aplicadas
@@ -61,13 +93,6 @@ de sesión/refresh anónima. No se ocultan esos errores ni se presentan estas
 métricas locales como capacidad de producción. Chromium omite la confianza del
 certificado únicamente al medir Lighthouse; el verificador HTTPS independiente
 comprueba CA y hostname sin excepciones.
-
-Google incorpora firma RS256/JWKS, issuer/audience/expiry/nbf estrictos, nonce de un
-uso y vínculo al sujeto estable del proveedor. Los tests locales comprueban
-claims inválidos, tipo de prueba, expiración y replay; no acreditan un login
-contra el proveedor. El email se normaliza en servidor y el cambio actualiza
-perfil y cuenta de autenticación en una transacción; las contraseñas conservan
-sus caracteres. Google rechaza el acceso cuando la política local exige OTP y dirige al flujo de correo, contraseña y código, evitando omitir la segunda verificación. Se mantienen los límites de intentos y la revocación existentes.
 
 ## Retirada de GitHub Actions
 
@@ -209,6 +234,6 @@ para recuperar la clave. Validacion realizada el 2026-10-03, Europe/Madrid.
 
 ## Integraciones externas pendientes y alcance
 
-El usuario indica que no hay un entorno externo de pruebas configurado y pide validar lo local disponible. **SMTP_FUNCTIONAL, OAUTH_E2E, TURN_RELAY_E2E y VPN_BACKUP_TRANSPORT = BLOCKED**: faltan cuenta/destinatario SMTP autorizado, cliente y cuenta Google de prueba, credenciales TURN y peer/rutas VPN autorizados. El OTP de los fixtures se activa únicamente en la base aislada; la prueba no demuestra entrega de correo. La carga es una muestra local y no certifica capacidad de producción. Los dispositivos WebRTC son simulados, con intercambio real de medios en localhost. Los dos destinos SFTP aislados prueban transporte/restauración, no una VPN real.
+El usuario indica que no hay un entorno externo de pruebas configurado y pide validar lo local disponible. **SMTP_FUNCTIONAL, TURN_RELAY_E2E y VPN_BACKUP_TRANSPORT = BLOCKED**: faltan cuenta/destinatario SMTP autorizado, credenciales TURN y peer/rutas VPN autorizados. El OTP de los fixtures se activa únicamente en la base aislada; la prueba no demuestra entrega de correo. La carga es una muestra local y no certifica capacidad de producción. Los dispositivos WebRTC son simulados, con intercambio real de medios en localhost. Los dos destinos SFTP aislados prueban transporte/restauración, no una VPN real.
 
 La validación local no acredita un despliegue público. El cierre autorizado incluye commit y push normal a `origin/main`, sin reescritura del historial. El despliegue remoto permanece fuera del alcance.

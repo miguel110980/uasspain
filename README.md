@@ -4,7 +4,7 @@ Plataforma de formacion UAS con frontend React 19/TypeScript, API Rust con Axum,
 
 ## Funciones actuales
 
-- Autenticacion, OTP, OAuth, sesiones y roles `admin`, `instructor` y `alumno`.
+- Autenticacion por correo y contraseña, OTP, sesiones y roles `admin`, `instructor` y `alumno`.
 - Gestion de usuarios, examenes, materiales, resultados, conexiones, chat y videollamadas.
 - Blog y catalogo de formacion dinamicos administrados desde la SPA.
 - Backups cifrados locales/SFTP, comprobacion, retencion y restauracion auditada.

@@ -19,7 +19,7 @@ docker compose logs --tail 100 backend
 - Backups y restauracion: `/admin/backups` y [guia de recovery](docs/BACKUP_RESTORE.md).
 - Actividad e incidentes: auditoria de la SPA y [runbook](infra/monitoring/INCIDENT-RUNBOOK.md).
 
-SMTP y Google OAuth usan configuracion no secreta en `.env` y secretos montados desde `.secrets/`. Tras cambiar configuracion: `docker compose up -d --force-recreate --wait backend nginx`.
+SMTP usa configuracion no secreta en `.env` y secretos montados desde `.secrets/`. Tras cambiar configuracion: `docker compose up -d --force-recreate --wait backend nginx`.
 
 Nunca incluya secretos en Git, logs ni comandos que puedan quedar en el historial. Consulte [SECURITY.md](SECURITY.md).
 
@@ -27,6 +27,9 @@ Nunca incluya secretos en Git, logs ni comandos que puedan quedar en el historia
 
 Para administrador, instructor y alumno: abra **Acceso → ¿Ha olvidado su contraseña?**, introduzca el correo de la cuenta y siga el enlace recibido. El frontend solicita `POST /api/auth/password-reset/`; la confirmación pasa por `/restablecer-contrasena` y `POST /api/auth/password-reset/confirm/`. Requiere SMTP configurado y acceso al buzón de esa cuenta.
 
-Un administrador autenticado también puede solicitar el enlace con `POST /api/users/{id}/reset-password/`, usando el ID del perfil existente. El mecanismo también utiliza SMTP; no devuelve contraseñas ni enlaces de recuperación en la respuesta. Una cuenta sin contraseña local debe acceder con Google o contactar con el centro.
+Un administrador autenticado también puede solicitar el enlace con `POST /api/users/{id}/reset-password/`, usando el ID del perfil existente. El mecanismo también utiliza SMTP; no devuelve contraseñas ni enlaces de recuperación en la respuesta. Una cuenta sin contraseña local debe contactar con el centro para configurar el acceso.
 
 El backend genera hashes Argon2id y valida hashes heredados compatibles. No se recupera una contraseña desde el hash, ni se reemplaza mediante SQL arbitrario. Restablecerla requiere una petición expresa y revoca la sesión anterior.
+
+Las dos [cuentas de prueba locales](docs/TEST_ACCOUNTS.md) tienen contraseñas
+aleatorias conservadas con DPAPI; consulte esa guía para acceder a ellas.
