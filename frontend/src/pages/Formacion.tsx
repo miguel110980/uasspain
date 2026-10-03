@@ -39,7 +39,7 @@ export default function Formacion() {
                       <div className="aspect-video bg-primary/5 flex items-center justify-center"><GraduationCap className="w-12 h-12 text-primary/60" /></div>
                     )}
                     <div className="p-6 flex-1 flex flex-col">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex flex-col items-start gap-3">
                         <h2 className="font-heading text-xl font-bold">{course.name}</h2>
                         <span className={`shrink-0 inline-flex items-center gap-1 text-[10px] uppercase font-bold ${published ? 'text-primary' : 'text-warning'}`}>
                           {published ? <CheckCircle2 className="w-3 h-3" /> : <Clock3 className="w-3 h-3" />}
