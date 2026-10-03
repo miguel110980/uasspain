@@ -39,16 +39,13 @@ fn text<'a>(course: &'a Value, key: &str) -> &'a str {
     course.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
-async fn published(state: Arc<AppState>, slug: String) -> Result<Value, AppError> {
+async fn public_course_record(state: Arc<AppState>, slug: String) -> Result<Value, AppError> {
     let Json(course) = crate::content::public_course(State(state), Path(slug))
         .await
         .map_err(|error| match error {
             AppError::Validation(_) => AppError::NotFound,
             other => other,
         })?;
-    if text(&course, "status") != "published" {
-        return Err(AppError::NotFound);
-    }
     Ok(course)
 }
 
@@ -56,7 +53,7 @@ pub async fn course_route(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    published(state, slug).await?;
+    public_course_record(state, slug).await?;
     Ok(StatusCode::OK)
 }
 
@@ -64,7 +61,7 @@ pub async fn course_head(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> Result<Html<String>, AppError> {
-    let course = published(state, slug).await?;
+    let course = public_course_record(state, slug).await?;
     let origin = origin()?;
     let name = text(&course, "name");
     let presentation = &course["presentation"];
@@ -94,8 +91,13 @@ pub async fn course_head(
     let keywords = escape(text(&presentation["seo"], "keywords"));
     let url = escape(&url);
     let image = escape(&format!("{origin}/images/hero_claro.webp"));
+    let robots = if text(&course, "status") == "published" {
+        "index, follow, max-image-preview:large"
+    } else {
+        "noindex, follow"
+    };
     Ok(Html(format!(
-        "<title>{title}</title><meta name=\"description\" content=\"{description}\"><meta name=\"keywords\" content=\"{keywords}\"><meta name=\"robots\" content=\"index, follow, max-image-preview:large\"><link rel=\"canonical\" href=\"{url}\"><meta property=\"og:title\" content=\"{title}\"><meta property=\"og:description\" content=\"{description}\"><meta property=\"og:url\" content=\"{url}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:image\" content=\"{image}\"><meta name=\"twitter:image\" content=\"{image}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{title}\"><meta name=\"twitter:description\" content=\"{description}\"><script id=\"seo-org-jsonld\" type=\"application/ld+json\">{schema}</script>"
+        "<title>{title}</title><meta name=\"description\" content=\"{description}\"><meta name=\"keywords\" content=\"{keywords}\"><meta name=\"robots\" content=\"{robots}\"><link rel=\"canonical\" href=\"{url}\"><meta property=\"og:title\" content=\"{title}\"><meta property=\"og:description\" content=\"{description}\"><meta property=\"og:url\" content=\"{url}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:image\" content=\"{image}\"><meta name=\"twitter:image\" content=\"{image}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{title}\"><meta name=\"twitter:description\" content=\"{description}\"><script id=\"seo-org-jsonld\" type=\"application/ld+json\">{schema}</script>"
     )))
 }
 
@@ -103,7 +105,7 @@ pub async fn course_body(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> Result<Html<String>, AppError> {
-    let course = published(state, slug).await?;
+    let course = public_course_record(state, slug).await?;
     let presentation = &course["presentation"];
     let heading = if text(presentation, "original_name") == text(&course, "name") {
         presentation["hero_parts"]
@@ -133,6 +135,10 @@ pub async fn course_body(
         },
         escape(text(&course, "duration"))
     ));
+    if text(&course, "status") != "published" {
+        html.push_str("<section class=\"mt-10\"><h2>Próximamente</h2><p>El curso aparecerá disponible cuando sea publicado.</p></section></main>");
+        return Ok(Html(html));
+    }
     for key in ["format_label", "certification", "badge"] {
         if key == "format_label"
             && text(&course, "modality") != text(presentation, "original_modality")

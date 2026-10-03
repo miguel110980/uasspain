@@ -22,10 +22,13 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/courses/catalogo-publicado', route => route.fulfill({
     contentType: 'application/json', body: JSON.stringify(published),
   }));
+  await page.route('**/api/courses/catalogo-proximo', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify(upcoming),
+  }));
 });
 
 for (const width of [320, 390, 768, 1440]) {
-  test(`all courses lists both states and opens published content at ${width}px`, async ({ page }) => {
+  test(`all courses links both states to the shared template at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/');
     if (width < 1440) await page.getByRole('button', { name: 'Abrir menú', exact: true }).click();
@@ -47,12 +50,20 @@ for (const width of [320, 390, 768, 1440]) {
     const upcomingCard = page.getByRole('article').filter({ has: page.getByRole('heading', { name: upcoming.name, exact: true }) });
     await expect(publishedCard.getByText('Publicado', { exact: true })).toBeVisible();
     await expect(upcomingCard.getByText('Próximamente', { exact: true })).toBeVisible();
-    await expect(upcomingCard.getByRole('link')).toHaveCount(0);
+    await expect(upcomingCard.getByRole('link', { name: 'Ver curso', exact: true })).toHaveAttribute('href', '/formacion/catalogo-proximo');
     await expect(upcomingCard.getByText(upcoming.short_description, { exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     await page.reload();
     await expect(publishedCard).toBeVisible();
     await expect(upcomingCard).toBeVisible();
+    await upcomingCard.getByRole('link', { name: 'Ver curso', exact: true }).click();
+    await expect(page).toHaveURL(/\/formacion\/catalogo-proximo$/);
+    await expect(page.getByRole('heading', { name: upcoming.name, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Próximamente', exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('heading', { name: upcoming.name, exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.goto('/formacion');
     await publishedCard.getByRole('link', { name: 'Ver curso', exact: true }).click();
     await expect(page).toHaveURL(/\/formacion\/catalogo-publicado$/);
     await expect(page.getByRole('heading', { name: published.name, exact: true })).toBeVisible();
@@ -77,7 +88,7 @@ test('an open Aeromodelismo card and page refresh when publication changes while
   await page.goto('/formacion');
   const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: course.name, exact: true }) });
   await expect(card.getByText('Próximamente', { exact: true })).toBeVisible();
-  await expect(card.getByRole('link', { name: 'Ver curso', exact: true })).toHaveCount(0);
+  await expect(card.getByRole('link', { name: 'Ver curso', exact: true })).toHaveAttribute('href', '/formacion/aeromodelismo');
   await visibility('hidden');
   available = true;
   await visibility('visible');

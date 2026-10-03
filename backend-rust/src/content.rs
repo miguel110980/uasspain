@@ -660,7 +660,7 @@ async fn course_json_by_slug(
          'cover_image_url',c.cover_image_url,'status',c.status,'sort_order',c.sort_order,
          'published_at',c.published_at,'content_available',(c.status='published' OR $2),
          'sections',CASE WHEN c.status='published' OR $2 THEN COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.sort_order,s.created_at) FROM course_sections s WHERE s.course_id=c.id),'[]'::jsonb) ELSE '[]'::jsonb END)
-         FROM courses c WHERE c.slug=$1 AND (c.status='published' OR $2)",
+         FROM courses c WHERE c.slug=$1 AND (c.status IN ('upcoming','published') OR $2)",
     ).bind(slug).bind(admin_view).fetch_optional(pool).await?.ok_or(AppError::NotFound)
 }
 

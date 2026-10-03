@@ -79,7 +79,11 @@ for (const match of courses.body.matchAll(/<loc>([^<]+)<\/loc>/g)) {
 if (process.env.SSR_TEST_UNPUBLISHED_SLUG) {
   const slug = process.env.SSR_TEST_UNPUBLISHED_SLUG;
   assert.match(slug, /^[a-z0-9-]+$/);
-  assert.equal((await get(`/formacion/${slug}`)).status, 404);
+  const pending = await get(`/formacion/${slug}`);
+  assert.equal(pending.status, 200);
+  assert.match(pending.body, /Próximamente/);
+  assert.match(pending.body, /<meta name="robots" content="noindex, follow"/);
+  assert.doesNotMatch(pending.body, /<!--#include|an error occurred/);
   assert.ok(!courses.body.includes(`/formacion/${slug}<`));
 }
 console.log(`PASS: ${paths.length} static pages, unique titles, service redirects, formation backlinks, private noindex, strict 404, published courses and verified HTTPS.`);

@@ -49,11 +49,9 @@ export default function Formacion() {
                       <p className="text-xs text-primary mt-3">{courseCategoryLabel(course.category)}</p>
                       <p className="text-sm text-muted-foreground mt-3 flex-1">{course.short_description}</p>
                       <p className="text-xs text-muted-foreground mt-3">{course.modality === 'presencial' ? 'Presencial' : 'Online'}{course.duration ? ` · ${course.duration}` : ''}</p>
-                      {published && (
-                        <Link to={coursePath(course)} className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-primary mt-5">
-                          Ver curso <ArrowRight className="w-4 h-4" />
-                        </Link>
-                      )}
+                      <Link to={coursePath(course)} className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-primary mt-5">
+                        Ver curso <ArrowRight className="w-4 h-4" />
+                      </Link>
                     </div>
                   </article>
                 );
