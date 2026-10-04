@@ -113,16 +113,20 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
     const identities = [];
     for (const [index, page] of pages.entries()) identities.push(await login(page, accounts[index]));
     const [admin, instructor, student, second] = pages;
+    await instructor.setViewportSize({ width: 1440, height: 1000 });
     for (const page of pages) {
       await nav(page).getByRole('button', { name: 'Chat', exact: true }).click();
       await nav(page).getByRole('button', { name: 'Videollamada', exact: true }).click();
       await nav(page).getByRole('button', { name: 'Chat', exact: true }).click();
     }
     const selectStudent = () => instructor.locator('main button').filter({ has: instructor.getByText('E2E Alumno', { exact: true }) }).filter({ visible: true }).click();
+    const firstChat = instructor.getByRole('region', { name: 'Conversación con E2E Alumno', exact: true });
+    const secondChat = instructor.getByRole('region', { name: 'Conversación con E2E Segundo', exact: true });
     await selectStudent();
     const send = async (page: Page, message: string) => {
-      await page.getByPlaceholder('Escribe un mensaje...').filter({ visible: true }).fill(message);
-      await page.getByRole('button', { name: 'Enviar mensaje', exact: true }).filter({ visible: true }).click();
+      const scope = page === instructor && await firstChat.isVisible() ? firstChat : page;
+      await scope.getByPlaceholder('Escribe un mensaje...').filter({ visible: true }).fill(message);
+      await scope.getByRole('button', { name: 'Enviar mensaje', exact: true }).filter({ visible: true }).click();
     };
     const checkpoint = [...navigations];
     const outbound = `Directo instructor ${Date.now()}`;
@@ -132,8 +136,29 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
     const reply = `Directo alumno ${Date.now()}`;
     await send(student, reply);
     await expect(message(instructor, reply)).toBeVisible({ timeout: 5000 });
-    // A late POST response must not append the first student's message into
-    // the second conversation after the instructor changes selection.
+    // Each open student has a separate draft and receives concurrently.
+    await firstChat.getByPlaceholder('Escribe un mensaje...').fill('Borrador privado del primer alumno');
+    await instructor.locator('main button').filter({ has: instructor.getByText('E2E Segundo', { exact: true }) }).filter({ visible: true }).click();
+    await expect(firstChat).toBeVisible(); await expect(secondChat).toBeVisible();
+    await secondChat.getByPlaceholder('Escribe un mensaje...').fill('Borrador privado del segundo alumno');
+    await expect(firstChat.getByPlaceholder('Escribe un mensaje...')).toHaveValue('Borrador privado del primer alumno');
+    const simultaneous = [`Alumno uno paralelo ${Date.now()}`, `Alumno dos paralelo ${Date.now()}`];
+    await Promise.all([send(student, simultaneous[0]), send(second, simultaneous[1])]);
+    await expect(firstChat.getByText(simultaneous[0], { exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(secondChat.getByText(simultaneous[1], { exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(firstChat.getByText(simultaneous[1], { exact: true })).toHaveCount(0);
+    await expect(secondChat.getByText(simultaneous[0], { exact: true })).toHaveCount(0);
+    await expect(secondChat.getByPlaceholder('Escribe un mensaje...')).toHaveValue('Borrador privado del segundo alumno');
+    const boxes = await Promise.all([firstChat.boundingBox(), secondChat.boundingBox()]);
+    expect(boxes[0]!.y).toBe(boxes[1]!.y);
+    expect(boxes[0]!.x).toBeLessThan(boxes[1]!.x);
+    await instructor.screenshot({ path: '../.run/parallel-chat-desktop.png', fullPage: true });
+    await instructor.setViewportSize({ width: 390, height: 844 });
+    expect(await instructor.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await instructor.screenshot({ path: '../.run/parallel-chat-mobile.png', fullPage: true });
+    await instructor.setViewportSize({ width: 1440, height: 1000 });
+    // Delay one response: the other chat must still send successfully. Closing
+    // the first chat before its response arrives must not affect the second.
     const delayedText = `Respuesta retrasada ${Date.now()}`;
     let releaseResponse!: () => void;
     let savedResponse!: () => void;
@@ -146,9 +171,14 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
       } else await route.continue();
     });
     await send(instructor, delayedText); await saved;
-    await instructor.locator('main button').filter({ has: instructor.getByText('E2E Segundo', { exact: true }) }).filter({ visible: true }).click();
+    const independent = `Envío independiente ${Date.now()}`;
+    await secondChat.getByPlaceholder('Escribe un mensaje...').fill(independent);
+    await secondChat.getByRole('button', { name: 'Enviar mensaje', exact: true }).click();
+    await expect(message(second, independent)).toBeVisible({ timeout: 5000 });
+    await expect(secondChat.getByRole('button', { name: 'Enviar mensaje', exact: true })).toBeDisabled();
+    await firstChat.getByRole('button', { name: 'Cerrar chat con E2E Alumno', exact: true }).click();
     releaseResponse();
-    await expect(instructor.getByRole('button', { name: 'Enviar mensaje', exact: true }).filter({ visible: true })).toBeEnabled();
+    await expect(firstChat).toHaveCount(0);
     await expect(instructor.locator('main p.whitespace-pre-wrap').filter({ hasText: delayedText, visible: true })).toHaveCount(0);
     await expect(message(student, delayedText)).toBeVisible();
     await expect(message(second, delayedText)).toHaveCount(0);
@@ -160,7 +190,15 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
     await instructor.getByRole('button', { name: 'Enviar a 2', exact: true }).filter({ visible: true }).click();
     for (const page of [student, second]) await expect(message(page, group)).toBeVisible({ timeout: 5000 });
     await instructor.getByRole('button', { name: 'Cerrar difusión' }).filter({ visible: true }).click();
+    const retainedDraft = 'Borrador conservado al cambiar de sección';
+    await secondChat.getByPlaceholder('Escribe un mensaje...').fill(retainedDraft);
     await instructor.getByRole('button', { name: 'Administración', exact: true }).click();
+    const hiddenReply = `Alumno con chat oculto ${Date.now()}`;
+    await send(student, hiddenReply);
+    await expect.poll(async () => {
+      const response = await instructor.request.get(`/api/mensajes/?alumno_id=${identities[2].profile.id}`, { headers: identities[1].headers });
+      return (await response.json()).some(row => row.contenido === hiddenReply && row.leido_instructor === false);
+    }).toBe(true);
     await instructor.getByRole('button').filter({ has: instructor.getByText('E2E Admin', { exact: true }) }).filter({ visible: true }).click();
     await admin.getByRole('button').filter({ has: admin.getByText('E2E Instructor', { exact: true }) }).click();
     const staffText = `Administración ${Date.now()}`;
@@ -168,6 +206,9 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
     await expect(message(instructor, staffText)).toBeVisible({ timeout: 5000 });
     await send(instructor, staffText + ' respuesta');
     await expect(message(admin, staffText + ' respuesta')).toBeVisible({ timeout: 5000 });
+    await instructor.locator('main').getByRole('button', { name: /^Alumnos(?:\s+\d+)?$/ }).filter({ visible: true }).click();
+    await expect(firstChat.getByText(hiddenReply, { exact: true })).toBeVisible();
+    await expect(secondChat.getByPlaceholder('Escribe un mensaje...')).toHaveValue(retainedDraft);
     expect(navigations).toEqual(checkpoint);
     // Delivery and read receipts are verified in persisted API rows, not just bubbles.
     await expect.poll(async () => {
@@ -184,16 +225,18 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
     await student.context().clearCookies({ name: 'uasspain_access' });
     const renewed = student.waitForResponse(r => r.url().includes('/api/auth/refresh/') && r.status() === 200);
     await student.evaluate(() => (window as ObservedWindow).auditSockets.filter(s => new URL(s.url).pathname === '/ws/conexiones/').forEach(s => s.close()));
-    await instructor.locator('main').getByRole('button', { name: 'Alumnos', exact: true }).filter({ visible: true }).click(); await selectStudent();
+    await instructor.locator('main').getByRole('button', { name: /^Alumnos(?:\s+\d+)?$/ }).filter({ visible: true }).click(); await selectStudent();
     const resumed = `Tras reconexión ${Date.now()}`;
     await send(instructor, resumed);
     await renewed;
     await expect(message(student, resumed)).toBeVisible({ timeout: 8000 });
     expect(navigations).toEqual(checkpoint);
-    await instructor.getByRole('button', { name: 'Limpiar conversación', exact: true }).filter({ visible: true }).click();
+    await firstChat.getByRole('button', { name: 'Limpiar conversación', exact: true }).click();
     await instructor.getByRole('dialog', { name: 'Limpiar chat' }).getByRole('button', { name: 'Limpiar chat', exact: true }).click();
     await expect(message(student, outbound)).toHaveCount(0);
     await expect(message(student, resumed)).toHaveCount(0);
+    await expect(secondChat.getByText(group, { exact: true })).toBeVisible();
+    await expect(message(second, independent)).toBeVisible();
     await nav(instructor).getByRole('button', { name: 'Videollamada', exact: true }).click();
     for (const page of [student, second]) await nav(page).getByRole('button', { name: 'Videollamada', exact: true }).click();
     await instructor.getByRole('button', { name: 'Llamar a todos los alumnos', exact: true }).click();
@@ -248,5 +291,5 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
     for (const page of pages) await expect.poll(() => page.evaluate(() => (window as ObservedWindow).auditTracks.every(t => t.readyState === 'ended'))).toBe(true);
     expect(navigations).toEqual(checkpoint);
     expect(errors).toEqual([]); expect(socketErrors).toEqual([]);
-  } finally { await Promise.all(contexts.map(context => context.close())); }
+  } finally { await Promise.allSettled(contexts.map(context => context.close())); }
 });
