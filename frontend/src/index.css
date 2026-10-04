@@ -371,10 +371,11 @@
 [class*="text-copy-tertiary/"] { color: hsl(var(--text-tertiary)); }
 .light [class*="placeholder:text-muted-foreground/"]::placeholder,
 .dark [class*="placeholder:text-muted-foreground/"]::placeholder { color: hsl(var(--muted-foreground)); }
+.hero-copy { background: transparent; }
 .light .hero-image { opacity: 1; }
 .light .hero-shade { background: linear-gradient(to bottom, transparent 65%, hsl(var(--background))); }
 .light .hero-side-shade { display: none; }
-.light .hero-copy { background: hsl(var(--background)); padding: 1.5rem; border-radius: var(--radius); }
+.light .hero-copy { padding: 1.5rem; border-radius: var(--radius); }
 .light .text-glow-cyan { text-shadow: none; color: hsl(var(--brand-cyan-text)); background: none; }
 .light [class*="backdrop-blur"] { backdrop-filter: none; -webkit-backdrop-filter: none; }
 

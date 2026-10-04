@@ -6,6 +6,7 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ThemeProvider } from 'next-themes'
 import { defineConfig } from 'vite'
+import { THEME_OPTIONS } from './src/lib/themeConfig'
 
 const apiProxyTarget = process.env.VITE_DEV_PROXY_API_ORIGIN || 'http://127.0.0.1:8000'
 const wsProxyTarget = process.env.VITE_DEV_PROXY_WS_ORIGIN || 'ws://127.0.0.1:8000'
@@ -14,9 +15,7 @@ const mediaProxyTarget = process.env.VITE_DEV_PROXY_MEDIA_ORIGIN || apiProxyTarg
 const buildId = randomUUID()
 // Keep next-themes' own initializer, served as a hashed external script so the
 // prerendered page works with the existing CSP without allowing inline scripts.
-const themeMarkup = renderToStaticMarkup(React.createElement(ThemeProvider, {
-  attribute: 'class', defaultTheme: 'dark', enableSystem: false,
-}))
+const themeMarkup = renderToStaticMarkup(React.createElement(ThemeProvider, THEME_OPTIONS))
 const themeScript = themeMarkup.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1]
 if (!themeScript) throw new Error('Missing next-themes initializer')
 const themeScriptFile = `assets/theme-init-${createHash('sha256').update(themeScript).digest('hex').slice(0, 16)}.js`
@@ -39,6 +38,11 @@ export default defineConfig({
   test: { include: ['src/**/*.test.{ts,tsx}'] },
   plugins: [react(), tailwindcss(), {
     name: 'uasspain-release',
+    transformIndexHtml() {
+      // Resolve the saved preference before the document can paint. Use the
+      // provider's own initializer and keep the existing external-script CSP.
+      return [{ tag: 'script', attrs: { src: '/' + themeScriptFile }, injectTo: 'head-prepend' }];
+    },
     configureServer(server) {
       server.middlewares.use('/' + themeScriptFile, (_req, res) => {
         res.setHeader('Content-Type', 'application/javascript');

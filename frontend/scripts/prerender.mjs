@@ -23,6 +23,7 @@ try {
   if (!['/', '/formacion', '/contacto', '/nosotros'].every(route => routes.some(match => match[1] === route))) throw new Error('Public route discovery failed; check App route declarations.');
   const { SITE, getSeoForPath, organizationJsonLd } = await server.ssrLoadModule('/src/lib/seoConfig.ts');
   const { AppProviders } = await server.ssrLoadModule('/src/App.tsx');
+  const { THEME_OPTIONS } = await server.ssrLoadModule('/src/lib/themeConfig.ts');
   const origin = new URL(SITE.url);
   if (!['http:', 'https:'].includes(origin.protocol) || origin.pathname !== '/' || origin.search || origin.hash || origin.username || origin.password) throw new Error('VITE_SITE_URL must be a public origin.');
   const base = await readFile('dist/index.html', 'utf8');
@@ -75,7 +76,7 @@ try {
     const { default: Page } = await server.ssrLoadModule(`/src/${modulePath.replace(/^\.\//, '')}`);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const page = React.createElement(MemoryRouter, { initialEntries: [route] },
-      React.createElement(ThemeProvider, { attribute: 'class', defaultTheme: 'dark', enableSystem: false },
+      React.createElement(ThemeProvider, THEME_OPTIONS,
         React.createElement(QueryClientProvider, { client }, React.createElement(Page))));
     const markup = route === '/' ? renderToString(React.createElement(AppProviders, { client },
       React.createElement(MemoryRouter, { initialEntries: [route] },

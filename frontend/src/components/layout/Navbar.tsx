@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useSyncExternalStore, lazy, Suspense } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import { useQuery } from '@tanstack/react-query';
@@ -47,6 +47,9 @@ const UpcomingCourseItem = ({ item, className }) => (
   </div>
 );
 const SCROLL_MAX = 160;
+const subscribeHydration = () => () => {};
+const clientHydrated = () => true;
+const serverHydrated = () => false;
 
 function easeOutCubic(t) {
   return 1 - Math.pow(1 - t, 3);
@@ -57,8 +60,10 @@ export default function Navbar() {
   const [dropdownOpen, setDropdownOpen] = useState(null);
   const [mobileDropdownOpen, setMobileDropdownOpen] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
-  const [resolvedTheme, setResolvedTheme] = useState('dark');
-  const { setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
+  // Accessible labels must match SSR during hydration. Visible icons follow
+  // the root CSS theme from the first paint, before React is interactive.
+  const hydrated = useSyncExternalStore(subscribeHydration, clientHydrated, serverHydrated);
   const navigate = useNavigate();
   const navRef = useRef(null);
   const mobileMenuRef = useRef(null);
@@ -94,16 +99,6 @@ export default function Navbar() {
       })),
     ],
   });
-
-  useEffect(() => {
-    const sync = () => {
-      setResolvedTheme(document.documentElement.classList.contains('light') ? 'light' : 'dark');
-    };
-    sync();
-    const obs = new MutationObserver(sync);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    return () => obs.disconnect();
-  }, []);
 
   useEffect(() => {
     const onScroll = () => {
@@ -240,7 +235,7 @@ export default function Navbar() {
     return false;
   }, [location.pathname]);
 
-  const isDark = resolvedTheme === 'dark';
+  const isDark = !hydrated || resolvedTheme !== 'light';
   const panelRoute = session ? panelRouteForUser(session) : '/';
 
   const handleLogout = useCallback(async () => {
@@ -356,7 +351,8 @@ export default function Navbar() {
             aria-label={isDark ? 'Activar tema claro' : 'Activar tema oscuro'}
             title={isDark ? 'Tema claro' : 'Tema oscuro'}
           >
-            {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            <Sun className="w-4 h-4 hidden dark:block" />
+            <Moon className="w-4 h-4 dark:hidden" />
           </button>
           {session ? (
             <>

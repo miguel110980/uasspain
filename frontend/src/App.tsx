@@ -5,6 +5,7 @@ import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'r
 import { Suspense, lazy, useEffect, type ComponentType } from 'react';
 import { refreshCourseQueries } from '@/services/contentService';
 import { ThemeProvider } from 'next-themes';
+import { THEME_OPTIONS } from '@/lib/themeConfig';
 import PageNotFound from './lib/PageNotFound';
 import ScrollToTop from './components/ScrollToTop';
 import SeoHead from './components/seo/SeoHead';
@@ -58,7 +59,7 @@ function RouteMotion({ children }) {
 
 export function AppProviders({ children, client = queryClientInstance }) {
   return <AppErrorBoundary>
-      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} scriptProps={{ src: __THEME_INIT_URL__, defer: true }}>
+      <ThemeProvider {...THEME_OPTIONS} scriptProps={{ src: __THEME_INIT_URL__, defer: true }}>
         <QueryClientProvider client={client}>
           {children}
           <ToastHost />

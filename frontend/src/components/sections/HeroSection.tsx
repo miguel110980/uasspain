@@ -1,7 +1,7 @@
 ﻿import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, ChevronDown, Shield, Cpu, Globe } from 'lucide-react';
-import { useTheme } from 'next-themes';
+import { IMAGES } from '@/lib/images';
 
 const badges = [
   { icon: Shield, text: 'Certificado AESA' },
@@ -9,15 +9,16 @@ const badges = [
   { icon: Globe, text: 'Cobertura Nacional' },
 ];
 
-export default function HeroSection({ bgImageLight, bgImageDark }) {
-  const { resolvedTheme } = useTheme();
-  const bgImage = (resolvedTheme || 'dark') === 'dark' ? bgImageDark : bgImageLight;
+// All responsive variants belong to the same existing photo, in both themes.
+const heroImage = IMAGES.hero.replace('hero_', 'hero-').replace('.webp', '');
+
+export default function HeroSection() {
   return (
     <section id="inicio" className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-background">
       <div className="absolute inset-0">
         <picture>
-          <source media="(max-width: 767px)" srcSet={`/images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-portrait-320.webp 320w, /images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-portrait-472.webp 472w`} sizes="100vw" />
-          <img src={bgImage} srcSet={`/images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-640.webp 640w, /images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-1280.webp 1280w, /images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-1672.webp 1672w`} sizes="100vw" width={1672} height={941} alt="Drone aéreo profesional" fetchPriority="high" className="hero-image w-full h-full object-cover opacity-55 dark:opacity-65" />
+          <source media="(max-width: 767px)" srcSet={`${heroImage}-portrait-320.webp 320w, ${heroImage}-portrait-472.webp 472w`} sizes="100vw" />
+          <img src={IMAGES.hero} srcSet={`${heroImage}-640.webp 640w, ${heroImage}-1280.webp 1280w, ${heroImage}-1672.webp 1672w`} sizes="100vw" width={1672} height={941} alt="Drone aéreo profesional" fetchPriority="high" className="hero-image w-full h-full object-cover opacity-55 dark:opacity-65" />
         </picture>
         <div className="hero-shade absolute inset-0 bg-gradient-to-b from-background/45 via-background/15 to-background" />
         <div className="hero-side-shade absolute inset-0 bg-gradient-to-r from-background/40 via-transparent to-background/40" />

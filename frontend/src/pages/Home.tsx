@@ -13,7 +13,7 @@ export default function Home() {
     <div className="home-page min-h-screen bg-background text-foreground">
       <Navbar />
       <main className="public-content">
-      <HeroSection bgImageLight={IMAGES.heroLight} bgImageDark={IMAGES.heroDark} />
+      <HeroSection />
       <AboutSection aboutImage={IMAGES.about} />
       <ServicesSection />
       <TechSection techImage={IMAGES.tech} />
