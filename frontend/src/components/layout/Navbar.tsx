@@ -105,26 +105,21 @@ export default function Navbar() {
       if (rafRef.current) return;
       rafRef.current = requestAnimationFrame(() => {
         const y = window.scrollY;
-        const raw = Math.min(y / SCROLL_MAX, 1);
+        const raw = Math.max(0, Math.min(y / SCROLL_MAX, 1));
         const p = easeOutCubic(raw);
         const nav = navRef.current;
         if (!nav) { rafRef.current = null; return; }
 
-        const isDark = !document.documentElement.classList.contains('light');
-        const alpha = p * 0.82;
+        const alpha = p * 0.96;
         const blur = p * 16;
         const borderAlpha = 0.08 * Math.min(p * 2, 1);
 
-        if (isDark) {
-          nav.style.backgroundColor = `rgba(0,0,0,${alpha})`;
-          nav.style.borderColor = `rgba(255,255,255,${borderAlpha})`;
-          nav.style.boxShadow = p > 0 ? '0 1px 3px rgba(0,0,0,0.15)' : 'none';
-        } else {
-          nav.style.backgroundColor = 'rgb(245,247,250)';
-          nav.style.borderColor = `rgba(0,0,0,${borderAlpha})`;
-          nav.style.boxShadow = p > 0 ? '0 1px 3px rgba(0,0,0,0.06)' : 'none';
-        }
-        nav.style.backdropFilter = isDark && p > 0 ? `blur(${blur}px)` : 'none';
+        // Theme tokens change the colors immediately; scroll controls the same
+        // opacity, blur and shadow in both themes without restarting this effect.
+        nav.style.backgroundColor = `hsl(var(--background) / ${alpha})`;
+        nav.style.borderColor = `hsl(var(--foreground) / ${borderAlpha})`;
+        nav.style.boxShadow = p > 0 ? `0 1px 3px hsl(var(--shadow-color) / ${p * 0.15})` : 'none';
+        nav.style.backdropFilter = p > 0 ? `blur(${blur}px)` : 'none';
         nav.style.webkitBackdropFilter = nav.style.backdropFilter;
 
         rafRef.current = null;
@@ -135,8 +130,9 @@ export default function Navbar() {
     return () => {
       window.removeEventListener('scroll', onScroll);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
     };
-  }, [resolvedTheme]);
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);

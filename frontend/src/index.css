@@ -402,6 +402,17 @@
   background: hsl(var(--brand-cyan) / 0.5);
 }
 
+/* Keep the public document scrollbar neutral; panel scrollbars retain their style. */
+html:has(nav[aria-label="Navegación principal"]) {
+  scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
+}
+html:has(nav[aria-label="Navegación principal"])::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.4);
+}
+html:has(nav[aria-label="Navegación principal"])::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.6);
+}
+
 .public-content { overflow-x: clip; }
 .public-content h1, .public-content h2 { overflow-wrap: anywhere; }
 
