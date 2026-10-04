@@ -22,10 +22,16 @@ export function extractErrorMessage(err, fallback = 'Ha ocurrido un error inespe
     || /network error/i.test(String(err.message || ''))
   );
   if (isNetworkFailure) {
-    return 'No se pudo conectar con el servidor. Comprueba que la web y el backend están activos (nginx + uasspain-backend).';
+    return 'No se pudo conectar con el servidor. Comprueba tu conexión e inténtalo de nuevo.';
+  }
+  if (!err.response && ['ECONNABORTED', 'ETIMEDOUT'].includes(err.code)) {
+    return 'El servidor está tardando en responder. Inténtalo de nuevo en unos instantes.';
   }
 
   const data = err.data || err.response?.data;
+  if (err.response?.status >= 500 && !(data && typeof data === 'object' && (data.detail || data.message || data.error))) {
+    return 'Servicio temporalmente no disponible. Inténtalo de nuevo en unos instantes.';
+  }
   const fieldErrors = data && typeof data === 'object' && !Array.isArray(data)
     ? Object.entries(data)
       .filter(([key]) => !['detail', 'message', 'error', 'non_field_errors'].includes(key))

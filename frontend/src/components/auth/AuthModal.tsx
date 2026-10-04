@@ -148,8 +148,8 @@ export default function AuthModal({ isOpen, onClose }) {
     } catch (err) {
       const code = err?.response?.data?.code;
       let message = extractErrorMessage(err, 'No se pudo completar el acceso con Google.');
-      if (err?.response?.status === 503) {
-        message = 'El acceso con Google no está disponible. Usa tu correo y contraseña.';
+      if ([502, 503, 504].includes(err?.response?.status)) {
+        message = 'El servicio de acceso con Google está temporalmente no disponible. Vuelve a intentarlo en unos instantes.';
       } else if (code === 'not_found') {
         message =
           'No hay cuenta UASSPAIN con ese email de Google. Regístrate primero o usa email y contraseña.';
@@ -344,7 +344,13 @@ export default function AuthModal({ isOpen, onClose }) {
                 <GoogleIcon className="w-5 h-5" /> Continuar con Google
               </button>
               <p role="status" className="text-xs text-muted-foreground">
-                {google.loading ? 'Comprobando disponibilidad de Google...' : google.failed || googleScriptError ? 'No se pudo conectar con Google. Puedes acceder con correo y contraseña.' : 'Google aún no está disponible. Puedes acceder con correo y contraseña.'}
+                {google.loading
+                  ? 'Comprobando disponibilidad de Google...'
+                  : google.failed
+                    ? 'No se pudo comprobar Google porque el servicio de acceso no está disponible. Vuelve a intentarlo en unos instantes.'
+                    : googleScriptError
+                      ? 'No se pudo cargar Google en este navegador. Puedes acceder con correo y contraseña o volver a intentarlo.'
+                      : 'Google no está activado en esta instalación. El administrador debe configurarlo en Configuración → Integraciones. Puedes acceder con correo y contraseña.'}
               </p>
               {!google.loading && <button type="button" disabled={loading} onClick={() => { setGoogleScriptError(false); setGoogleAttempt(value => value + 1); }} className="text-xs text-primary underline">Comprobar disponibilidad</button>}
             </div>}

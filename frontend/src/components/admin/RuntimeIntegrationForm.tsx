@@ -71,6 +71,10 @@ export default function RuntimeIntegrationForm({ kind, onSaved }: Props) {
       </> : <>
         <label className="block space-y-1"><span className="text-sm text-muted-foreground">Google OAuth Client ID</span><input className={inputClass} value={google.client_id} onChange={(e) => setGoogle({ ...google, client_id: e.target.value })} placeholder="…apps.googleusercontent.com" /></label>
         <p className="text-xs text-muted-foreground">Autoriza estos orígenes en Google Cloud: {google.origins.join(', ') || 'No disponibles'}</p>
+        <p className="text-xs text-muted-foreground">
+          En el cliente web correspondiente a este Client ID, añade a «Orígenes autorizados de JavaScript» de Google Cloud la dirección actual: <code className="break-all">{window.location.origin}</code>.
+          {' '}Incluye el protocolo y el puerto, sin rutas. HTTP y HTTPS son orígenes distintos. Guardar aquí el Client ID o generar el challenge no autoriza esta dirección en Google Cloud.
+        </p>
       </>}
       <div className="flex flex-wrap gap-3 items-end">
         <button type="submit" disabled={!loaded || busy} className="rounded border border-primary/30 px-3 py-2 text-sm text-primary disabled:opacity-50">Guardar configuración</button>

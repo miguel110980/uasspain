@@ -11,9 +11,13 @@ comprobarla; no simula un acceso correcto.
    cree o seleccione un cliente OAuth de tipo **Aplicación web** y configure la
    pantalla de consentimiento/audiencia. En modo de pruebas, autorice la cuenta
    Google que utilizará cuando Google lo requiera.
-2. Añada **`https://localhost`** a los orígenes JavaScript autorizados si accede
-   mediante esa URL. Para otra URL, añada su origen exacto, incluido el puerto,
+2. Para esta instalación, añada **`https://localhost`** y
+   **`https://www.uasspain.com`** a **Orígenes autorizados de JavaScript**
+   del mismo cliente web. Para otra URL, añada su origen exacto, incluido el puerto,
    sin rutas. El esquema y host deben coincidir con el navegador.
+   El dominio www actualmente redirige a `https://uasspain.com` y sirve otra
+   web. Si el despliegue de esta aplicación mantiene esa redirección, autorice
+   también `https://uasspain.com`, que es el origen final del navegador.
 3. En **Admin → Configuración → Integraciones**, introduzca el **Client ID**
    público terminado en `.apps.googleusercontent.com`, habilite Google y guarde.
    Use «Generar challenge OAuth» para comprobar la preparación del flujo.
@@ -73,3 +77,11 @@ Los tests locales pueden verificar el flujo del frontend con respuestas
 simuladas del proveedor y comprobar que los tokens inválidos se rechazan. Eso
 no acredita un inicio de sesión real contra Google: requiere el Client ID
 autorizado y la intervención del titular de una cuenta Google.
+
+Auditoría real del 4 de octubre de 2026 en `https://localhost`: la configuración
+guardada en PostgreSQL está habilitada y tiene Client ID; API de configuración,
+challenge y SDK oficial responden 200. Google devuelve 403 para su iframe de
+botón y registra «The given origin is not allowed for the given client ID».
+La corrección pendiente consiste en autorizar los dos orígenes anteriores en
+Google Cloud. No se acredita una autenticación real de Google hasta completar
+esa configuración y acceder con la cuenta del titular.

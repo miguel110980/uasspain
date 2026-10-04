@@ -1,6 +1,44 @@
 # Validación local — 2 de octubre de 2026
 
-## Estado vigente — 3 de octubre de 2026: integración Google restaurada
+## Estado vigente — 4 de octubre de 2026: reparación del login
+
+Se reprodujo en Chromium sobre Docker real: PostgreSQL esperaba su clave
+protegida tras un reinicio, el backend no arrancaba y login/configuración
+Google devolvían 502. El formulario presentaba ese 502 como contraseña
+incorrecta. Se recuperó la base con su clave DPAPI existente, sin cambiar
+cuentas, contraseñas, esquema ni volumen. El formulario distingue errores
+de servicio, red y timeout de un rechazo real 401.
+
+Administrador, instructor multirrol y tres alumnos acceden con sus
+credenciales existentes y mantienen la ruta del panel al refrescar; las
+cookies son HttpOnly, Secure y SameSite=Strict. La copia bootstrap de la
+contraseña administrativa está desactualizada y no se usa para concluir
+que la contraseña indicada por el usuario haya dejado de funcionar.
+
+Tipos, lint, build y 29 tests frontend pasan. Nueve pruebas de navegador
+del login y Google pasan contra el frontend compilado HTTPS con proveedor
+simulado exclusivamente en las pruebas. Se corrige también la carrera
+Compose/healthcheck de un PostgreSQL ya marcado unhealthy tras desbloquearlo.
+La recuperación automática por usuario Windows se instala con token
+Interactive/Limited y reutiliza el helper DPAPI; un reinicio real recuperó
+PostgreSQL y backend sanos en 11,2 segundos. Se conserva el gate completo
+del cifrado, incluido rechazo de clave incorrecta y ausencia de montaje
+persistente en claro.
+También se comprobó que una parada manual permanece detenida y que la
+recuperación automática se produce al iniciar de nuevo el contenedor.
+
+Google tiene configuración efectiva habilitada en PostgreSQL. En el flujo
+real API/configuración, challenge y SDK responden 200, pero el iframe oficial
+devuelve 403 y «The given origin is not allowed for the given client ID».
+Queda pendiente autorizar `https://localhost` y `https://www.uasspain.com` en
+Google Cloud y completar el acceso con la cuenta del titular; no se declara
+probado el login externo. El dominio www actualmente redirige a
+`https://uasspain.com`, sirve otra web y su API OAuth devuelve 404. Si se
+conserva esa redirección al desplegar esta aplicación, también se debe autorizar
+el origen final `https://uasspain.com`. Evidencia local sin contraseñas ni
+tokens: `.run/login-audit/`.
+
+## Estado anterior — 3 de octubre de 2026: integración Google restaurada
 
 Por petición posterior del usuario se restaura Google Identity Services con
 botón oficial visible y adaptable, estados de disponibilidad, reintentos ante

@@ -55,7 +55,7 @@ export default function AdminNotificaciones() {
         id: 'oauth-missing',
         tipo: 'info',
         titulo: 'Google OAuth no configurado',
-        desc: 'Añade GOOGLE_CLIENT_ID en el .env raíz (Google Cloud Console).',
+        desc: 'Configura y habilita el Client ID de Google Cloud en Configuración → Integraciones. La configuración guardada en el panel tiene prioridad sobre el entorno.',
         fecha: new Date().toISOString(),
       });
     }

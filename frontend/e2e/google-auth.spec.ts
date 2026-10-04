@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 
 // Provider responses are simulated in the browser only; no real backend session is issued.
-async function googleFixture(page: Page, options: { configured?: boolean; challengeFails?: boolean; scriptFails?: boolean; loginStatus?: number } = {}) {
-  const state = { configured: true, challengeFails: false, scriptFails: false, loginStatus: 200, authenticated: false, challenges: 0, logins: 0, refreshes: 0, scripts: 0, ...options };
+async function googleFixture(page: Page, options: { configured?: boolean; configurationStatus?: number; challengeFails?: boolean; scriptFails?: boolean; loginStatus?: number } = {}) {
+  const state = { configured: true, configurationStatus: 200, challengeFails: false, scriptFails: false, loginStatus: 200, authenticated: false, challenges: 0, logins: 0, refreshes: 0, scripts: 0, ...options };
   await page.route('https://accounts.google.com/gsi/client**', async route => {
     state.scripts++;
     if (state.scriptFails) return route.abort();
@@ -26,7 +26,12 @@ async function googleFixture(page: Page, options: { configured?: boolean; challe
     const path = new URL(route.request().url()).pathname;
     let status = 200;
     let body: unknown = [];
-    if (path === '/api/public/oauth/google/') body = { configured: state.configured, client_id: state.configured ? '123-test.apps.googleusercontent.com' : null };
+    if (path === '/api/public/oauth/google/') {
+      status = state.configurationStatus;
+      body = status === 200
+        ? { configured: state.configured, client_id: state.configured ? '123-test.apps.googleusercontent.com' : null }
+        : { code: 'service_unavailable', detail: 'Servicio temporalmente no disponible.' };
+    }
     else if (path === '/api/auth/google/challenge/') {
       state.challenges++;
       status = state.challengeFails ? 503 : 200;
@@ -36,7 +41,10 @@ async function googleFixture(page: Page, options: { configured?: boolean; challe
       expect(route.request().postDataJSON().id_token).toBe('synthetic-google-token');
       status = state.loginStatus;
       state.authenticated = status === 200;
-      body = status === 404 ? { code: 'not_found', detail: 'Recurso no encontrado.' } : status === 401 ? { code: 'not_authenticated', detail: 'Credenciales no válidas.' } : { detail: 'Acceso correcto.' };
+      body = status === 404 ? { code: 'not_found', detail: 'Recurso no encontrado.' }
+        : status === 401 ? { code: 'not_authenticated', detail: 'Credenciales no válidas.' }
+          : status >= 500 ? { code: 'service_unavailable', detail: 'Servicio temporalmente no disponible.' }
+            : { detail: 'Acceso correcto.' };
     } else if (path === '/api/auth/me/') {
       status = state.authenticated ? 200 : 401;
       body = state.authenticated ? { id: 'fixture', email: 'instructor@test.invalid', role: 'instructor', roles: ['instructor'], session_role: 'instructor', profile: { id: 'fixture', role: 'instructor', status: 'activo' } } : { detail: 'Sin sesión.' };
@@ -52,7 +60,8 @@ test('Google remains visible without configuration and can recover after configu
   const state = await googleFixture(page, { configured: false });
   await page.goto('/?auth=login');
   await expect(page.getByRole('button', { name: 'Continuar con Google', exact: true })).toBeDisabled();
-  await expect(page.getByText('Google aún no está disponible.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Google no está activado en esta instalación.', { exact: false })).toBeVisible();
+  await expect(page.getByText('El administrador debe configurarlo en Configuración → Integraciones.', { exact: false })).toBeVisible();
   expect(state.scripts).toBe(0); expect(state.challenges).toBe(0);
   state.configured = true;
   await page.getByRole('button', { name: 'Comprobar disponibilidad' }).click();
@@ -95,10 +104,42 @@ test('invalid Google tokens are not retried through session refresh', async ({ p
   expect(state.refreshes).toBe(refreshes); expect(state.logins).toBe(1);
 });
 
+test('Google configuration service failures are distinguished and recover without loading the SDK early', async ({ page }) => {
+  const state = await googleFixture(page, { configurationStatus: 503 });
+  await page.goto('/?auth=login');
+  await expect(page.getByText('No se pudo comprobar Google porque el servicio de acceso no está disponible.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Google no está activado en esta instalación.', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('No se pudo cargar Google en este navegador.', { exact: false })).toHaveCount(0);
+  expect(state.scripts).toBe(0); expect(state.challenges).toBe(0);
+  state.configurationStatus = 200;
+  await page.getByRole('button', { name: 'Comprobar disponibilidad' }).click();
+  await expect(page.getByRole('button', { name: 'Continuar con Google', exact: true })).toBeEnabled();
+  expect(state.scripts).toBe(1); expect(state.challenges).toBe(1);
+});
+
+for (const status of [502, 503, 504]) {
+  test(`Google login service ${status} failures allow a fresh attempt without blaming credentials`, async ({ page }) => {
+    const state = await googleFixture(page, { loginStatus: status });
+    await page.goto('/?auth=login');
+    const button = page.getByRole('button', { name: 'Continuar con Google', exact: true });
+    await expect(button).toHaveAttribute('data-nonce', 'nonce-1');
+    await button.click();
+    await expect(page.getByRole('alert')).toContainText('El servicio de acceso con Google está temporalmente no disponible.');
+    await expect(page.getByRole('alert')).not.toContainText('Credenciales incorrectas');
+    await expect(button).toHaveAttribute('data-nonce', 'nonce-2');
+    expect(state.logins).toBe(1);
+    state.loginStatus = 200;
+    await button.click();
+    await expect(page).toHaveURL(/\/instructor$/);
+    expect(state.logins).toBe(2);
+  });
+}
+
 test('Google SDK loading failure offers a working retry', async ({ page }) => {
   const state = await googleFixture(page, { scriptFails: true });
   await page.goto('/?auth=login');
-  await expect(page.getByText('No se pudo conectar con Google.', { exact: false })).toBeVisible();
+  await expect(page.getByText('No se pudo cargar Google en este navegador.', { exact: false })).toBeVisible();
+  await expect(page.getByText('No se pudo comprobar Google porque el servicio de acceso no está disponible.', { exact: false })).toHaveCount(0);
   state.scriptFails = false;
   await page.getByRole('button', { name: 'Comprobar disponibilidad' }).click();
   await expect(page.getByRole('button', { name: 'Continuar con Google', exact: true })).toBeEnabled();

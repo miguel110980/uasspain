@@ -137,6 +137,31 @@ pero el proceso PostgreSQL pierde esa capacidad y funciona con CapEff cero.
 No se usa `privileged`, el socket Docker ni dispositivos de disco del host.
 El verificador comprueba montaje, flags criptograficos, cobertura, ausencia de
 clave persistente y rechazo de clave incorrecta desde una vista raw sin FUSE.
+
+En Windows se puede instalar la recuperacion automatica para el propietario
+de la clave DPAPI existente:
+
+```powershell
+.\scripts\install-encrypted-autostart.ps1
+```
+
+La tarea usa el token interactivo del mismo usuario, privilegios limitados y
+un proceso oculto. No almacena una contraseña Windows ni una clave en claro.
+Cada diez segundos comprueba el contenedor existente y solo entrega la clave
+si PostgreSQL ya esta iniciado y el volumen cifrado necesita desbloqueo.
+Respeta las paradas manuales y no crea claves, volumenes ni contenedores.
+Requiere la sesion Windows del propietario y Docker disponible; no desbloquea
+antes de iniciar esa sesion. El log contiene solo estados operativos en
+`.run/uasspain/storage-autounlock.log`. Para desinstalarla, sin detener Docker:
+
+```powershell
+.\scripts\install-encrypted-autostart.ps1 -Uninstall
+```
+
+El arranque manual sigue disponible. Espera el healthcheck de PostgreSQL tras
+entregar la clave, incluso si el contenedor ya estaba marcado `unhealthy`;
+Compose solo arranca el resto de la pila cuando la base esta preparada.
+
 Antes de activar deben pasar tambien login, datos personales, panel admin y aislamiento multirrol desde
 la aplicacion real; conserve su evidencia local sin credenciales en
 `application-verification.json`. La activacion comprueba esa evidencia y vuelve

@@ -31,8 +31,12 @@ Entrada unica:
 - PostgreSQL, Redis, frontend y backend no publican puertos al host.
 
 En una instalacion nueva, con volumen vacio y sin clave existente, añada
-`-InitializeKey`. En cada reinicio de PostgreSQL ejecute el mismo script; hasta
-recibir la clave protegida permanece bloqueado. Las migraciones Rust siguen
+`-InitializeKey`. Tras reiniciar PostgreSQL, el mismo script entrega la clave
+protegida. Para recuperarlo automaticamente al reiniciar Docker Desktop, ejecute
+una vez `scripts/install-encrypted-autostart.ps1` con el usuario Windows dueño
+de la clave DPAPI. La tarea tiene privilegios limitados, conserva el cifrado y
+respeta las paradas manuales; se puede retirar con `-Uninstall`.
+Sin clave PostgreSQL permanece bloqueado. Las migraciones Rust siguen
 siendo la unica fuente del esquema. Consulte [despliegue](docs/DEPLOYMENT.md).
 
 Para habilitar Google, configure un Client ID web y el origen autorizado como

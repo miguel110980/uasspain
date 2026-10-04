@@ -24,6 +24,18 @@ if ($LASTEXITCODE -ne 0) { throw 'No se pudo iniciar PostgreSQL cifrado.' }
 if ($LASTEXITCODE -ne 0) {
     & (Join-Path $PSScriptRoot 'unlock-postgres-storage.ps1') -Project uasspain -InitializeKey:$InitializeKey
 }
+# An already running LOCKED container has exhausted its healthcheck retries.
+# Compose immediately rejects that stale unhealthy state, even after key delivery.
+# Wait for PostgreSQL's own check to observe the unlocked database before up --wait.
+$readyDeadline = [DateTime]::UtcNow.AddSeconds(180)
+do {
+    $postgresState = & docker inspect uasspain-postgres --format '{{.State.Status}} {{.State.Health.Status}}'
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo comprobar PostgreSQL.' }
+    if ($postgresState -eq 'running healthy') { break }
+    if ($postgresState -notlike 'running *') { throw 'PostgreSQL se detuvo durante el desbloqueo cifrado.' }
+    if ([DateTime]::UtcNow -ge $readyDeadline) { throw 'PostgreSQL cifrado no supera su healthcheck tras el desbloqueo.' }
+    Start-Sleep -Seconds 2
+} while ($true)
 & docker @compose up -d --no-build --wait --wait-timeout 180
 if ($LASTEXITCODE -ne 0) { throw 'La pila no supera los healthchecks.' }
 & node tools/verify-postgres-storage.mjs uasspain
