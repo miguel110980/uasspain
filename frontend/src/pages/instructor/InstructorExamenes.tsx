@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Plus, Trash2, Loader2, Upload, FileText, Download, ExternalLink } from 'lucide-react';
@@ -24,6 +25,7 @@ export default function InstructorExamenes() {
   const [preguntas, setPreguntas] = useState([]);
   const [archivosExamen, setArchivosExamen] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [archivoToDelete, setArchivoToDelete] = useState(null);
   const [deleteArchivoLoading, setDeleteArchivoLoading] = useState(false);
@@ -54,6 +56,7 @@ export default function InstructorExamenes() {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [exs, pregs, archs] = await Promise.all([
         examenesService.examenes.list(),
@@ -63,6 +66,8 @@ export default function InstructorExamenes() {
       setExamenes(exs);
       setPreguntas(pregs);
       setArchivosExamen(archs);
+    } catch {
+      setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');
     } finally {
       setLoading(false);
     }
@@ -234,6 +239,7 @@ export default function InstructorExamenes() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+      <DataLoadNotice error={loadError} retry={loadData} />
       {/* Subir Archivos de Exámenes */}
       <div className="space-y-4">
         <div className="grid sm:grid-cols-2 gap-6">
@@ -243,7 +249,7 @@ export default function InstructorExamenes() {
               <Upload className="w-4 h-4 text-primary" />
               Archivo de Examen
             </h3>
-            <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-3">
+            <label htmlFor="archivo_preguntas" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-3">
               PDF, DOC, DOCX
             </label>
             <input
@@ -263,6 +269,7 @@ export default function InstructorExamenes() {
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="glass-card p-6">
             <h3 className="font-heading text-base font-bold text-foreground mb-4">Categoría</h3>
             <select
+              aria-label="Categoría del examen"
               value={formArchivos.categoria}
               onChange={(e) => setFormArchivos((prev) => ({ ...prev, categoria: e.target.value }))}
               className="w-full bg-background border border-border-subtle rounded px-3 py-2 text-sm text-foreground focus:border-transparent focus:outline-none [&>option]:bg-card [&>option]:text-foreground"
@@ -457,10 +464,10 @@ export default function InstructorExamenes() {
           ) : (
             <form onSubmit={handleAddPregunta} className="space-y-5 mb-6 p-5 border border-primary/20 bg-primary/5">
               <div>
-                <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                <label htmlFor="instructorexamenes-field-1" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                   Enunciado
                 </label>
-                <textarea
+                <textarea id="instructorexamenes-field-1"
                   value={formPregunta.enunciado}
                   onChange={(e) => setFormPregunta((prev) => ({ ...prev, enunciado: e.target.value }))}
                   placeholder="Escribe la pregunta..."
@@ -472,10 +479,10 @@ export default function InstructorExamenes() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {['a', 'b', 'c', 'd'].map((opt) => (
                   <div key={opt}>
-                    <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                    <label htmlFor={`instructorexamenes-answer-${opt}`} className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                       Opción {opt.toUpperCase()}
                     </label>
-                    <input
+                    <input id={`instructorexamenes-answer-${opt}`}
                       type="text"
                       value={formPregunta[`opcion_${opt}`]}
                       onChange={(e) => setFormPregunta((prev) => ({ ...prev, [`opcion_${opt}`]: e.target.value }))}
@@ -488,10 +495,10 @@ export default function InstructorExamenes() {
               </div>
 
               <div>
-                <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                <label htmlFor="instructorexamenes-field-3" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                   Respuesta Correcta
                 </label>
-                <select
+                <select id="instructorexamenes-field-3"
                   value={formPregunta.respuesta_correcta}
                   onChange={(e) => setFormPregunta((prev) => ({ ...prev, respuesta_correcta: e.target.value }))}
                   className="w-full bg-background border border-border-subtle rounded px-3 py-2 text-sm text-foreground focus:border-transparent focus:outline-none [&>option]:bg-card [&>option]:text-foreground"
@@ -544,7 +551,7 @@ export default function InstructorExamenes() {
                       <p className="text-sm text-foreground font-semibold">{preg.enunciado}</p>
                     </div>
                     <button
-                      onClick={() => handleDeletePregunta(preg.id)}
+                      type="button" aria-label="Eliminar pregunta" onClick={() => handleDeletePregunta(preg.id)}
                       className="shrink-0 text-danger hover:text-danger/80 transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />

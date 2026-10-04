@@ -66,6 +66,7 @@ export default function ContactSection({ skipReveal = false }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (sending) return;
     setError('');
     setWarning('');
     setSent(false);
@@ -126,7 +127,7 @@ export default function ContactSection({ skipReveal = false }) {
           </p>
         </motion.div>
 
-        <div className="grid lg:grid-cols-5 gap-12">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-12">
           {/* Form */}
           <motion.div
             initial={{ opacity: 0, x: -30 }}
@@ -134,11 +135,11 @@ export default function ContactSection({ skipReveal = false }) {
             transition={{ duration: 0.7, delay: 0.2 }}
             className="lg:col-span-3"
           >
-            <form onSubmit={handleSubmit} className="glass-card p-8 space-y-6" noValidate>
+            <form onSubmit={handleSubmit} className="glass-card min-w-0 p-5 sm:p-8 space-y-6" noValidate>
               <div className="grid sm:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <Label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Nombre *</Label>
-                  <Input
+                  <Label htmlFor="contactsection-field-1" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Nombre *</Label>
+                  <Input id="contactsection-field-1"
                     required
                     maxLength={120}
                     placeholder="Tu nombre completo"
@@ -148,8 +149,8 @@ export default function ContactSection({ skipReveal = false }) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Empresa</Label>
-                  <Input
+                  <Label htmlFor="contactsection-field-2" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Empresa</Label>
+                  <Input id="contactsection-field-2"
                     maxLength={120}
                     placeholder="Nombre de tu empresa"
                     value={form.empresa}
@@ -158,8 +159,8 @@ export default function ContactSection({ skipReveal = false }) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Email *</Label>
-                  <Input
+                  <Label htmlFor="contactsection-field-3" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Email *</Label>
+                  <Input id="contactsection-field-3"
                     required
                     type="email"
                     maxLength={254}
@@ -170,8 +171,8 @@ export default function ContactSection({ skipReveal = false }) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Teléfono *</Label>
-                  <Input
+                  <Label htmlFor="contactsection-field-4" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Teléfono *</Label>
+                  <Input id="contactsection-field-4"
                     required
                     type="tel"
                     maxLength={20}
@@ -184,9 +185,9 @@ export default function ContactSection({ skipReveal = false }) {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Servicio *</Label>
+                <Label htmlFor="contactsection-field-5" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Servicio *</Label>
                 <Select value={form.servicio} onValueChange={(v) => handleChange('servicio', v)}>
-                  <SelectTrigger className="bg-surface-muted border-border-subtle focus:border-transparent text-foreground">
+                  <SelectTrigger id="contactsection-field-5" className="bg-surface-muted border-border-subtle focus:border-transparent text-foreground">
                     <SelectValue placeholder="Selecciona un servicio" />
                   </SelectTrigger>
                   <SelectContent className="bg-card border-border-subtle">
@@ -198,8 +199,8 @@ export default function ContactSection({ skipReveal = false }) {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Mensaje *</Label>
-                <Textarea
+                <Label htmlFor="contactsection-field-6" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Mensaje *</Label>
+                <Textarea id="contactsection-field-6"
                   required
                   rows={5}
                   maxLength={2000}
@@ -211,13 +212,13 @@ export default function ContactSection({ skipReveal = false }) {
               </div>
 
               {sent && (
-                <p className="text-sm text-primary font-mono text-center">✓ Mensaje enviado correctamente. Te contactaremos pronto.</p>
+                <p role="status" className="text-sm text-primary font-mono text-center">✓ Mensaje enviado correctamente. Te contactaremos pronto.</p>
               )}
               {warning && (
-                <p className="text-sm text-warning font-mono text-center">{warning}</p>
+                <p role="status" className="text-sm text-warning font-mono text-center">{warning}</p>
               )}
               {error && (
-                <p className="text-sm text-destructive font-mono text-center">{error}</p>
+                <p role="alert" className="text-sm text-destructive font-mono text-center">{error}</p>
               )}
               <button
                 type="submit"

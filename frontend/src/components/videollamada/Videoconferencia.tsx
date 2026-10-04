@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { PhoneOff, Video, Mic, MicOff, VideoOff } from 'lucide-react';
 import { useWebrtc } from '@/hooks/useWebrtc';
@@ -45,7 +45,7 @@ export default function Videoconferencia({ callId, displayName, onColgar }: {
             className="p-2 border border-border-subtle text-foreground">{mic ? <Mic /> : <MicOff />}</button>
           <button onClick={toggleCamera} disabled={!localStream} aria-label={camera ? 'Apagar cámara' : 'Activar cámara'}
             className="p-2 border border-border-subtle text-foreground">{camera ? <Video /> : <VideoOff />}</button>
-          <button onClick={onColgar} className="flex items-center gap-2 bg-danger text-white px-4 py-2 font-bold text-xs">
+          <button onClick={onColgar} className="flex items-center gap-2 bg-destructive text-destructive-foreground px-4 py-2 font-bold text-xs">
             <PhoneOff className="w-4 h-4" /> Colgar
           </button>
         </div>

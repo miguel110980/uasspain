@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -26,7 +27,7 @@ export default function AdminActividad() {
   const [data, setData] = useState(/** @type {ActivityFeedData | null} */ (null));
   const [search, setSearch] = useState('');
   const [filtroTipo, setFiltroTipo] = useState(/** @type {ActivityFiltroTipo} */ ('todos'));
-  const { loading, isBusy, lastUpdate, runLoad } = useRefreshableLoad();
+  const { loading, lastUpdate, runLoad, error: loadError } = useRefreshableLoad();
   /** @type {React.MutableRefObject<ReturnType<typeof setInterval> | null>} */
   const timer = useRef(null);
   const hasData = useRef(false);
@@ -76,6 +77,7 @@ export default function AdminActividad() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+      <DataLoadNotice error={loadError} retry={() => load(true)} />
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h2 className="font-heading text-xl font-bold text-foreground">Actividad en tiempo real</h2>
@@ -92,7 +94,7 @@ export default function AdminActividad() {
       <div className="flex flex-col md:flex-row gap-3">
         <div className="flex items-center gap-2 px-3 h-10 flex-1 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30">
           <Search className="w-4 h-4 text-muted-foreground/60" />
-          <input
+          <input aria-label="Buscar por usuario, acción, rol, IP…"
             value={search}
             onChange={(ev) => setSearch(ev.target.value)}
             placeholder="Buscar por usuario, acción, rol, IP…"

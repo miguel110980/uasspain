@@ -10,6 +10,7 @@ export function useRefreshableLoad(initialLoading = true) {
   const [loading, setLoading] = useState(initialLoading);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(() => new Date());
+  const [error, setError] = useState('');
 
   const runLoad = useCallback(async (task: () => Promise<unknown>, { manual = false, silent = false }: { manual?: boolean; silent?: boolean } = {}) => {
     if (manual) {
@@ -20,7 +21,10 @@ export function useRefreshableLoad(initialLoading = true) {
 
     try {
       await task();
+      setError('');
       setLastUpdate(new Date());
+    } catch {
+      setError('No se pudieron actualizar los datos. Vuelve a intentarlo.');
     } finally {
       setLoading(false);
       if (manual) {
@@ -35,5 +39,6 @@ export function useRefreshableLoad(initialLoading = true) {
     isBusy: loading || refreshing,
     lastUpdate,
     runLoad,
+    error,
   };
 }

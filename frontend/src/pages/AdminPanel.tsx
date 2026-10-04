@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { lazy, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   LayoutDashboard, Activity, BarChart2, Radio, Network, Shield, ScrollText,
   Users, UserCheck, Server, Bell, Settings, User, MessageCircle, DatabaseBackup, ShieldCheck,
@@ -10,24 +10,26 @@ import { usePanelAuthContext } from '@/context/PanelAuthContext';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 import AdminTopbar from '@/components/admin/AdminTopbar';
 import AdminDashboard from '@/pages/admin/AdminDashboard';
-import AdminUsuarios from '@/pages/admin/AdminUsuarios';
-import AdminConexiones from '@/pages/admin/AdminConexiones';
-import AdminActividad from '@/pages/admin/AdminActividad';
-import AdminEstadisticas from '@/pages/admin/AdminEstadisticas';
-import AdminConexionesTiempoReal from '@/pages/admin/AdminConexionesTiempoReal';
-import AdminSeguridad from '@/pages/admin/AdminSeguridad';
-import AdminAuditoria from '@/pages/admin/AdminAuditoria';
-import AdminMonitorizacion from '@/pages/admin/AdminMonitorizacion';
-import AdminNotificaciones from '@/pages/admin/AdminNotificaciones';
-import AdminConfiguracion from '@/pages/admin/AdminConfiguracion';
-import AdminBackups from '@/pages/admin/AdminBackups';
-import AdminVpn from '@/pages/admin/AdminVpn';
-import AdminInstructores from '@/pages/admin/AdminInstructores';
-import AdminChat from '@/pages/admin/AdminChat';
-import AdminCuenta from '@/components/admin/AdminCuenta';
-import AdminBlog from '@/pages/admin/AdminBlog';
-import AdminCursos from '@/pages/admin/AdminCursos';
-import StaffVideo from '@/components/videollamada/StaffVideo';
+const AdminUsuarios = lazy(() => import('@/pages/admin/AdminUsuarios'));
+const AdminConexiones = lazy(() => import('@/pages/admin/AdminConexiones'));
+const AdminActividad = lazy(() => import('@/pages/admin/AdminActividad'));
+const AdminEstadisticas = lazy(() => import('@/pages/admin/AdminEstadisticas'));
+const AdminConexionesTiempoReal = lazy(() => import('@/pages/admin/AdminConexionesTiempoReal'));
+const AdminSeguridad = lazy(() => import('@/pages/admin/AdminSeguridad'));
+const AdminAuditoria = lazy(() => import('@/pages/admin/AdminAuditoria'));
+const AdminMonitorizacion = lazy(() => import('@/pages/admin/AdminMonitorizacion'));
+const AdminNotificaciones = lazy(() => import('@/pages/admin/AdminNotificaciones'));
+const AdminConfiguracion = lazy(() => import('@/pages/admin/AdminConfiguracion'));
+const AdminBackups = lazy(() => import('@/pages/admin/AdminBackups'));
+const AdminVpn = lazy(() => import('@/pages/admin/AdminVpn'));
+const AdminInstructores = lazy(() => import('@/pages/admin/AdminInstructores'));
+const AdminChat = lazy(() => import('@/pages/admin/AdminChat'));
+const AdminCuenta = lazy(() => import('@/components/admin/AdminCuenta'));
+const AdminBlog = lazy(() => import('@/pages/admin/AdminBlog'));
+const AdminCursos = lazy(() => import('@/pages/admin/AdminCursos'));
+const StaffVideo = lazy(() => import('@/components/videollamada/StaffVideo'));
+
+import PanelSection from '@/components/ui/PanelSection';
 
 const NAV_GROUPS = [
   {
@@ -188,23 +190,23 @@ export default function AdminPanel() {
 
   const SECTION_COMPONENTS = {
     dashboard: <AdminDashboard />,
-    actividad: <AdminActividad />,
-    estadisticas: <AdminEstadisticas />,
-    'conexiones-rt': <AdminConexionesTiempoReal />,
-    'registro-conexiones': <AdminConexiones />,
-    seguridad: <AdminSeguridad />,
-    auditoria: <AdminAuditoria />,
-    usuarios: <AdminUsuarios />,
-    instructores: <AdminInstructores />,
-    blog: <AdminBlog />,
-    cursos: <AdminCursos active={section === 'cursos'} />,
-    video: <StaffVideo role="admin" />,
-    monitorizacion: <AdminMonitorizacion />,
-    notificaciones: <AdminNotificaciones />,
-    backups: <AdminBackups />,
-    vpn: <AdminVpn />,
-    configuracion: <AdminConfiguracion />,
-    cuenta: <AdminCuenta profile={accountProfile ?? authProfile} onProfileUpdate={setAccountProfile} />,
+    actividad: <PanelSection><AdminActividad /></PanelSection>,
+    estadisticas: <PanelSection><AdminEstadisticas /></PanelSection>,
+    'conexiones-rt': <PanelSection><AdminConexionesTiempoReal /></PanelSection>,
+    'registro-conexiones': <PanelSection><AdminConexiones /></PanelSection>,
+    seguridad: <PanelSection><AdminSeguridad /></PanelSection>,
+    auditoria: <PanelSection><AdminAuditoria /></PanelSection>,
+    usuarios: <PanelSection><AdminUsuarios /></PanelSection>,
+    instructores: <PanelSection><AdminInstructores /></PanelSection>,
+    blog: <PanelSection><AdminBlog /></PanelSection>,
+    cursos: <PanelSection><AdminCursos active={section === 'cursos'} /></PanelSection>,
+    video: <PanelSection><StaffVideo role="admin" /></PanelSection>,
+    monitorizacion: <PanelSection><AdminMonitorizacion /></PanelSection>,
+    notificaciones: <PanelSection><AdminNotificaciones /></PanelSection>,
+    backups: <PanelSection><AdminBackups /></PanelSection>,
+    vpn: <PanelSection><AdminVpn /></PanelSection>,
+    configuracion: <PanelSection><AdminConfiguracion /></PanelSection>,
+    cuenta: <PanelSection><AdminCuenta profile={accountProfile ?? authProfile} onProfileUpdate={setAccountProfile} /></PanelSection>,
   };
 
   return (
@@ -240,7 +242,7 @@ export default function AdminPanel() {
           ))}
           {visitedTabs.has('chat') && (
             <div className={section === 'chat' ? '' : 'hidden'} aria-hidden={section !== 'chat'}>
-              <AdminChat onUnreadChange={handleStaffUnreadChange} />
+              <PanelSection><AdminChat onUnreadChange={handleStaffUnreadChange} /></PanelSection>
             </div>
           )}
         </main>

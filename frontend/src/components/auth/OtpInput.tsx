@@ -1,4 +1,4 @@
-﻿import React, { useRef } from 'react';
+import React, { useRef } from 'react';
 
 export default function OtpInput({ value, onChange, length = 6, autoFocus }) {
   const inputsRef = useRef([]);
@@ -32,7 +32,7 @@ export default function OtpInput({ value, onChange, length = 6, autoFocus }) {
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" role="group" aria-label="Código de verificación">
       {digits.map((digit, i) => (
         <input
           key={i}
@@ -41,13 +41,15 @@ export default function OtpInput({ value, onChange, length = 6, autoFocus }) {
           }}
           type="text"
           inputMode="numeric"
+          aria-label={`Dígito ${i + 1} de ${length}`}
+          autoComplete={i === 0 ? 'one-time-code' : 'off'}
           maxLength={1}
           value={digit}
           autoFocus={autoFocus && i === 0}
           onChange={(e) => handleChange(i, e)}
           onKeyDown={(e) => handleKeyDown(i, e)}
           onPaste={handlePaste}
-          className="w-10 h-11 text-center bg-surface-muted border border-border-subtle focus:border-transparent text-foreground text-sm outline-none transition-colors rounded-sm"
+          className="w-10 min-w-0 flex-1 max-w-10 h-11 text-center bg-surface-muted border border-border-subtle focus:border-transparent text-foreground text-sm outline-hidden transition-colors rounded-sm"
         />
       ))}
     </div>

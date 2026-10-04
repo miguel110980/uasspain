@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import PanelModal from '@/components/ui/PanelModal';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import React, { useEffect, useState, useMemo } from 'react';
@@ -24,6 +25,7 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('es-ES', { day: '2-di
 export default function AdminInstructores() {
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [fStatus, setFStatus] = useState('todos');
   const [actionLoading, setActionLoading] = useState({});
@@ -33,9 +35,12 @@ export default function AdminInstructores() {
 
   const load = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const data = await authService.listProfiles('-created_date', 500);
       setProfiles(data.filter((p) => profileHasInstructor(p)));
+    } catch {
+      setLoadError('No se pudieron cargar los instructores. Vuelve a intentarlo.');
     } finally {
       setLoading(false);
     }
@@ -96,6 +101,7 @@ export default function AdminInstructores() {
 
   return (
     <div className="space-y-5">
+      <DataLoadNotice error={loadError} retry={load} />
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div>
@@ -134,14 +140,14 @@ export default function AdminInstructores() {
       <div className="flex flex-col md:flex-row gap-3">
         <div className="flex items-center gap-2 px-3 h-10 flex-1 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30">
           <Search className="w-4 h-4 text-muted-foreground/60" />
-          <input
+          <input aria-label="Buscar por nombre, email o usuario…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar por nombre, email o usuario…"
             className="bg-transparent text-sm text-foreground placeholder:text-muted-foreground/40 outline-none w-full"
           />
         </div>
-        <select
+        <select aria-label="Todos los estados"
           value={fStatus}
           onChange={(e) => setFStatus(e.target.value)}
           className="h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent"
@@ -206,22 +212,22 @@ export default function AdminInstructores() {
                       ) : (
                         <>
                           {p.status !== 'activo' && (
-                            <button onClick={() => setStatus(p.id, 'activo')} title="Activar" className="w-7 h-7 flex items-center justify-center text-success hover:bg-success-soft rounded transition-colors">
+                            <button aria-label="Activar" onClick={() => setStatus(p.id, 'activo')} title="Activar" className="w-7 h-7 flex items-center justify-center text-success hover:bg-success-soft rounded transition-colors">
                               <CheckCircle className="w-4 h-4" />
                             </button>
                           )}
                           {p.status !== 'bloqueado' && (
-                            <button onClick={() => setStatus(p.id, 'bloqueado')} title="Bloquear" className="w-7 h-7 flex items-center justify-center text-warning hover:bg-warning-soft rounded transition-colors">
+                            <button aria-label="Bloquear" onClick={() => setStatus(p.id, 'bloqueado')} title="Bloquear" className="w-7 h-7 flex items-center justify-center text-warning hover:bg-warning-soft rounded transition-colors">
                               <Ban className="w-4 h-4" />
                             </button>
                           )}
-                          <button onClick={() => setDetailUser(p)} title="Ver detalles" className="w-7 h-7 flex items-center justify-center text-info hover:bg-info-soft rounded transition-colors">
+                          <button aria-label="Ver detalles" onClick={() => setDetailUser(p)} title="Ver detalles" className="w-7 h-7 flex items-center justify-center text-info hover:bg-info-soft rounded transition-colors">
                             <Eye className="w-4 h-4" />
                           </button>
-                          <button onClick={() => setEditUser(p)} title="Editar" className="w-7 h-7 flex items-center justify-center text-primary hover:bg-primary/10 rounded transition-colors">
+                          <button aria-label="Editar" onClick={() => setEditUser(p)} title="Editar" className="w-7 h-7 flex items-center justify-center text-primary hover:bg-primary/10 rounded transition-colors">
                             <Edit className="w-4 h-4" />
                           </button>
-                          <button onClick={() => remove(p.id)} title="Eliminar" className="w-7 h-7 flex items-center justify-center text-danger hover:bg-danger-soft rounded transition-colors">
+                          <button aria-label="Eliminar" onClick={() => remove(p.id)} title="Eliminar" className="w-7 h-7 flex items-center justify-center text-danger hover:bg-danger-soft rounded transition-colors">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </>
@@ -561,7 +567,7 @@ function AssignStudentsModal({ instructorId, currentlyAssigned, onClose, onAssig
         </div>
         <div className="flex items-center gap-2 px-3 h-10 mb-4 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30">
           <Search className="w-4 h-4 text-muted-foreground/60" />
-          <input
+          <input aria-label="Buscar por nombre, email o usuario…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar por nombre, email o usuario…"

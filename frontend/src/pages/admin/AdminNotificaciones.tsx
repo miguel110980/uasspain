@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Bell, CheckCircle2, AlertTriangle, Loader2, X } from 'lucide-react';
@@ -25,7 +26,7 @@ const fmt = (iso) => {
 export default function AdminNotificaciones() {
   const [notifs, setNotifs] = useState([]);
   const [leidas, setLeidas] = useState(new Set());
-  const { loading, isBusy, lastUpdate, runLoad } = useRefreshableLoad();
+  const { loading, lastUpdate, runLoad, error: loadError } = useRefreshableLoad();
   const hasData = useRef(false);
 
   const load = (manual = false) => {
@@ -150,6 +151,7 @@ export default function AdminNotificaciones() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+      <DataLoadNotice error={loadError} retry={() => load(true)} />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-heading text-xl font-bold text-foreground flex items-center gap-2">
@@ -188,7 +190,7 @@ export default function AdminNotificaciones() {
                 <p className="text-[10px] font-mono text-muted-foreground/50 mt-1">{fmt(n.fecha)}</p>
               </div>
               {!leida && (
-                <button onClick={() => marcarLeida(n.id)} className="shrink-0 text-muted-foreground hover:text-primary transition-colors" title="Marcar como leída">
+                <button aria-label="Marcar como leída" onClick={() => marcarLeida(n.id)} className="shrink-0 text-muted-foreground hover:text-primary transition-colors" title="Marcar como leída">
                   <X className="w-4 h-4" />
                 </button>
               )}

@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart2, Loader2, TrendingUp, TrendingDown, Minus } from 'lucide-react';
@@ -123,7 +124,7 @@ function GraficaExamen({ resultados, categoria }) {
       ) : null}
 
       {/* Historial */}
-      <div className="mt-4 overflow-x-auto">
+      <div className="mt-4 overflow-x-auto" tabIndex={0} role="region" aria-label={`Historial de resultados de ${categoria}`}>
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border-subtle">
@@ -164,6 +165,7 @@ function GraficaExamen({ resultados, categoria }) {
 export default function AlumnoResultados({ alumnoId }) {
   const [resultados, setResultados] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [filtro, setFiltro] = useState('Todos');
 
   useEffect(() => {
@@ -177,11 +179,12 @@ export default function AlumnoResultados({ alumnoId }) {
       return;
     }
     setLoading(true);
+    setLoadError('');
     try {
       const data = await examenesService.resultados.filter({ alumno_id: alumnoId }, '-fecha', 200);
       setResultados(data);
-    } catch (err) {
-      console.error('Error cargando resultados:', err);
+    } catch {
+      setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');
       setResultados([]);
     } finally {
       setLoading(false);
@@ -218,6 +221,7 @@ export default function AlumnoResultados({ alumnoId }) {
 
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+      <DataLoadNotice error={loadError} retry={loadData} />
       {/* Header */}
       <div className="mb-8">
         <div className="inline-flex items-center gap-2 mb-3 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">

@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Upload, FileText, Trash2, Loader2, Plus, Download, ExternalLink } from 'lucide-react';
@@ -22,6 +23,7 @@ export default function InstructorMaterial() {
   const [materiales, setMateriales] = useState([]);
   const [publicaciones, setPublicaciones] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [materialToDelete, setMaterialToDelete] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -50,6 +52,7 @@ export default function InstructorMaterial() {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [mats, pubs] = await Promise.all([
         materialesService.materiales.list('-orden'),
@@ -57,6 +60,8 @@ export default function InstructorMaterial() {
       ]);
       setMateriales(mats);
       setPublicaciones(pubs);
+    } catch {
+      setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');
     } finally {
       setLoading(false);
     }
@@ -184,6 +189,7 @@ export default function InstructorMaterial() {
 
   return (
     <div>
+      <DataLoadNotice error={loadError} retry={loadData} />
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 mb-8">
         {[
@@ -216,10 +222,10 @@ export default function InstructorMaterial() {
             <form onSubmit={handleUploadMaterial} className="space-y-5">
               <div className="grid sm:grid-cols-2 gap-5">
                 <div>
-                  <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                  <label htmlFor="instructormaterial-field-1" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                     Título
                   </label>
-                  <input
+                  <input id="instructormaterial-field-1"
                     type="text"
                     value={formMaterial.titulo}
                     onChange={(e) => setFormMaterial((prev) => ({ ...prev, titulo: e.target.value }))}
@@ -230,10 +236,10 @@ export default function InstructorMaterial() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                  <label htmlFor="instructormaterial-field-2" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                     Categoría
                   </label>
-                  <select
+                  <select id="instructormaterial-field-2"
                     value={formMaterial.categoria}
                     onChange={(e) => setFormMaterial((prev) => ({ ...prev, categoria: e.target.value }))}
                     className="w-full bg-background border border-border-subtle rounded px-3 py-2 text-sm text-foreground focus:border-transparent focus:outline-none [&>option]:bg-card [&>option]:text-foreground"
@@ -248,10 +254,10 @@ export default function InstructorMaterial() {
               </div>
 
               <div>
-                <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                <label htmlFor="instructormaterial-field-3" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                   Descripción (opcional)
                 </label>
-                <textarea
+                <textarea id="instructormaterial-field-3"
                   value={formMaterial.descripcion}
                   onChange={(e) => setFormMaterial((prev) => ({ ...prev, descripcion: e.target.value }))}
                   placeholder="Ej: Guía introductoria para principiantes..."
@@ -260,10 +266,10 @@ export default function InstructorMaterial() {
               </div>
 
               <div>
-                <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                <label htmlFor="instructormaterial-field-4" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                   Archivo PDF
                 </label>
-                <input
+                <input id="instructormaterial-field-4"
                   type="file"
                   accept=".pdf"
                   onChange={(e) => setFormMaterial((prev) => ({ ...prev, archivo: e.target.files?.[0] || null }))}
@@ -378,10 +384,10 @@ export default function InstructorMaterial() {
 
             <form onSubmit={handleAddBOE} className="space-y-5">
               <div>
-                <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                <label htmlFor="instructormaterial-field-5" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                   Título
                 </label>
-                <input
+                <input id="instructormaterial-field-5"
                   type="text"
                   value={formBOE.titulo}
                   onChange={(e) => setFormBOE((prev) => ({ ...prev, titulo: e.target.value }))}
@@ -392,10 +398,10 @@ export default function InstructorMaterial() {
               </div>
 
               <div>
-                <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                <label htmlFor="instructormaterial-field-6" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                   Fecha
                 </label>
-                <input
+                <input id="instructormaterial-field-6"
                   type="date"
                   value={formBOE.fecha}
                   onChange={(e) => setFormBOE((prev) => ({ ...prev, fecha: e.target.value }))}
@@ -405,10 +411,10 @@ export default function InstructorMaterial() {
               </div>
 
               <div>
-                <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                <label htmlFor="instructormaterial-field-7" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                   Resumen (opcional)
                 </label>
-                <textarea
+                <textarea id="instructormaterial-field-7"
                   value={formBOE.resumen}
                   onChange={(e) => setFormBOE((prev) => ({ ...prev, resumen: e.target.value }))}
                   placeholder="Ej: Se actualizan los requisitos de operación en zonas pobladas..."
@@ -417,10 +423,10 @@ export default function InstructorMaterial() {
               </div>
 
               <div>
-                <label className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                <label htmlFor="instructormaterial-field-8" className="block text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
                   Enlace al BOE
                 </label>
-                <input
+                <input id="instructormaterial-field-8"
                   type="url"
                   value={formBOE.url}
                   onChange={(e) => setFormBOE((prev) => ({ ...prev, url: e.target.value }))}

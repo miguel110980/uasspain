@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -21,7 +22,7 @@ const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Se
 
 export default function AdminEstadisticas() {
   const [data, setData] = useState(null);
-  const { loading, isBusy, lastUpdate, runLoad } = useRefreshableLoad();
+  const { loading, lastUpdate, runLoad, error: loadError } = useRefreshableLoad();
   const hasData = useRef(false);
 
   const load = (manual = false) => runLoad(async () => {
@@ -109,6 +110,7 @@ export default function AdminEstadisticas() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+      <DataLoadNotice error={loadError} retry={() => load(true)} />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-heading text-xl font-bold text-foreground flex items-center gap-2">
@@ -156,7 +158,7 @@ export default function AdminEstadisticas() {
           <ResponsiveContainer width="100%" height={240}>
             <PieChart>
               <Pie data={rolesPie} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={3}>
-                {rolesPie.map((e) => <Cell key={e.name} fill={e.color} />)}
+                {rolesPie.map((e) => <Cell key={e.name} fill={e.color} aria-label={`${e.name}: ${e.value}`} />)}
               </Pie>
               <Tooltip contentStyle={TT} />
             </PieChart>

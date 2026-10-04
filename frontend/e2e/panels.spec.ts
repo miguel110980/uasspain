@@ -243,10 +243,10 @@ test('admin creates, publishes, edits and deletes a dynamic course from the UI',
     await publicPage.setViewportSize({ width: 1920, height: 1080 });
     await publicPage.goto('/');
     await publicPage.getByRole('button', { name: 'Formación', exact: true }).click();
-    await expect(publicPage.getByRole('link', { name, exact: true })).toBeVisible();
-    await publicPage.getByRole('link', { name, exact: true }).click();
+    await expect(publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name, exact: true })).toBeVisible();
+    await publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name, exact: true }).click();
     await expect(publicPage.getByRole('heading', { name, exact: true })).toBeVisible();
-    await expect(publicPage.getByText('Contenido público del curso de prueba.', { exact: true })).toBeVisible();
+    await expect(publicPage.getByRole('heading', { name: 'Descripción', exact: true }).locator('..').getByText('Contenido público del curso de prueba.', { exact: true })).toBeVisible();
     await publicPage.close();
     await page.locator('article').filter({ has: page.getByRole('heading', { name, exact: true }) }).getByRole('button', { name: 'Editar', exact: true }).click();
     await page.getByLabel('Nombre del curso', { exact: true }).fill(`${name} editado`);

@@ -1,6 +1,31 @@
-﻿import React from 'react';
+import React, { useEffect, useRef, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
+import ModalPortal from '@/components/ui/ModalPortal';
+import useModalFocus from '@/hooks/useModalFocus';
+
+function MobileSidebar({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  const panel = useRef<HTMLElement>(null);
+  useModalFocus(panel, onClose);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1024px)');
+    const resize = () => { if (query.matches) close.current(); };
+    query.addEventListener('change', resize);
+    resize();
+    return () => query.removeEventListener('change', resize);
+  }, []);
+  return <ModalPortal>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
+      className="lg:hidden fixed inset-0 z-40 bg-background/80 backdrop-blur-sm" />
+    <motion.aside ref={panel} role="dialog" aria-modal="true" aria-label="Menú del panel" tabIndex={-1}
+      initial={{ x: -280 }} animate={{ x: 0 }} exit={{ x: -280 }} transition={{ type: 'spring', damping: 26, stiffness: 240 }}
+      className="lg:hidden fixed top-0 left-0 z-50 w-64 max-w-[calc(100vw-2rem)] h-dvh bg-surface backdrop-blur-xl border-r border-border-subtle shadow-lg">
+      {children}
+    </motion.aside>
+  </ModalPortal>;
+}
 
 export default function AdminSidebar({ groups, section, onSelect, isOpen, onClose, roleLabel = 'Admin' }) {
   const content = (
@@ -69,24 +94,7 @@ export default function AdminSidebar({ groups, section, onSelect, isOpen, onClos
       {/* Mobile drawer */}
       <AnimatePresence>
         {isOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={onClose}
-              className="lg:hidden fixed inset-0 z-40 bg-background/80 backdrop-blur-sm"
-            />
-            <motion.aside
-              initial={{ x: -280 }}
-              animate={{ x: 0 }}
-              exit={{ x: -280 }}
-              transition={{ type: 'spring', damping: 26, stiffness: 240 }}
-              className="lg:hidden fixed top-0 left-0 z-50 w-64 h-screen bg-surface backdrop-blur-xl border-r border-border-subtle shadow-lg"
-            >
-              {content}
-            </motion.aside>
-          </>
+          <MobileSidebar onClose={onClose}>{content}</MobileSidebar>
         )}
       </AnimatePresence>
     </>

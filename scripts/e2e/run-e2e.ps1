@@ -1,5 +1,9 @@
 # Runner E2E Rust: pila aislada -> semillas por API -> suite -> teardown.
-param([switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser)
+param(
+    [switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser, [switch]$FrontendOnly,
+    [ValidateSet('all', 'panels', 'presence', 'assignments', 'modals', 'courses')]
+    [string[]]$BrowserScope = @('all')
+)
 
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -104,8 +108,10 @@ try {
         psql -U uasspain -d test_e2e_uasspain -v ON_ERROR_STOP=1 `
         -c "UPDATE accounts_userprofile SET status='activo', otp_verified=TRUE WHERE id='$SecondStudentId'::uuid;" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'activación del segundo alumno E2E falló' }
+    $AssignmentStudents = @($SecondStudentId)
+    if ($FrontendOnly) { $AssignmentStudents += $StudentId }
     Invoke-E2EJson -Method POST -Path "/api/profiles/$($Instructor.id)/assign-alumnos/" -Session $Session -Body @{
-        student_ids = @($SecondStudentId)
+        student_ids = $AssignmentStudents
     } | Out-Null
 
     Write-Host '==> Preparando destinos SFTP E2E'
@@ -136,6 +142,9 @@ try {
         'chown -R uasspain:uasspain /app/backup_keys && chmod 700 /app/backup_keys && chmod 600 /app/backup_keys/backup_sftp_ed25519 && chmod 644 /app/backup_keys/known_hosts'
     if ($LASTEXITCODE -ne 0) { throw 'permisos de las claves SFTP E2E falló' }
 
+    # The frontend audit uses the same isolated fixtures without running server-only suites.
+    # Default behavior still executes every API and operational gate.
+    if (-not $FrontendOnly) {
     Write-Host '==> Ejecutando suite funcional en Python efímero fijado'
     & $Docker compose -f $ComposeFile exec -T backend-e2e mkdir -p /app/backups/destination-local
     if ($LASTEXITCODE -ne 0) { throw 'Directorio del destino local E2E no disponible' }
@@ -212,17 +221,20 @@ try {
         }
         Invoke-Operations 'recovered'
     }
+    }
     if (-not $SkipBrowser) {
         # Each group uses the unchanged production login limit. A backend restart
         # between groups isolates test traffic instead of weakening that limit.
         $BrowserGroups = @(
-            @{ Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module') },
-            @{ Label = 'modales y datos'; Arguments = @('--grep', '@panel-modals') },
-            @{ Label = 'cursos'; Arguments = @('--grep', '@course-module') }
+            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|staff-presence-video.spec|student-assignment.spec') },
+            @{ Key = 'presence'; Label = 'presencia y videollamada'; Arguments = @('staff-presence-video.spec.ts') },
+            @{ Key = 'assignments'; Label = 'asignación de alumnos'; Arguments = @('student-assignment.spec.ts') },
+            @{ Key = 'modals'; Label = 'modales y datos'; Arguments = @('--grep', '@panel-modals') },
+            @{ Key = 'courses'; Label = 'cursos'; Arguments = @('--grep', '@course-module') }
         )
         # Invoke Node directly so Windows cmd does not interpret regex pipes.
         $PlaywrightCli = Join-Path $Root 'frontend/node_modules/@playwright/test/cli.js'
-        foreach ($BrowserGroup in $BrowserGroups) {
+        foreach ($BrowserGroup in $BrowserGroups | Where-Object { $BrowserScope -contains 'all' -or $BrowserScope -contains $_.Key }) {
             Write-Host "==> Preparando navegador: $($BrowserGroup.Label)"
             & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'reinicio del backend E2E fallo' }

@@ -138,6 +138,10 @@
   flex-shrink: 0;
 }
 
+:global(.light) .accessButton {
+  color: hsl(var(--brand-cyan-text));
+}
+
 @media (min-width: 1440px) {
   .nav {
     display: flex;

@@ -17,7 +17,25 @@ async function checkHtml(folder) {
     if (entry.isDirectory()) await checkHtml(filename);
     else if (entry.name.endsWith('.html')) {
       const html = await readFile(filename, 'utf8');
+      // The static 404 shell contains literal HTML, not a prerendered route component.
+      if (path.basename(filename) !== '404.html' && /<h1\b/.test(html) && !/<link[^>]+rel="modulepreload"/.test(html)) throw new Error(`Missing public route preload in ${filename}`);
       for (const [, asset] of html.matchAll(/(?:src|href)="(\/assets\/[^"?#]+)"/g)) await access(path.join('dist', asset));
+      const styles = new Set([...html.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"/g)].map(match => match[1]));
+      const visited = new Set();
+      function checkStyles(key) {
+        if (visited.has(key)) return;
+        visited.add(key);
+        const module = manifest[key];
+        for (const css of module.css || []) {
+          if (!styles.has(`/${css}`)) throw new Error(`Missing initial stylesheet in ${filename}: ${css}`);
+        }
+        (module.imports || []).forEach(checkStyles);
+      }
+      for (const [, file] of html.matchAll(/<link[^>]+rel="modulepreload"[^>]+href="\/([^"]+)"/g)) {
+        const key = Object.keys(manifest).find(key => manifest[key].file === file);
+        if (!key) throw new Error(`Untracked module preload in ${filename}: ${file}`);
+        checkStyles(key);
+      }
     }
   }
 }

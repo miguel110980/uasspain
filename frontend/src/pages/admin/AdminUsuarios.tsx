@@ -237,7 +237,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
       <div className="flex flex-col md:flex-row gap-3">
         <div className="flex items-center gap-2 px-3 h-10 flex-1 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30">
           <Search className="w-4 h-4 text-muted-foreground/60" />
-          <input
+          <input aria-label="Buscar por nombre, email o usuario…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar por nombre, email o usuario…"
@@ -245,7 +245,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
           />
         </div>
         {!scopeRole && (
-          <select
+          <select aria-label="Todos los roles"
             value={fRole}
             onChange={(e) => setFRole(e.target.value)}
             className="h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent"
@@ -254,7 +254,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
             {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         )}
-        <select
+        <select aria-label="Todos los estados"
           value={fStatus}
           onChange={(e) => setFStatus(e.target.value)}
           className="h-10 px-3 bg-card border border-border-subtle rounded-md text-sm text-foreground outline-none focus:border-transparent"
@@ -359,46 +359,46 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
                       ) : (
                         <>
                           {onExamenes && (
-                            <button onClick={() => onExamenes(p)} title="Exámenes" className="w-7 h-7 flex items-center justify-center text-foreground hover:bg-surface-active rounded transition-colors">
+                            <button aria-label="Exámenes" onClick={() => onExamenes(p)} title="Exámenes" className="w-7 h-7 flex items-center justify-center text-foreground hover:bg-surface-active rounded transition-colors">
                               <ClipboardList className="w-4 h-4" />
                             </button>
                           )}
                           {onAccesos && (
-                            <button onClick={() => onAccesos(p)} title="Gestionar accesos" className="w-7 h-7 flex items-center justify-center text-info hover:bg-info-soft rounded transition-colors">
+                            <button aria-label="Gestionar accesos" onClick={() => onAccesos(p)} title="Gestionar accesos" className="w-7 h-7 flex items-center justify-center text-info hover:bg-info-soft rounded transition-colors">
                               <Lock className="w-4 h-4" />
                             </button>
                           )}
                           {onResultados && (
-                            <button onClick={() => onResultados(p)} title="Resultados" className="w-7 h-7 flex items-center justify-center text-foreground hover:bg-surface-active rounded transition-colors">
+                            <button aria-label="Resultados" onClick={() => onResultados(p)} title="Resultados" className="w-7 h-7 flex items-center justify-center text-foreground hover:bg-surface-active rounded transition-colors">
                               <BarChart2 className="w-4 h-4" />
                             </button>
                           )}
                           {p.status === 'pendiente' && p.otp_verified && (
-                            <button onClick={() => setStatus(p.id, 'activo')} title="Aprobar solicitud" className="w-7 h-7 flex items-center justify-center text-success hover:bg-success-soft rounded transition-colors">
+                            <button aria-label="Aprobar solicitud" onClick={() => setStatus(p.id, 'activo')} title="Aprobar solicitud" className="w-7 h-7 flex items-center justify-center text-success hover:bg-success-soft rounded transition-colors">
                               <CheckCircle className="w-4 h-4" />
                             </button>
                           )}
                           {p.status === 'pendiente' && (
-                            <button onClick={() => setStatus(p.id, 'rechazado')} title="Rechazar solicitud" className="w-7 h-7 flex items-center justify-center text-danger hover:bg-danger-soft rounded transition-colors">
+                            <button aria-label="Rechazar solicitud" onClick={() => setStatus(p.id, 'rechazado')} title="Rechazar solicitud" className="w-7 h-7 flex items-center justify-center text-danger hover:bg-danger-soft rounded transition-colors">
                               <X className="w-4 h-4" />
                             </button>
                           )}
                           {p.status !== 'activo' && p.status !== 'pendiente' && (
-                            <button onClick={() => setStatus(p.id, 'activo')} title="Activar" className="w-7 h-7 flex items-center justify-center text-success hover:bg-success-soft rounded transition-colors">
+                            <button aria-label="Activar" onClick={() => setStatus(p.id, 'activo')} title="Activar" className="w-7 h-7 flex items-center justify-center text-success hover:bg-success-soft rounded transition-colors">
                               <CheckCircle className="w-4 h-4" />
                             </button>
                           )}
                           {p.status !== 'bloqueado' && (
-                            <button onClick={() => setStatus(p.id, 'bloqueado')} title="Suspender" className="w-7 h-7 flex items-center justify-center text-warning hover:bg-warning-soft rounded transition-colors">
+                            <button aria-label="Suspender" onClick={() => setStatus(p.id, 'bloqueado')} title="Suspender" className="w-7 h-7 flex items-center justify-center text-warning hover:bg-warning-soft rounded transition-colors">
                               <Ban className="w-4 h-4" />
                             </button>
                           )}
                           {allowEdit && (
-                            <button onClick={() => setEditUser(p)} title="Editar" className="w-7 h-7 flex items-center justify-center text-info hover:bg-info-soft rounded transition-colors">
+                            <button aria-label="Editar" onClick={() => setEditUser(p)} title="Editar" className="w-7 h-7 flex items-center justify-center text-info hover:bg-info-soft rounded transition-colors">
                               <Edit className="w-4 h-4" />
                             </button>
                           )}
-                          <button onClick={() => remove(p.id)} title="Eliminar" className="w-7 h-7 flex items-center justify-center text-danger hover:bg-danger-soft rounded transition-colors">
+                          <button aria-label="Eliminar" onClick={() => remove(p.id)} title="Eliminar" className="w-7 h-7 flex items-center justify-center text-danger hover:bg-danger-soft rounded transition-colors">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </>

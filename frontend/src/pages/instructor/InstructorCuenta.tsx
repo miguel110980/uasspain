@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Save, Loader2, CheckCircle, AlertCircle, UserCog } from 'lucide-react';
 import authService from '@/services/authService';
@@ -170,10 +170,10 @@ export default function InstructorCuenta({ profile: sessionProfile = null, onPro
                 { label: 'Correo electrónico', field: 'email', type: 'email', required: true },
               ].map(({ label, field, type = 'text', required, readOnly }) => (
                 <div key={field} className="space-y-1.5">
-                  <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                  <label htmlFor={`instructorcuenta-${field}`} className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
                     {label} {required && '*'}
                   </label>
-                  <input
+                  <input id={`instructorcuenta-${field}`}
                     type={type}
                     value={form[field]}
                     onChange={(e) => !readOnly && handleChange(field, e.target.value)}
@@ -190,8 +190,8 @@ export default function InstructorCuenta({ profile: sessionProfile = null, onPro
               ))}
 
               <div className="space-y-1.5">
-                <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Fecha de Nacimiento</label>
-                <input
+                <label htmlFor="instructorcuenta-field-2" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Fecha de Nacimiento</label>
+                <input id="instructorcuenta-field-2"
                   type="date"
                   value={form.fecha_nacimiento}
                   max={new Date().toISOString().split('T')[0]}
@@ -229,8 +229,8 @@ export default function InstructorCuenta({ profile: sessionProfile = null, onPro
 
             <form onSubmit={handleChangePassword} className="space-y-6">
               <div className="space-y-1.5">
-                <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Contraseña actual</label>
-                <input
+                <label htmlFor="instructorcuenta-field-3" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Contraseña actual</label>
+                <input id="instructorcuenta-field-3"
                   type="password"
                   value={currentPassword}
                   onChange={(e) => { setCurrentPassword(e.target.value); setPasswordError(''); setPasswordSuccess(false); }}
@@ -239,8 +239,8 @@ export default function InstructorCuenta({ profile: sessionProfile = null, onPro
               </div>
               <div className="grid sm:grid-cols-2 gap-6">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Nueva contraseña</label>
-                  <input
+                  <label htmlFor="instructorcuenta-field-4" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Nueva contraseña</label>
+                  <input id="instructorcuenta-field-4"
                     type="password"
                     value={newPassword}
                     onChange={(e) => { setNewPassword(e.target.value); setPasswordError(''); setPasswordSuccess(false); }}
@@ -254,8 +254,8 @@ export default function InstructorCuenta({ profile: sessionProfile = null, onPro
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Repetir nueva contraseña</label>
-                  <input
+                  <label htmlFor="instructorcuenta-field-5" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Repetir nueva contraseña</label>
+                  <input id="instructorcuenta-field-5"
                     type="password"
                     value={confirmPassword}
                     onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(''); setPasswordSuccess(false); }}

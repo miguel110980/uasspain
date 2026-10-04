@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -31,7 +32,7 @@ export default function AdminAuditoria() {
   const [fHasta, setFHasta] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const { loading, isBusy, lastUpdate, runLoad } = useRefreshableLoad();
+  const { loading, lastUpdate, runLoad, error: loadError } = useRefreshableLoad();
   /** @type {React.MutableRefObject<ReturnType<typeof setInterval> | null>} */
   const timer = useRef(null);
   const hasData = useRef(false);
@@ -123,6 +124,7 @@ export default function AdminAuditoria() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+      <DataLoadNotice error={loadError} retry={() => load(true)} />
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
@@ -171,15 +173,15 @@ export default function AdminAuditoria() {
       <div className="glass-card p-4">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           <div className="col-span-2 md:col-span-1 lg:col-span-1">
-            <label className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Búsqueda</label>
+            <label htmlFor="adminauditoria-field-1" className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Búsqueda</label>
             <div className="flex items-center gap-2 px-2 h-9 border border-border-subtle rounded bg-surface-subtle">
               <Search className="w-3.5 h-3.5 text-muted-foreground/60" />
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Usuario, acción…" className="bg-transparent text-xs text-foreground outline-none w-full" />
+              <input id="adminauditoria-field-1" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Usuario, acción…" className="bg-transparent text-xs text-foreground outline-none w-full" />
             </div>
           </div>
           <div>
-            <label className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Rol</label>
-            <select value={fRol} onChange={(e) => setFRol(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent">
+            <label htmlFor="adminauditoria-field-2" className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Rol</label>
+            <select id="adminauditoria-field-2" value={fRol} onChange={(e) => setFRol(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent">
               <option value="todos">Todos</option>
               <option value="admin">Admin</option>
               <option value="instructor">Instructor</option>
@@ -187,26 +189,26 @@ export default function AdminAuditoria() {
             </select>
           </div>
           <div>
-            <label className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Tipo</label>
-            <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent">
+            <label htmlFor="adminauditoria-field-3" className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Tipo</label>
+            <select id="adminauditoria-field-3" value={fTipo} onChange={(e) => setFTipo(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent">
               <option value="todos">Todos</option>
               {Object.entries(TIPO_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Desde</label>
-            <input type="date" value={fDesde} onChange={(e) => setFDesde(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent" />
+            <label htmlFor="adminauditoria-field-4" className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Desde</label>
+            <input id="adminauditoria-field-4" type="date" value={fDesde} onChange={(e) => setFDesde(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent" />
           </div>
           <div>
-            <label className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Hasta</label>
-            <input type="date" value={fHasta} onChange={(e) => setFHasta(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent" />
+            <label htmlFor="adminauditoria-field-5" className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Hasta</label>
+            <input id="adminauditoria-field-5" type="date" value={fHasta} onChange={(e) => setFHasta(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent" />
           </div>
         </div>
       </div>
 
       {/* Tabla */}
       <div className="glass-card overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Tabla de registros">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border-subtle bg-surface-subtle text-left">

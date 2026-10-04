@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Radio, Eye, LogOut, Ban, History, Loader2, Wifi } from 'lucide-react';
@@ -30,7 +31,7 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
   const [modalRecord, setModalRecord] = useState(null);
   const [actionLoading, setActionLoading] = useState({});
   const [, setDurationTick] = useState(0);
-  const { loading, isBusy, lastUpdate, runLoad } = useRefreshableLoad();
+  const { loading, lastUpdate, runLoad, error: loadError } = useRefreshableLoad();
   const hasData = useRef(false);
 
   const load = (manual = false, silent = false) => runLoad(async () => {
@@ -107,6 +108,7 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+      <DataLoadNotice error={loadError} retry={() => load(true)} />
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
@@ -124,7 +126,7 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
 
       {/* Tabla */}
       <div className="glass-card overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Tabla de registros">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border-subtle bg-surface-subtle text-left">
@@ -176,18 +178,18 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
                         <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
                       ) : (
                         <>
-                          <button onClick={() => setModalRecord(r)} title="Ver detalles" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded transition-all">
+                          <button aria-label="Ver detalles" onClick={() => setModalRecord(r)} title="Ver detalles" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded transition-all">
                             <Eye className="w-3.5 h-3.5" />
                           </button>
                           {!readOnly && (
                             <>
-                              <button onClick={() => finalizarSesion(r.id)} title="Finalizar sesión" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-warning hover:border-warning-border hover:bg-warning-soft rounded transition-all">
+                              <button aria-label="Finalizar sesión" onClick={() => finalizarSesion(r.id)} title="Finalizar sesión" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-warning hover:border-warning-border hover:bg-warning-soft rounded transition-all">
                                 <LogOut className="w-3.5 h-3.5" />
                               </button>
-                              <button onClick={() => finalizarTodas(r.usuario || r.email)} title="Finalizar todas" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-warning hover:border-warning-border hover:bg-warning-soft rounded transition-all">
+                              <button aria-label="Finalizar todas" onClick={() => finalizarTodas(r.usuario || r.email)} title="Finalizar todas" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-warning hover:border-warning-border hover:bg-warning-soft rounded transition-all">
                                 <History className="w-3.5 h-3.5" />
                               </button>
-                              <button onClick={() => bloquearUsuario(r)} title="Bloquear usuario" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-danger hover:border-danger-border hover:bg-danger-soft rounded transition-all">
+                              <button aria-label="Bloquear usuario" onClick={() => bloquearUsuario(r)} title="Bloquear usuario" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-danger hover:border-danger-border hover:bg-danger-soft rounded transition-all">
                                 <Ban className="w-3.5 h-3.5" />
                               </button>
                             </>

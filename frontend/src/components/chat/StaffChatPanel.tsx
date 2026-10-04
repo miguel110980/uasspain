@@ -556,7 +556,7 @@ export default function StaffChatPanel({
                   })}
                 />
                 {mensajes.length > 0 && (
-                  <button
+                  <button aria-label="Limpiar chat"
                     type="button"
                     onClick={() => setShowClearConfirm(true)}
                     disabled={clearing}
@@ -619,7 +619,7 @@ export default function StaffChatPanel({
               )}
             </div>
             <form onSubmit={handleSend} className="border-t border-border-subtle p-4 flex items-center gap-3">
-              <input
+              <input aria-label="Escribe un mensaje..."
                 type="text"
                 value={texto}
                 onChange={(e) => setTexto(e.target.value)}
@@ -643,7 +643,7 @@ export default function StaffChatPanel({
         <PanelModal label="Limpiar chat" onClose={() => setShowClearConfirm(false)} className="max-w-sm glass-card p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-heading text-lg font-bold text-foreground">Limpiar chat</h3>
-              <button onClick={() => setShowClearConfirm(false)} className="text-muted-foreground hover:text-foreground">
+              <button type="button" aria-label="Cerrar confirmación" onClick={() => setShowClearConfirm(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="w-5 h-5" />
               </button>
             </div>

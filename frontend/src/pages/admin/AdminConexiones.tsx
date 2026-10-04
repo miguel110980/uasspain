@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -109,7 +110,7 @@ const initialFilters = (alumnoOnly, activeSessionsOnly) => {
 /** @param {{ alumnoOnly?: boolean, allowClear?: boolean, activeSessionsOnly?: boolean }} props */
 export default function AdminConexiones({ alumnoOnly = false, allowClear = true, activeSessionsOnly = false } = {}) {
   const [records, setRecords] = useState([]);
-  const { loading, isBusy, lastUpdate, runLoad } = useRefreshableLoad();
+  const { loading, lastUpdate, runLoad, error: loadError } = useRefreshableLoad();
   const hasData = useRef(false);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState({ key: 'fecha_hora', dir: 'desc' });
@@ -233,6 +234,7 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="space-y-4">
+      <DataLoadNotice error={loadError} retry={() => loadRecords(true)} />
       {/* Toolbar */}
       <div className="flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
         <p className="text-xs text-muted-foreground md:order-first w-full md:w-auto">
@@ -245,7 +247,7 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
         <div className="flex items-center gap-2 flex-1">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input
+            <input aria-label="Búsqueda global..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder="Búsqueda global..."
@@ -329,16 +331,16 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
                 {COLUMNS.map((col) => (
                   <th
                     key={col.key}
-                    onClick={() => col.sortable && handleSort(col.key)}
+                    aria-sort={col.sortable && sort.key === col.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     style={{ minWidth: col.minW }}
                     className={`px-3 py-3 text-left text-[10px] font-mono uppercase tracking-widest text-muted-foreground whitespace-nowrap ${col.sortable ? 'cursor-pointer hover:text-primary select-none' : ''}`}
                   >
-                    <span className="inline-flex items-center gap-1">
+                    {col.sortable ? (<button type="button" onClick={() => handleSort(col.key)} className="inline-flex items-center gap-1 text-left">
                       {col.label}
                       {col.sortable && sort.key === col.key && (
                         sort.dir === 'asc' ? <ChevronUp className="w-3 h-3 text-primary" /> : <ChevronDown className="w-3 h-3 text-primary" />
                       )}
-                    </span>
+                    </button>) : col.label}
                   </th>
                 ))}
                 <th className="px-3 py-3 text-left text-[10px] font-mono uppercase tracking-widest text-muted-foreground whitespace-nowrap" style={{ minWidth: '80px' }}>Acciones</th>
@@ -359,7 +361,7 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
                     </td>
                   ))}
                   <td className="px-3 py-2.5 whitespace-nowrap align-middle">
-                    <button onClick={() => setModalRecord(r)} className="inline-flex items-center justify-center w-7 h-7 border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded transition-all" title="Ver detalle">
+                    <button aria-label="Ver detalle" onClick={() => setModalRecord(r)} className="inline-flex items-center justify-center w-7 h-7 border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded transition-all" title="Ver detalle">
                       <Eye className="w-3.5 h-3.5" />
                     </button>
                   </td>
@@ -373,7 +375,7 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-border-subtle">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>Mostrando</span>
-            <select
+            <select aria-label="Registros por página"
               value={pageSize}
               onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
               className="bg-input border border-border-subtle text-foreground rounded px-2 py-1 focus:outline-none focus:border-transparent"
@@ -383,11 +385,11 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
             <span>de {filtered.length} registros</span>
           </div>
           <div className="flex items-center gap-1">
-            <button disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+            <button aria-label="Página anterior" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded disabled:opacity-30 disabled:cursor-not-allowed transition-all">
               <ChevronLeft className="w-4 h-4" />
             </button>
             <span className="text-xs font-mono text-muted-foreground px-2">{currentPage} / {totalPages}</span>
-            <button disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)} className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+            <button aria-label="Página siguiente" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)} className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded disabled:opacity-30 disabled:cursor-not-allowed transition-all">
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
@@ -402,8 +404,8 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
 function FilterInput({ label, value, onChange, type = 'text' }) {
   return (
     <div>
-      <label className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">{label}</label>
-      <input
+      <label htmlFor={`adminconexiones-${String(label).replace(/\s+/g, '-')}`} className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">{label}</label>
+      <input id={`adminconexiones-${String(label).replace(/\s+/g, '-')}`}
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -416,8 +418,8 @@ function FilterInput({ label, value, onChange, type = 'text' }) {
 function FilterSelect({ label, value, onChange, options, disabled = false }) {
   return (
     <div>
-      <label className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">{label}</label>
-      <select
+      <label htmlFor={`adminconexiones-${String(label).replace(/\s+/g, '-')}`} className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">{label}</label>
+      <select id={`adminconexiones-${String(label).replace(/\s+/g, '-')}`}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}

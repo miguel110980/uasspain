@@ -1,6 +1,33 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, type RefObject } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, Search, Bell, ChevronDown, LogOut, User } from 'lucide-react';
+
+function usePopoverFocus(ref: RefObject<HTMLDivElement | null>, open: boolean, close: () => void) {
+  const onClose = useRef(close);
+  onClose.current = close;
+  useEffect(() => {
+    if (!open) return;
+    const panel = ref.current?.querySelector<HTMLElement>('[role="dialog"]');
+    if (!panel) return;
+    const trigger = ref.current?.querySelector<HTMLButtonElement>('button[aria-haspopup]');
+    const items = () => Array.from(panel.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+    (items()[0] || panel).focus();
+    const onKey = (event: KeyboardEvent) => {
+      const controls = items();
+      const index = controls.indexOf(document.activeElement as HTMLButtonElement);
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopPropagation(); onClose.current(); trigger?.focus();
+      } else if (event.key === 'Tab') onClose.current();
+      else if (controls.length && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? controls.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + controls.length) % controls.length;
+        controls[next].focus();
+      }
+    };
+    panel.addEventListener('keydown', onKey);
+    return () => panel.removeEventListener('keydown', onKey);
+  }, [ref, open]);
+}
 
 /**
  * @param {{
@@ -46,6 +73,8 @@ export default function AdminTopbar({
   const [notifOpen, setNotifOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const notifRef = useRef<HTMLDivElement | null>(null);
+  usePopoverFocus(menuRef, menuOpen, () => setMenuOpen(false));
+  usePopoverFocus(notifRef, notifOpen, () => setNotifOpen(false));
   const searchRef = useRef<HTMLInputElement | null>(null);
   const [search, setSearch] = useState('');
   const matches = search.trim() ? navigation.filter(item => item.label.toLocaleLowerCase('es').includes(search.trim().toLocaleLowerCase('es'))) : [];
@@ -115,10 +144,10 @@ export default function AdminTopbar({
       <div className="relative" ref={notifRef}>
         <button
           type="button"
-          onClick={() => setNotifOpen((open) => !open)}
+          onClick={() => { setMenuOpen(false); setNotifOpen((open) => !open); }}
           aria-label="Notificaciones"
           aria-expanded={notifOpen}
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           className="relative w-9 h-9 flex items-center justify-center border border-border-subtle rounded-md text-muted-foreground hover:text-primary hover:border-primary/30 transition-colors"
         >
           <Bell className="w-4 h-4" />
@@ -132,6 +161,7 @@ export default function AdminTopbar({
         <AnimatePresence>
           {notifOpen && (
             <motion.div
+              role="dialog" aria-label="Notificaciones" tabIndex={-1}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 6 }}
@@ -188,9 +218,9 @@ export default function AdminTopbar({
       <div className="relative" ref={menuRef}>
         <button
           type="button"
-          onClick={() => setMenuOpen(!menuOpen)}
+          onClick={() => { setNotifOpen(false); setMenuOpen(!menuOpen); }}
           aria-label="Menú de cuenta"
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           aria-expanded={menuOpen}
           className="flex items-center gap-2 pl-1 pr-2 h-9 border border-border-subtle rounded-md hover:border-primary/30 transition-colors"
         >
@@ -203,6 +233,7 @@ export default function AdminTopbar({
         <AnimatePresence>
           {menuOpen && (
             <motion.div
+              role="dialog" aria-label="Menú de cuenta" tabIndex={-1}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 6 }}

@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 const accounts = {
   admin: ['e2e-admin@test.local', 'E2eAdmin_2026!'], // pragma: allowlist secret - isolated fixture
@@ -49,6 +50,21 @@ async function verifyDialog(page: Page, dialog: Locator, lastAction: Locator) {
     expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
+  await dialog.evaluate(element => element.setAttribute('data-ui-audit-dialog', 'true'));
+  try {
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => { document.documentElement.classList.remove('light', 'dark'); document.documentElement.classList.add(theme); }, theme);
+      for (const width of [320, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.waitForTimeout(500);
+        const results = await new AxeBuilder({ page }).include('[data-ui-audit-dialog="true"]').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+        expect(results.violations, `Dialog accessibility at ${width}px in ${theme}`).toEqual([]);
+      }
+    }
+  } finally {
+    await dialog.evaluate(element => element.removeAttribute('data-ui-audit-dialog'));
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
 }
 
 test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () => {
@@ -98,30 +114,52 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
   test('instructor access, exam permissions and results dialogs fit short screens', async ({ page }) => {
     test.setTimeout(180_000);
     await login(page, 'instructor');
-    await section(page, 'Usuarios');
+    await section(page, 'Alumnos');
     const row = page.getByRole('row').filter({ hasText: 'alumno.e2e@test.local' });
+    // A populated history makes the horizontal keyboard-scroll check independent
+    // of results left by another test group. Persistence has its own real API test.
+    await page.route('**/api/resultados-examen/**', route => route.fulfill({ json: [
+      { id: '00000000-0000-4000-8000-000000000001', categoria: 'A1/A3', fecha: '2026-10-01T12:00:00Z', modalidad: 'libre', nota: 8, aciertos: 8, errores: 2, aprobado: true },
+    ] }));
     for (const [title, label] of [['Gestionar accesos', 'Gestionar accesos'], ['Exámenes', 'Acceso a exámenes'], ['Resultados', 'Resultados del alumno']]) {
       await row.getByTitle(title, { exact: true }).click();
       const dialog = page.getByRole('dialog', { name: label, exact: true });
+      if (label === 'Resultados del alumno') await expect(dialog.getByRole('table')).toBeVisible();
       await verifyDialog(page, dialog, dialog.getByRole('button', { name: 'Cerrar', exact: true }));
       await page.keyboard.press('Escape');
       await expect(dialog).toHaveCount(0);
     }
   });
 
-  test('student exam setup and chat confirmation remain accessible', async ({ page }) => {
+  test('student exam setup and chat confirmation remain accessible', async ({ page, browser }) => {
+    const staffContext = await browser.newContext();
+    const instructor = await staffContext.newPage();
+    await login(instructor, 'instructor');
+    const headers = { 'X-UASSpain-Window-Id': await instructor.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || '') };
+    const name = `Examen para modal ${Date.now()}`;
+    const created = await instructor.request.post('/api/examenes/', { headers, data: { nombre: name, categoria: 'A1/A3', activo: true, num_preguntas: 1 } });
+    expect(created.status()).toBe(201);
+    const examId = (await created.json()).id;
+    try {
     await login(page, 'alumno');
     await section(page, 'Exámenes');
-    await page.getByRole('button', { name: 'Iniciar examen', exact: true }).first().click();
+    await page.locator('.glass-card').filter({ has: page.getByText(name, { exact: true }) }).getByRole('button', { name: 'Iniciar examen', exact: true }).click();
     const setup = page.getByRole('dialog', { name: 'Configurar examen', exact: true });
     await verifyDialog(page, setup, setup.getByRole('button', { name: 'Comenzar examen', exact: true }));
     await page.keyboard.press('Escape');
     await section(page, 'Chat');
+    await page.getByPlaceholder('Escribe un mensaje...').fill('Mensaje para comprobar la confirmación de limpieza.');
+    await page.getByRole('button', { name: 'Enviar mensaje', exact: true }).click();
+    await expect(page.getByText('Mensaje para comprobar la confirmación de limpieza.', { exact: true })).toBeVisible();
     await page.getByTitle('Limpiar conversación', { exact: true }).click();
     const clear = page.getByRole('dialog', { name: 'Limpiar chat', exact: true });
     await verifyDialog(page, clear, clear.getByRole('button', { name: 'Cancelar', exact: true }));
     await page.keyboard.press('Escape');
     await expect(clear).toHaveCount(0);
+    } finally {
+      expect((await instructor.request.delete(`/api/examenes/${examId}/`, { headers })).status()).toBe(204);
+      await staffContext.close();
+    }
   });
 
   test('admin dashboard counters follow published courses and overlapping roles', async ({ page }) => {
@@ -129,7 +167,7 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
     const headers = { 'X-UASSpain-Window-Id': await page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || '') };
     const before = await (await page.request.get('/api/system/status/', { headers })).json();
     const response = await page.request.post('/api/admin/courses', { headers, data: {
-      name: 'Panel counter fixture', description: 'Counter course fixture', modality: 'online', slug: `panel-counter-${Date.now()}`, status: 'published',
+      name: 'Panel counter fixture', description: 'Counter course fixture', category: 'other', modality: 'online', slug: `panel-counter-${Date.now()}`, status: 'published',
     } });
     expect(response.status()).toBe(201);
     const course = await response.json();

@@ -25,14 +25,24 @@ try {
   const manifest = JSON.parse(await readFile('dist/.vite/manifest.json', 'utf8'));
   function preload(modulePath) {
     const visited = new Set();
+    const styles = new Set([...base.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"/g)].map(match => match[1]));
     function collect(key) {
       if (visited.has(key)) return '';
       visited.add(key);
       const entry = manifest[key];
       if (!entry) return '';
-      return `<link rel="modulepreload" href="/${entry.file}" />` + (entry.imports || []).map(collect).join('');
+      const css = (entry.css || []).filter(file => {
+        const href = `/${file}`;
+        if (styles.has(href)) return false;
+        styles.add(href);
+        return true;
+      }).map(file => `<link rel="stylesheet" crossorigin href="/${file}" />`).join('');
+      return css + `<link rel="modulepreload" href="/${entry.file}" />` + (entry.imports || []).map(collect).join('');
     }
-    return collect(`src/${modulePath.replace(/^\.\//, '')}`);
+    const source = `src/${modulePath.replace(/^\.\//, '')}`;
+    const key = [source, `${source}.tsx`, `${source}.ts`].find(candidate => manifest[candidate]);
+    if (!key) throw new Error(`No build manifest entry for public page: ${source}`);
+    return collect(key);
   }
   const shell = base.replace(/<title>[\s\S]*?<\/title>/, '')
     .replace(/<meta[^>]+(?:name="(?:description|keywords|robots|twitter:[^"]+)"|property="og:[^"]+")[^>]*>/g, '')
@@ -76,7 +86,7 @@ try {
   }
   const loading = '<main><p role="status">Cargando UASSPAIN…</p></main>';
   await writeFile('dist/app.html', documentFor('/', loading, { title: 'Acceso | UASSPAIN', description: 'Acceso a la plataforma UASSPAIN.', noindex: true }));
-  await writeFile('dist/course.html', shell.replace('</head>', '<!--#include virtual="/_course-head?slug=$course_slug" --></head>')
+  await writeFile('dist/course.html', shell.replace('</head>', `${preload(modules.get('CursoDinamico'))}<!--#include virtual="/_course-head?slug=$course_slug" --></head>`)
     .replace(/<div id="root">[\s\S]*?<\/div>\s*<noscript>/, '<div id="root"><!--#include virtual="/_course-body?slug=$course_slug" --></div><noscript>')
     .replace('UASSPAIN necesita JavaScript para funcionar.', 'Activa JavaScript para acceder a tu cuenta.'));
   await writeFile('dist/404.html', documentFor('/404', '<main><h1>Página no encontrada</h1><p>La página solicitada no existe.</p><a href="/">Volver al inicio</a></main>', { title: 'Página no encontrada | UASSPAIN', description: 'La página solicitada no existe.', noindex: true }));

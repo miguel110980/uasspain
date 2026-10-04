@@ -58,9 +58,9 @@ export default function CourseTemplate({ course }: { course: Course }) {
         <section className="py-12 bg-background">
           <div className="max-w-7xl mx-auto px-6">
             <dl className={`grid gap-6 ${presentation.certification ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
-              <div className="glass-card p-6 text-center"><Clock className="w-6 h-6 text-primary mx-auto mb-3" /><dt className="text-xs text-muted-foreground uppercase tracking-widest mb-1">Duración</dt><dd className="font-heading text-lg font-bold text-foreground">{course.duration || 'Sin especificar'}</dd></div>
-              <div className="glass-card p-6 text-center"><Users className="w-6 h-6 text-primary mx-auto mb-3" /><dt className="text-xs text-muted-foreground uppercase tracking-widest mb-1">{presentation.format_label ? 'Formato' : 'Modalidad'}</dt><dd className="font-heading text-lg font-bold text-foreground">{format}</dd></div>
-              {presentation.certification && <div className="glass-card p-6 text-center"><Award className="w-6 h-6 text-primary mx-auto mb-3" /><dt className="text-xs text-muted-foreground uppercase tracking-widest mb-1">Certificación</dt><dd className="font-heading text-lg font-bold text-foreground">{presentation.certification}</dd></div>}
+              <div className="glass-card p-6 text-center"><dt className="text-xs text-muted-foreground uppercase tracking-widest mb-1"><Clock aria-hidden="true" className="w-6 h-6 text-primary mx-auto mb-3" />Duración</dt><dd className="font-heading text-lg font-bold text-foreground">{course.duration || 'Sin especificar'}</dd></div>
+              <div className="glass-card p-6 text-center"><dt className="text-xs text-muted-foreground uppercase tracking-widest mb-1"><Users aria-hidden="true" className="w-6 h-6 text-primary mx-auto mb-3" />{presentation.format_label ? 'Formato' : 'Modalidad'}</dt><dd className="font-heading text-lg font-bold text-foreground">{format}</dd></div>
+              {presentation.certification && <div className="glass-card p-6 text-center"><dt className="text-xs text-muted-foreground uppercase tracking-widest mb-1"><Award aria-hidden="true" className="w-6 h-6 text-primary mx-auto mb-3" />Certificación</dt><dd className="font-heading text-lg font-bold text-foreground">{presentation.certification}</dd></div>}
             </dl>
           </div>
         </section>

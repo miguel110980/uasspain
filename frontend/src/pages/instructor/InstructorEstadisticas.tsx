@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2, TrendingUp } from 'lucide-react';
@@ -15,6 +16,7 @@ export default function InstructorEstadisticas() {
   const [completados, setCompletados] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     loadData();
@@ -22,6 +24,7 @@ export default function InstructorEstadisticas() {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [resultadosData, materialesData, completadosData, profilesData] = await Promise.all([
         examenesService.resultados.list('-fecha', 1000),
@@ -33,6 +36,8 @@ export default function InstructorEstadisticas() {
       setMateriales(materialesData);
       setCompletados(completadosData);
       setProfiles(profilesData.filter(p => p.role === 'alumno' || p.roles?.includes('alumno')));
+    } catch {
+      setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');
     } finally {
       setLoading(false);
     }
@@ -77,6 +82,7 @@ export default function InstructorEstadisticas() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+      <DataLoadNotice error={loadError} retry={loadData} />
       {/* KPIs */}
       <div className="grid sm:grid-cols-3 gap-4">
         <div className="glass-card p-6">
@@ -128,7 +134,7 @@ export default function InstructorEstadisticas() {
               <PieChart>
                 <Pie data={dataAprobacionPie} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>
                   {dataAprobacionPie.map((entry, index) => (
-                    <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
+                    <Cell key={entry.name} fill={COLORS[index % COLORS.length]} aria-label={`${entry.name}: ${entry.value}`} />
                   ))}
                 </Pie>
                 <Tooltip

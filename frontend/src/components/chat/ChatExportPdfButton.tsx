@@ -70,7 +70,7 @@ export default function ChatExportPdfButton({
 
   return (
     <div className={`flex flex-col items-end gap-1 ${className}`}>
-      <button
+      <button aria-label="Exportar conversación a PDF"
         type="button"
         onClick={handleExport}
         disabled={disabled || exporting || !messages?.length}

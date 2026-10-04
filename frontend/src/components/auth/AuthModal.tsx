@@ -51,14 +51,6 @@ export default function AuthModal({ isOpen, onClose }) {
   };
 
   useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') handleClose();
-    };
-    if (isOpen) document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [isOpen]);
-
-  useEffect(() => {
     if (!isOpen) return;
     const saved = loadRememberedLogin();
     if (saved) {

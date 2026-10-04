@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { lazy, useState, useEffect, useMemo, useRef } from 'react';
 import {
   LayoutDashboard, Users, ClipboardList, BookOpen, BarChart2, Wifi,
   MessageCircle, Video, UserCog, TrendingUp,
@@ -11,20 +11,22 @@ import conexionesService from '@/services/conexionesService';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 import AdminTopbar from '@/components/admin/AdminTopbar';
 import InstructorDashboard from '@/pages/instructor/InstructorDashboard';
-import InstructorMaterial from '@/pages/instructor/InstructorMaterial';
-import InstructorExamenes from '@/pages/instructor/InstructorExamenes';
-import InstructorConexiones from '@/pages/instructor/InstructorConexiones';
-import InstructorResultados from '@/pages/instructor/InstructorResultados';
-import InstructorEstadisticas from '@/pages/instructor/InstructorEstadisticas';
-import InstructorChat from '@/pages/instructor/InstructorChat';
-import BloqueoExamenesModal from '@/pages/instructor/BloqueoExamenesModal';
-import ResultadosAlumnoModal from '@/pages/instructor/ResultadosAlumnoModal';
-import InstructorAccesos from '@/pages/instructor/InstructorAccesos';
-import AdminUsuarios from '@/pages/admin/AdminUsuarios';
-import InstructorCuenta from '@/pages/instructor/InstructorCuenta';
-import InstructorVideo from '@/components/videollamada/InstructorVideo';
+const InstructorMaterial = lazy(() => import('@/pages/instructor/InstructorMaterial'));
+const InstructorExamenes = lazy(() => import('@/pages/instructor/InstructorExamenes'));
+const InstructorConexiones = lazy(() => import('@/pages/instructor/InstructorConexiones'));
+const InstructorResultados = lazy(() => import('@/pages/instructor/InstructorResultados'));
+const InstructorEstadisticas = lazy(() => import('@/pages/instructor/InstructorEstadisticas'));
+const InstructorChat = lazy(() => import('@/pages/instructor/InstructorChat'));
+const BloqueoExamenesModal = lazy(() => import('@/pages/instructor/BloqueoExamenesModal'));
+const ResultadosAlumnoModal = lazy(() => import('@/pages/instructor/ResultadosAlumnoModal'));
+const InstructorAccesos = lazy(() => import('@/pages/instructor/InstructorAccesos'));
+const AdminUsuarios = lazy(() => import('@/pages/admin/AdminUsuarios'));
+const InstructorCuenta = lazy(() => import('@/pages/instructor/InstructorCuenta'));
+const InstructorVideo = lazy(() => import('@/components/videollamada/InstructorVideo'));
 
 const CURSOS = ['A1/A3', 'A2', 'STS'];
+
+import PanelSection from '@/components/ui/PanelSection';
 
 const NAV_GROUPS = [
   {
@@ -260,7 +262,7 @@ export default function InstructorPanel() {
   );
 
   const usuariosView = (
-    <AdminUsuarios
+    <PanelSection><AdminUsuarios
       scopeRole="alumno"
       allowEdit={false}
       allowInstructorAssignment
@@ -269,7 +271,7 @@ export default function InstructorPanel() {
       onExamenes={setModalBloqueo}
       onResultados={setModalResultados}
       onAccesos={setModalAccesos}
-    />
+    /></PanelSection>
   );
 
   const renderSection = () => (
@@ -285,38 +287,38 @@ export default function InstructorPanel() {
           loading={loading}
         />
       </div>
-      <div className={section === 'usuarios' ? '' : 'hidden'}>{usuariosView}</div>
+      {visitedTabs.has('usuarios') && <div className={section === 'usuarios' ? '' : 'hidden'}>{usuariosView}</div>}
       {visitedTabs.has('examenes') && (
-        <div className={section === 'examenes' ? '' : 'hidden'}><InstructorExamenes /></div>
+        <div className={section === 'examenes' ? '' : 'hidden'}><PanelSection><InstructorExamenes /></PanelSection></div>
       )}
       {visitedTabs.has('material') && (
-        <div className={section === 'material' ? '' : 'hidden'}><InstructorMaterial /></div>
+        <div className={section === 'material' ? '' : 'hidden'}><PanelSection><InstructorMaterial /></PanelSection></div>
       )}
       {visitedTabs.has('resultados') && (
-        <div className={section === 'resultados' ? '' : 'hidden'}><InstructorResultados /></div>
+        <div className={section === 'resultados' ? '' : 'hidden'}><PanelSection><InstructorResultados /></PanelSection></div>
       )}
       {visitedTabs.has('estadisticas') && (
-        <div className={section === 'estadisticas' ? '' : 'hidden'}><InstructorEstadisticas /></div>
+        <div className={section === 'estadisticas' ? '' : 'hidden'}><PanelSection><InstructorEstadisticas /></PanelSection></div>
       )}
       {visitedTabs.has('conexiones') && (
-        <div className={section === 'conexiones' ? '' : 'hidden'}><InstructorConexiones /></div>
+        <div className={section === 'conexiones' ? '' : 'hidden'}><PanelSection><InstructorConexiones /></PanelSection></div>
       )}
       {visitedTabs.has('chat') && (
         <div className={section === 'chat' ? '' : 'hidden'}>
-          <InstructorChat
+          <PanelSection><InstructorChat
             profiles={profiles}
             initialTab={chatInitialTab}
             alumnoUnread={chatSinLeerAlumno}
             staffUnread={chatSinLeerStaff}
-          />
+          /></PanelSection>
         </div>
       )}
       {visitedTabs.has('video') && (
-        <div className={section === 'video' ? '' : 'hidden'}><InstructorVideo profiles={profiles} /></div>
+        <div className={section === 'video' ? '' : 'hidden'}><PanelSection><InstructorVideo profiles={profiles} /></PanelSection></div>
       )}
       {visitedTabs.has('cuenta') && (
         <div className={section === 'cuenta' ? '' : 'hidden'}>
-          <InstructorCuenta profile={accountProfile ?? authProfile} onProfileUpdate={setAccountProfile} />
+          <PanelSection><InstructorCuenta profile={accountProfile ?? authProfile} onProfileUpdate={setAccountProfile} /></PanelSection>
         </div>
       )}
     </>
@@ -351,22 +353,22 @@ export default function InstructorPanel() {
         </main>
       </div>
 
-      <BloqueoExamenesModal
+      {modalBloqueo && (<PanelSection><BloqueoExamenesModal
         profile={modalBloqueo}
         examenes={examenes}
         estaBloqueado={estaBloqueado}
         onToggle={toggleBloqueoAlumno}
         actionLoading={actionLoading}
         onClose={() => setModalBloqueo(null)}
-      />
-      <ResultadosAlumnoModal
+      /></PanelSection>)}
+      {modalResultados && (<PanelSection><ResultadosAlumnoModal
         profile={modalResultados}
         onClose={() => setModalResultados(null)}
-      />
-      <InstructorAccesos
+      /></PanelSection>)}
+      {modalAccesos && (<PanelSection><InstructorAccesos
         profile={modalAccesos}
         onClose={() => setModalAccesos(null)}
-      />
+      /></PanelSection>)}
     </div>
   );
 }

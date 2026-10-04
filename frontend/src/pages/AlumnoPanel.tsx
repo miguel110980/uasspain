@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, useState, useEffect } from 'react';
 import {
   LayoutDashboard, ClipboardList, BarChart2, BookOpen, MessageCircle, Video, User, TrendingUp,
 } from 'lucide-react';
@@ -7,15 +7,17 @@ import { usePanelAuthContext } from '@/context/PanelAuthContext';
 import conexionesService from '@/services/conexionesService';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 import AdminTopbar from '@/components/admin/AdminTopbar';
-import AlumnoCuenta from '@/pages/alumno/AlumnoCuenta';
-import AlumnoExamenes from '@/pages/alumno/AlumnoExamenes';
-import AlumnoResultados from '@/pages/alumno/AlumnoResultados';
-import AlumnoMaterial from '@/pages/alumno/AlumnoMaterial';
-import AlumnoEvolucion from '@/pages/alumno/AlumnoEvolucion';
+const AlumnoCuenta = lazy(() => import('@/pages/alumno/AlumnoCuenta'));
+const AlumnoExamenes = lazy(() => import('@/pages/alumno/AlumnoExamenes'));
+const AlumnoResultados = lazy(() => import('@/pages/alumno/AlumnoResultados'));
+const AlumnoMaterial = lazy(() => import('@/pages/alumno/AlumnoMaterial'));
+const AlumnoEvolucion = lazy(() => import('@/pages/alumno/AlumnoEvolucion'));
 import AlumnoDashboard from '@/pages/alumno/AlumnoDashboard';
-import AlumnoChat from '@/pages/alumno/AlumnoChat';
-import AlumnoVideo from '@/components/videollamada/AlumnoVideo';
-import ExamenActivo from '@/pages/alumno/ExamenActivo';
+const AlumnoChat = lazy(() => import('@/pages/alumno/AlumnoChat'));
+const AlumnoVideo = lazy(() => import('@/components/videollamada/AlumnoVideo'));
+const ExamenActivo = lazy(() => import('@/pages/alumno/ExamenActivo'));
+
+import PanelSection from '@/components/ui/PanelSection';
 
 const NAV_GROUPS = [
   {
@@ -217,11 +219,11 @@ export default function AlumnoPanel() {
         />
         <main className="flex-1 p-4 md:p-6 max-w-[1400px] w-full mx-auto">
           {examenActivo ? (
-            <ExamenActivo
+            <PanelSection><ExamenActivo
               examen={examenActivo.examen}
               modalidad={examenActivo.modalidad}
               onFinalizar={handleFinalizarExamen}
-            />
+            /></PanelSection>
           ) : (
             <>
               <div className={section === 'dashboard' ? '' : 'hidden'}>
@@ -233,40 +235,40 @@ export default function AlumnoPanel() {
               </div>
               {visitedTabs.has('examenes') && (
                 <div className={section === 'examenes' ? '' : 'hidden'}>
-                  <AlumnoExamenes
+                  <PanelSection><AlumnoExamenes
                     alumnoId={profile?.id}
                     onIniciarExamen={handleIniciarExamen}
-                  />
+                  /></PanelSection>
                 </div>
               )}
               {visitedTabs.has('resultados') && (
                 <div className={section === 'resultados' ? '' : 'hidden'}>
-                  <AlumnoResultados alumnoId={profile?.id} />
+                  <PanelSection><AlumnoResultados alumnoId={profile?.id} /></PanelSection>
                 </div>
               )}
               {visitedTabs.has('material') && (
                 <div className={section === 'material' ? '' : 'hidden'}>
-                  <AlumnoMaterial alumnoId={profile?.id} />
+                  <PanelSection><AlumnoMaterial alumnoId={profile?.id} /></PanelSection>
                 </div>
               )}
               {visitedTabs.has('evolucion') && (
                 <div className={section === 'evolucion' ? '' : 'hidden'}>
-                  <AlumnoEvolucion alumnoId={profile?.id} />
+                  <PanelSection><AlumnoEvolucion alumnoId={profile?.id} /></PanelSection>
                 </div>
               )}
               {visitedTabs.has('chat') && (
                 <div className={section === 'chat' ? '' : 'hidden'}>
-                  <AlumnoChat alumnoId={profile?.id} alumnoNombre={`${profile?.nombre || ''} ${profile?.apellidos || ''}`.trim()} />
+                  <PanelSection><AlumnoChat alumnoId={profile?.id} alumnoNombre={`${profile?.nombre || ''} ${profile?.apellidos || ''}`.trim()} /></PanelSection>
                 </div>
               )}
               {visitedTabs.has('video') && (
                 <div className={section === 'video' ? '' : 'hidden'}>
-                  <AlumnoVideo alumnoId={profile?.id} alumnoNombre={`${profile?.nombre || ''} ${profile?.apellidos || ''}`.trim()} />
+                  <PanelSection><AlumnoVideo alumnoId={profile?.id} alumnoNombre={`${profile?.nombre || ''} ${profile?.apellidos || ''}`.trim()} /></PanelSection>
                 </div>
               )}
               {visitedTabs.has('cuenta') && (
                 <div className={section === 'cuenta' ? '' : 'hidden'}>
-                  <AlumnoCuenta profile={profile} onProfileUpdate={setProfile} />
+                  <PanelSection><AlumnoCuenta profile={profile} onProfileUpdate={setProfile} /></PanelSection>
                 </div>
               )}
             </>

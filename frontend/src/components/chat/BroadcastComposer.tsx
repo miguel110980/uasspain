@@ -84,7 +84,7 @@ export default function BroadcastComposer({ recipients, title, description, onSe
         <button type="button" onClick={() => setSelected(new Set(ordered.map((item) => String(item.id))))} className="text-primary">Seleccionar todos</button>
         <button type="button" onClick={() => setSelected(new Set())} className="text-muted-foreground">Limpiar selección</button>
       </div>
-      <textarea
+      <textarea aria-label="Escribe el mensaje para los destinatarios seleccionados…"
         value={message}
         onChange={(event) => setMessage(event.target.value)}
         maxLength={4000}

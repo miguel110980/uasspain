@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import { randomUUID } from 'node:crypto'
 import { defineConfig } from 'vite'
@@ -14,7 +15,7 @@ export default defineConfig({
   base: '/',
   define: { __APP_BUILD_ID__: JSON.stringify(buildId) },
   test: { include: ['src/**/*.test.{ts,tsx}'] },
-  plugins: [react(), {
+  plugins: [react(), tailwindcss(), {
     name: 'uasspain-release',
     apply: 'build',
     generateBundle() {

@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, Loader2 } from 'lucide-react';
@@ -75,6 +76,7 @@ function GraficaCategoria({ categoria, resultados }) {
 export default function AlumnoEvolucion({ alumnoId }) {
   const [resultados, setResultados] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     loadData();
@@ -87,11 +89,12 @@ export default function AlumnoEvolucion({ alumnoId }) {
       return;
     }
     setLoading(true);
+    setLoadError('');
     try {
       const data = await examenesService.resultados.filter({ alumno_id: alumnoId }, '-fecha', 200);
       setResultados(data);
-    } catch (err) {
-      console.error('Error cargando evolución:', err);
+    } catch {
+      setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');
       setResultados([]);
     } finally {
       setLoading(false);
@@ -113,6 +116,7 @@ export default function AlumnoEvolucion({ alumnoId }) {
 
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+      <DataLoadNotice error={loadError} retry={loadData} />
       <div className="mb-8">
         <div className="inline-flex items-center gap-2 mb-3 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">
           <TrendingUp className="w-3.5 h-3.5" /> Evolución

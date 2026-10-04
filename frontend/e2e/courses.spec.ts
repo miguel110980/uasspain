@@ -72,7 +72,7 @@ test('course management updates the catalog, stable URL and ordered topics in re
       expect(await (await page.request.get('/api/public/seo/sitemap-courses.xml')).text()).not.toContain(`/formacion/${course.slug}</loc>`);
     };
     await assertUpcomingApi();
-    await expect(publicPage.getByRole('link', { name, exact: true })).toHaveCount(0);
+    await expect(publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name, exact: true })).toHaveCount(0);
     await catalogPage.goto('/formacion');
     const catalogCard = catalogPage.getByRole('article').filter({ has: catalogPage.getByRole('heading', { name, exact: true }) });
     await expect(catalogCard.getByText('Próximamente', { exact: true })).toBeVisible();
@@ -95,10 +95,10 @@ test('course management updates the catalog, stable URL and ordered topics in re
     await expect(edit.getByLabel('Modalidad', { exact: true })).toHaveValue('presencial_online');
     await edit.getByLabel('Estado', { exact: true }).selectOption('published');
     await edit.getByRole('button', { name: 'Guardar', exact: true }).click();
-    await expect(publicPage.getByRole('link', { name, exact: true })).toBeVisible();
+    await expect(publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name, exact: true })).toBeVisible();
     await expect(catalogCard.getByText('Publicado', { exact: true })).toBeVisible();
     await expect(catalogCard.getByRole('link', { name: 'Ver curso', exact: true })).toHaveAttribute('href', `/formacion/${course.slug}`);
-    await publicPage.getByRole('link', { name, exact: true }).click();
+    await publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name, exact: true }).click();
     await expect(publicPage).toHaveURL(new RegExp(`/formacion/${course.slug}$`));
     await expect(publicPage.getByRole('heading', { name, exact: true })).toBeVisible();
     await expect(publicPage.getByRole('heading', { name: 'Descripción', exact: true }).locator('..').getByText(description, { exact: true })).toBeVisible();
@@ -152,15 +152,15 @@ test('course management updates the catalog, stable URL and ordered topics in re
     await publicPage.setViewportSize({ width: 1440, height: 900 });
     await publicPage.goto('/');
     await publicPage.getByRole('button', { name: 'Formación', exact: true }).click();
-    await expect(publicPage.getByRole('link', { name: `${name} actualizado`, exact: true })).toHaveCount(0);
+    await expect(publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name: `${name} actualizado`, exact: true })).toHaveCount(0);
     const updatedCatalogCard = catalogPage.getByRole('article').filter({ has: catalogPage.getByRole('heading', { name: `${name} actualizado`, exact: true }) });
     await expect(updatedCatalogCard.getByText('Próximamente', { exact: true })).toBeVisible();
     await expect(updatedCatalogCard.getByRole('link', { name: 'Ver curso', exact: true })).toHaveAttribute('href', `/formacion/${course.slug}`);
     await editedCard.getByRole('button', { name: 'Editar', exact: true }).click();
     await edit.getByLabel('Estado', { exact: true }).selectOption('published');
     await edit.getByRole('button', { name: 'Guardar', exact: true }).click();
-    await expect(publicPage.getByRole('link', { name: `${name} actualizado`, exact: true })).toBeVisible();
-    await publicPage.getByRole('link', { name: `${name} actualizado`, exact: true }).click();
+    await expect(publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name: `${name} actualizado`, exact: true })).toBeVisible();
+    await publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name: `${name} actualizado`, exact: true }).click();
     await expect(publicPage.getByRole('heading', { name: `${name} actualizado`, exact: true })).toBeVisible();
     await editedCard.getByRole('button', { name: 'Eliminar', exact: true }).click();
     await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
@@ -173,7 +173,7 @@ test('course management updates the catalog, stable URL and ordered topics in re
     expect((await page.request.get(`/api/courses/${course.slug}`)).status()).toBe(404);
     await publicPage.goto('/');
     await publicPage.getByRole('button', { name: 'Formación', exact: true }).click();
-    await expect(publicPage.getByRole('link', { name: `${name} actualizado`, exact: true })).toHaveCount(0);
+    await expect(publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name: `${name} actualizado`, exact: true })).toHaveCount(0);
     id = undefined;
   } finally {
     if (id) await page.request.delete(`/api/admin/courses/${id}`, { headers: { 'X-UASSpain-Window-ID': await page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || '') } });

@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -20,7 +21,7 @@ export default function AdminSeguridad() {
   const [profiles, setProfiles] = useState([]);
   const [authPolicy, setAuthPolicy] = useState({ enabled: false, required_roles: [] });
   const [systemStatus, setSystemStatus] = useState(null);
-  const { loading, isBusy, lastUpdate, runLoad } = useRefreshableLoad();
+  const { lastUpdate, runLoad, error: loadError } = useRefreshableLoad();
   const hasData = useRef(false);
 
   const load = (manual = false) => runLoad(async () => {
@@ -118,6 +119,7 @@ export default function AdminSeguridad() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+      <DataLoadNotice error={loadError} retry={() => load(true)} />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-heading text-xl font-bold text-foreground flex items-center gap-2">
@@ -286,18 +288,18 @@ export default function AdminSeguridad() {
         </div>
 
         <div className="mt-4 grid md:grid-cols-2 gap-4">
-          <label className="flex items-center justify-between gap-3 px-4 py-3 border border-border-subtle rounded bg-surface-subtle">
+          <label htmlFor="adminseguridad-field-1" className="flex items-center justify-between gap-3 px-4 py-3 border border-border-subtle rounded bg-surface-subtle">
             <span>
               <span className="block text-sm text-foreground">Activar 2FA</span>
               <span className="block text-xs text-muted-foreground">Habilita el segundo factor en login por contraseña.</span>
             </span>
-            <input type="checkbox" checked={authPolicy.enabled} onChange={(e) => updatePolicy({ enabled: e.target.checked })} />
+            <input id="adminseguridad-field-1" type="checkbox" checked={authPolicy.enabled} onChange={(e) => updatePolicy({ enabled: e.target.checked })} />
           </label>
           <div className="px-4 py-3 border border-border-subtle rounded bg-surface-subtle space-y-2">
             <p className="text-sm text-foreground">Obligatorio por rol</p>
             {['admin', 'instructor', 'alumno'].map((role) => (
               <label key={role} className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input
+                <input id={`adminseguridad-role-${role}`}
                   type="checkbox"
                   checked={authPolicy.required_roles.includes(role)}
                   onChange={(e) => {

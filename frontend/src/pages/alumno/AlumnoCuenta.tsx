@@ -1,5 +1,5 @@
 import { resolveMediaUrl } from '@/lib/mediaUrl';
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Save, Loader2, CheckCircle, AlertCircle, Upload, UserCheck } from 'lucide-react';
 import authService from '@/services/authService';
@@ -166,7 +166,7 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
           <div>
             <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-0.5">Instructor asignado</p>
             <p className="text-sm text-foreground">
-              {profile?.assigned_instructor_name || <span className="text-warning/70 italic">Sin instructor asignado</span>}
+              {profile?.assigned_instructor_name || <span className="text-warning italic">Sin instructor asignado</span>}
             </p>
           </div>
         </div>
@@ -182,10 +182,10 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
               { label: 'Correo electrónico', field: 'email', type: 'email', required: true },
             ].map(({ label, field, type = 'text', required, readOnly }) => (
               <div key={field} className="space-y-1.5">
-                <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                <label htmlFor={`alumnocuenta-${field}`} className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
                   {label} {required && '*'}
                 </label>
-                <input
+                <input id={`alumnocuenta-${field}`}
                   type={type}
                   value={form[field]}
                   onChange={(e) => !readOnly && handleChange(field, e.target.value)}
@@ -202,8 +202,8 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
             ))}
 
             <div className="space-y-1.5">
-              <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Fecha de Nacimiento</label>
-              <input
+              <label htmlFor="alumnocuenta-field-2" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Fecha de Nacimiento</label>
+              <input id="alumnocuenta-field-2"
                 type="date"
                 value={form.fecha_nacimiento}
                 max={new Date().toISOString().split('T')[0]}
@@ -241,8 +241,8 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
 
           <form onSubmit={handleChangePassword} className="space-y-6">
             <div className="space-y-1.5">
-              <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Contraseña actual</label>
-              <input
+              <label htmlFor="alumnocuenta-field-3" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Contraseña actual</label>
+              <input id="alumnocuenta-field-3"
                 type="password"
                 value={currentPassword}
                 onChange={(e) => { setCurrentPassword(e.target.value); setPasswordError(''); setPasswordSuccess(false); }}
@@ -251,8 +251,8 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
             </div>
             <div className="grid sm:grid-cols-2 gap-6">
               <div className="space-y-1.5">
-                <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Nueva contraseña</label>
-                <input
+                <label htmlFor="alumnocuenta-field-4" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Nueva contraseña</label>
+                <input id="alumnocuenta-field-4"
                   type="password"
                   value={newPassword}
                   onChange={(e) => { setNewPassword(e.target.value); setPasswordError(''); setPasswordSuccess(false); }}
@@ -266,8 +266,8 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Repetir nueva contraseña</label>
-                <input
+                <label htmlFor="alumnocuenta-field-5" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Repetir nueva contraseña</label>
+                <input id="alumnocuenta-field-5"
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(''); setPasswordSuccess(false); }}

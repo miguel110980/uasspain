@@ -2,6 +2,9 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUp, Facebook, Instagram } from 'lucide-react';
 import Logo from '@/components/layout/Logo';
+import { useQuery } from '@tanstack/react-query';
+import contentService from '@/services/contentService';
+import { coursePath } from '@/lib/courseCategories';
 
 const quickLinks = [
   { label: 'Inicio', href: '/' },
@@ -21,22 +24,6 @@ const serviceLinks = [
   { label: 'Termografía', href: '/servicios/termografia' },
 ];
 
-const formacionLinks = [
-  { label: 'A1/A3', href: '/formacion/easa/a1-a3' },
-  { label: 'A2', href: '/formacion/easa/a2' },
-  { label: 'STS', href: '/formacion/easa/sts' },
-  { label: 'STS-01', href: '/formacion/easa/sts-01' },
-  { label: 'STS-02', href: '/formacion/easa/sts-02' },
-  { label: 'Radiofonista', href: '/formacion/no-easa/radiofonista' },
-  { label: 'Seguridad', href: '/formacion/no-easa/seguridad' },
-  { label: 'Emergencias / APO', href: '/formacion/no-easa/emergencias-apo' },
-  { label: 'EN01', href: '/formacion/no-easa/en01' },
-  { label: 'EN02', href: '/formacion/no-easa/en02' },
-  { label: 'Operadores SOC', href: '/formacion/no-easa/operadores-soc' },
-  { label: 'Certificación Instructor', href: '/formacion/instructor/certificacion' },
-  { label: 'Revalidación Instructor', href: '/formacion/instructor/revalidacion' },
-  { label: 'Formación Continua', href: '/formacion/instructor/continua' },
-];
 
 const legalLinks = [
   { label: 'Política de Privacidad', href: '/politica-privacidad' },
@@ -50,6 +37,8 @@ const socialLinks = [
 ];
 
 export default function Footer() {
+  const { data: courses = [] } = useQuery({ queryKey: ['public', 'courses'], queryFn: contentService.publicCourses, staleTime: 30_000, refetchInterval: 30_000 });
+  const formacionLinks = [{ label: 'Todos los cursos', href: '/formacion' }, ...courses.map(course => ({ label: course.name, href: coursePath(course) }))];
   return (
     <footer className="relative bg-card overflow-hidden">
       <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
@@ -130,7 +119,7 @@ export default function Footer() {
             </h2>
             <ul className="space-y-3">
               {formacionLinks.map((f) => (
-                <li key={f.label}>
+                <li key={f.href}>
                   <Link to={f.href} className="text-sm text-muted-foreground hover:text-primary transition-colors">
                     {f.label}
                   </Link>

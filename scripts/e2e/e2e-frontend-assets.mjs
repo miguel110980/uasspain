@@ -19,7 +19,7 @@ function request(url) {
     req.on('error', reject); req.on('timeout', () => req.destroy(new Error('request timeout')));
   });
 }
-const report = { routes: [], assets: [], recovery: [] };
+const report = { routes: [], assets: [], recovery: [], history: {} };
 const source = await readFile('frontend/src/App.tsx', 'utf8');
 const routes = [...new Set([
   ...[...source.matchAll(/<Route path="([^"]+)" element=\{<(\w+)\s*\/>\}/g)].map(m => m[1]).filter(r => !r.includes('*')),
@@ -49,6 +49,14 @@ try {
   await page.goto(origin + '/');
   await page.getByRole('link', { name: 'Tecnología', exact: true }).first().click();
   await page.getByRole('heading', { name: 'Stack Tecnológico', exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/tecnologia');
+  await page.goBack();
+  await page.waitForURL(origin + '/');
+  await page.locator('main h1').first().waitFor();
+  await page.goForward();
+  await page.waitForURL(origin + '/tecnologia');
+  await page.getByRole('heading', { name: 'Stack Tecnológico', exact: true }).waitFor();
+  report.history = { back: '/', forward: '/tecnologia', passed: true };
   if (process.env.FRONTEND_TEST_MANIFEST) {
     const manifest = JSON.parse(await readFile(process.env.FRONTEND_TEST_MANIFEST, 'utf8'));
     for (const entry of Object.values(manifest)) {

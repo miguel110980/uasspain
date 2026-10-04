@@ -102,7 +102,7 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
                 <p className="text-xs text-muted-foreground mt-1">{grupo.subtitle}</p>
               </div>
               {(grupo.requiereA1 || grupo.requiereA2) && !tieneAprobadoCategoria(grupo.requiereA1 ? 'A1/A3' : 'A2') && (
-              <div className="mb-4 flex items-start gap-2 text-xs text-warning/80 bg-warning-soft/50 border border-warning-border px-4 py-3">
+              <div className="mb-4 flex items-start gap-2 text-xs text-warning bg-warning-soft/50 border border-warning-border px-4 py-3">
                 <span className="shrink-0 mt-0.5">🔒</span>
                 <span>
                   Esta categoría requiere haber aprobado previamente la titulación{' '}
@@ -207,7 +207,7 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
                   >
                     <Icon className="w-5 h-5" />
                     <span className="text-xs font-bold uppercase tracking-widest">{label}</span>
-                    <span className="text-xs opacity-70">{desc}</span>
+                    <span className="text-xs">{desc}</span>
                   </button>
                 ))}
               </div>

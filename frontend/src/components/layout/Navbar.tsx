@@ -290,7 +290,7 @@ export default function Navbar() {
                           <UpcomingCourseItem key={item.href} item={item} className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground rounded-md" />
                         ) : (
                           <Link
-                            key={item.label}
+                            key={item.href}
                             to={item.href}
                             onClick={() => setDropdownOpen(null)}
                             className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-md transition-all duration-200"
@@ -303,7 +303,7 @@ export default function Navbar() {
                     ))
                   : items.map((item) => (
                       <Link
-                        key={item.label}
+                        key={item.href}
                         to={item.href}
                         onClick={() => setDropdownOpen(null)}
                         className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-md transition-all duration-200"
@@ -461,7 +461,7 @@ export default function Navbar() {
                                     <UpcomingCourseItem key={child.href} item={child} className="flex items-center gap-2 py-2 text-xs uppercase tracking-widest text-muted-foreground/70" />
                                   ) : (
                                     <Link
-                                      key={child.label}
+                                      key={child.href}
                                       to={child.href}
                                       onClick={() => { setMobileOpen(false); setMobileDropdownOpen(null); }}
                                       className={`flex items-center gap-2 py-2 text-xs uppercase tracking-widest transition-colors ${
@@ -476,7 +476,7 @@ export default function Navbar() {
                               ))
                             : link.children.map((child) => (
                                 <Link
-                                  key={child.label}
+                                  key={child.href}
                                   to={child.href}
                                   onClick={() => { setMobileOpen(false); setMobileDropdownOpen(null); }}
                                   className={`flex items-center gap-2 py-2 text-xs uppercase tracking-widest transition-colors ${

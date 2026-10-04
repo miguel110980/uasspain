@@ -47,6 +47,8 @@ export default function AlumnoMaterial({ alumnoId }) {
     } catch (err) {
       if (err?.response?.status === 403) {
         setError('No tienes acceso al material de estudio. Consulta con tu instructor.');
+      } else {
+        setError('No se pudo cargar el material. Vuelve a intentarlo.');
       }
     } finally {
       setLoading(false);
@@ -92,9 +94,10 @@ export default function AlumnoMaterial({ alumnoId }) {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 glass-card">
+      <div role="alert" className="flex flex-col items-center justify-center py-20 glass-card">
         <ShieldAlert className="w-10 h-10 text-warning mb-3" />
         <p className="text-sm text-muted-foreground text-center">{error}</p>
+        <button type="button" onClick={loadData} className="mt-3 text-primary underline">Reintentar</button>
       </div>
     );
   }
@@ -152,7 +155,7 @@ export default function AlumnoMaterial({ alumnoId }) {
                   {cat}
                 </h4>
                 {!tieneAcceso && (
-                  <div className="flex items-center gap-1 text-xs text-warning/70">
+                  <div className="flex items-center gap-1 text-xs text-warning">
                     <Lock className="w-3 h-3" />
                     <span>Bloqueado</span>
                   </div>
@@ -160,7 +163,7 @@ export default function AlumnoMaterial({ alumnoId }) {
               </div>
 
               {!tieneAcceso && (
-                <div className="mb-4 flex items-start gap-2 text-xs text-warning/80 bg-warning-soft/50 border border-warning-border px-4 py-3 rounded-sm">
+                <div className="mb-4 flex items-start gap-2 text-xs text-warning bg-warning-soft/50 border border-warning-border px-4 py-3 rounded-sm">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>Este material está bloqueado por el Instructor. Solicita acceso cuando completes la categoría anterior.</span>
                 </div>

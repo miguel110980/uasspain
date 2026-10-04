@@ -1,3 +1,4 @@
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -72,7 +73,7 @@ function ServiceCard({ s }) {
 
 export default function AdminMonitorizacion() {
   const [status, setStatus] = useState(null);
-  const { loading, isBusy, lastUpdate, runLoad } = useRefreshableLoad();
+  const { loading, lastUpdate, runLoad, error: loadError } = useRefreshableLoad();
   const hasData = useRef(false);
 
   const load = (manual = false) => runLoad(async () => {
@@ -104,6 +105,7 @@ export default function AdminMonitorizacion() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+      <DataLoadNotice error={loadError} retry={() => load(true)} />
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="font-heading text-xl font-bold text-foreground flex items-center gap-2">

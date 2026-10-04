@@ -1,6 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@config '../tailwind.config.js';
 
 @font-face {
   font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap;
@@ -31,13 +30,13 @@
     --muted-foreground: 215 20% 39%;
     --accent: 191 100% 50%;
     --accent-foreground: 222 47% 11%;
-    --destructive: 0 84% 55%;
+    --destructive: 0 84% 43%;
     --destructive-foreground: 0 0% 100%;
     --border: 214 32% 91%;
     --border-subtle: 213 36% 95%;
     --border-strong: 213 27% 84%;
     --input: var(--border-subtle);
-    --ring: 191 100% 50%;
+    --ring: 192 100% 25%;
     --ring-offset: 216 33% 97%;
     --chart-1: 191 100% 50%;
     --chart-2: 15 100% 50%;
@@ -51,7 +50,7 @@
     --font-mono: 'JetBrains Mono', monospace;
 
     --brand-cyan: 191 100% 50%;
-    --brand-cyan-text: 192 100% 27%;
+    --brand-cyan-text: 192 100% 25%;
 
     --surface-subtle: 213 36% 95%;
     --surface-muted: 214 32% 91%;
@@ -71,14 +70,14 @@
     --sidebar-ring: 191 100% 50%;
 
     --text-primary: var(--foreground);
-    --text-secondary: 215 16% 47%;
-    --text-muted: 215 20% 65%;
-    --text-tertiary: 215 18% 60%;
+    --text-secondary: 215 16% 35%;
+    --text-muted: 215 20% 39%;
+    --text-tertiary: 215 18% 39%;
     --text-disabled: 215 20% 75%;
     --text-inverse: 0 0% 100%;
     --placeholder: 215 20% 65%;
 
-    --success: 152 64% 38%;
+    --success: 152 64% 28%;
     --success-foreground: 152 100% 98%;
     --success-soft: 152 58% 92%;
     --success-border: 152 44% 78%;
@@ -88,12 +87,12 @@
     --warning-soft: 35 95% 94%;
     --warning-border: 35 82% 78%;
 
-    --info: 205 98% 46%;
+    --info: 205 98% 36%;
     --info-foreground: 205 100% 15%;
     --info-soft: 205 90% 95%;
     --info-border: 205 72% 82%;
 
-    --danger: 0 84% 55%;
+    --danger: 0 84% 42%;
     --danger-foreground: 0 0% 100%;
     --danger-soft: 0 84% 95%;
     --danger-border: 0 74% 80%;
@@ -157,11 +156,14 @@
     --text-primary: var(--foreground);
     --text-secondary: 215 20% 78%;
     --text-muted: 215 15% 70%;
-    --text-tertiary: 215 14% 60%;
+    --text-tertiary: 215 14% 70%;
     --text-disabled: 215 12% 50%;
     --text-inverse: 240 12% 10%;
     --placeholder: 215 18% 55%;
 
+    --success: 152 64% 65%;
+    --info: 205 98% 70%;
+    --danger: 0 84% 70%;
     --success-soft: 152 64% 16%;
     --success-border: 152 40% 36%;
     --warning: 38 92% 60%;
@@ -199,6 +201,10 @@
   }
   html {
     scroll-behavior: smooth;
+  }
+  :where(button, a, [role='button'], [tabindex]):focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 3px;
   }
   ::selection {
     background: hsl(var(--primary) / 0.18);
@@ -304,6 +310,10 @@
 .light .text-primary { color: hsl(var(--brand-cyan-text)); }
 .light .bg-clip-text { color: hsl(var(--brand-cyan-text)); background: none; }
 .light [class*="text-muted-foreground/"] { color: hsl(var(--muted-foreground)); }
+.dark [class*="text-muted-foreground/"] { color: hsl(var(--muted-foreground)); }
+[class*="text-copy-tertiary/"] { color: hsl(var(--text-tertiary)); }
+.light [class*="placeholder:text-muted-foreground/"]::placeholder,
+.dark [class*="placeholder:text-muted-foreground/"]::placeholder { color: hsl(var(--muted-foreground)); }
 .light .hero-image { opacity: 1; }
 .light .hero-shade { background: linear-gradient(to bottom, transparent 65%, hsl(var(--background))); }
 .light .hero-side-shade { display: none; }
@@ -336,3 +346,13 @@
 
 .public-content { overflow-x: clip; }
 .public-content h1, .public-content h2 { overflow-wrap: anywhere; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

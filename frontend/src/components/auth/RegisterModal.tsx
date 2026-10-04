@@ -135,7 +135,7 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
         }
       }
 
-      const data = await authService.register({
+      await authService.register({
         email: form.email.trim().toLowerCase(),
         password: form.password,
         nombre: form.nombre.trim(),
@@ -248,32 +248,37 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
     );
   }
 
-  const field = (name: keyof typeof EMPTY, label: string, type = 'text', extra: FieldExtra = {}) => (
+  const field = (name: keyof typeof EMPTY, label: string, type = 'text', extra: FieldExtra = {}) => {
+    const { pr, toggle, shown, ...inputProps } = extra;
+    return (
     <div className="space-y-1">
-      <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label} *</label>
+      <label htmlFor={`registermodal-${String(label).replace(/\s+/g, '-')}`} className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label} *</label>
       <div className="relative">
-        <input
+        <input id={`registermodal-${String(label).replace(/\s+/g, '-')}`}
           type={type}
           name={name}
           value={form[name]}
           onChange={handleChange}
           required
-          className={`w-full bg-surface-muted border ${errors[name] ? 'border-danger/60' : 'border-border-subtle'} focus:border-transparent text-foreground placeholder:text-muted-foreground/40 px-4 py-2.5 text-sm outline-none transition-colors rounded-sm ${extra.pr ? 'pr-10' : ''}`}
-          {...extra}
+          aria-invalid={Boolean(errors[name])}
+          aria-describedby={errors[name] ? `register-error-${name}` : undefined}
+          className={`w-full bg-surface-muted border ${errors[name] ? 'border-danger/60' : 'border-border-subtle'} focus:border-transparent text-foreground placeholder:text-muted-foreground/40 px-4 py-2.5 text-sm outline-hidden transition-colors rounded-sm ${pr ? 'pr-10' : ''}`}
+          {...inputProps}
         />
-        {extra.toggle && (
-          <button type="button" onClick={extra.toggle} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors">
-            {extra.shown ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        {toggle && (
+          <button type="button" aria-label={`${shown ? 'Ocultar' : 'Mostrar'} ${label.toLowerCase()}`} onClick={toggle} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors">
+            {shown ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </button>
         )}
       </div>
-      {errors[name] && <p className="text-xs text-danger">{errors[name]}</p>}
+      {errors[name] && <p id={`register-error-${name}`} className="text-xs text-danger">{errors[name]}</p>}
     </div>
-  );
+    );
+  };
 
   return (
     <AuthModalShell onClose={onClose} maxWidth="max-w-2xl">
-        <button onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-primary transition-colors">
+        <button type="button" aria-label="Cerrar registro" onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-primary transition-colors">
           <X className="w-5 h-5" />
         </button>
 
@@ -316,10 +321,14 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
 
           {/* Photo */}
           <div className="space-y-2">
-            <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Fotografía de perfil <span className="text-muted-foreground/50 normal-case">(opcional)</span></label>
+            <label htmlFor="registermodal-field-2" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Fotografía de perfil <span className="text-muted-foreground/50 normal-case">(opcional)</span></label>
             <div
               className={`border ${errors.photo ? 'border-danger/60' : 'border-border-subtle'} bg-surface-muted p-4 flex flex-col items-center gap-3 cursor-pointer hover:border-primary/40 transition-colors rounded-sm`}
               onClick={() => fileRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              aria-label="Subir fotografía de perfil"
+              onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); fileRef.current?.click(); } }}
             >
               {photoPreview ? (
                 <img src={photoPreview} alt="Preview" className="w-20 h-20 rounded-full object-cover border-2 border-primary/30" />
@@ -331,7 +340,7 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
               <span className="text-xs text-muted-foreground">
                 {photo ? photo.name : 'Haz clic para subir JPG, JPEG o PNG · Si no se sube, se usará un avatar por defecto'}
               </span>
-              <input
+              <input id="registermodal-field-2"
                 ref={fileRef}
                 type="file"
                 accept=".jpg,.jpeg,.png"

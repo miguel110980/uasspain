@@ -1,4 +1,5 @@
-﻿import React, { useState, useEffect } from 'react';
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2, Search, BarChart2 } from 'lucide-react';
 import examenesService from '@/services/examenesService';
@@ -8,6 +9,7 @@ export default function InstructorResultados() {
   const [resultados, setResultados] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [busquedaNombre, setBusquedaNombre] = useState('');
   const [filtroFecha, setFiltroFecha] = useState('');
 
@@ -17,6 +19,7 @@ export default function InstructorResultados() {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [resultadosData, profilesData] = await Promise.all([
         examenesService.resultados.list('-fecha', 500),
@@ -24,6 +27,8 @@ export default function InstructorResultados() {
       ]);
       setResultados(resultadosData);
       setProfiles(profilesData);
+    } catch {
+      setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');
     } finally {
       setLoading(false);
     }
@@ -53,10 +58,11 @@ export default function InstructorResultados() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <DataLoadNotice error={loadError} retry={loadData} />
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
+          <input aria-label="Buscar por nombre de alumno..."
             type="text"
             value={busquedaNombre}
             onChange={(e) => setBusquedaNombre(e.target.value)}
@@ -64,7 +70,7 @@ export default function InstructorResultados() {
             className="w-full bg-surface-muted border border-border-subtle rounded pl-9 pr-3 py-2.5 text-sm text-foreground focus:border-transparent focus:outline-none"
           />
         </div>
-        <input
+        <input aria-label="Filtrar por fecha"
           type="date"
           value={filtroFecha}
           onChange={(e) => setFiltroFecha(e.target.value)}

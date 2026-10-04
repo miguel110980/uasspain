@@ -10,6 +10,7 @@ import ScrollToTop from './components/ScrollToTop';
 import SeoHead from './components/seo/SeoHead';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppErrorBoundary from './components/AppErrorBoundary';
+import { MotionConfig } from 'framer-motion';
 
 const Home = lazy(() => import('./pages/Home'));
 const Nosotros = lazy(() => import('./pages/Nosotros'));
@@ -49,6 +50,7 @@ function App() {
   }, []);
   return (
     <AppErrorBoundary>
+    <MotionConfig reducedMotion="user">
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
     <QueryClientProvider client={queryClientInstance}>
       <Router>
@@ -87,6 +89,7 @@ function App() {
       <Toaster />
     </QueryClientProvider>
     </ThemeProvider>
+    </MotionConfig>
     </AppErrorBoundary>
   );
 }

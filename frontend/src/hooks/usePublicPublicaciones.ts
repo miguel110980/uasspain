@@ -6,7 +6,6 @@ export default function usePublicPublicaciones(limit = 100) {
     queryKey: ['public', 'blog-posts'],
     queryFn: contentService.publicPosts,
     staleTime: 5 * 60 * 1000,
-    placeholderData: [],
   });
-  return { posts: (query.data || []).slice(0, limit), loading: query.isLoading };
+  return { posts: (query.data || []).slice(0, limit), loading: query.isLoading, error: query.isError, retry: query.refetch };
 }

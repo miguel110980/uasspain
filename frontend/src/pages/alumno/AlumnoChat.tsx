@@ -1,22 +1,22 @@
-﻿import PanelModal from '@/components/ui/PanelModal';
+import { usePanelAuthContext } from '@/context/PanelAuthContext';
+import { useActiveProfileSessions } from '@/hooks/useActiveProfileSessions';
+import PanelModal from '@/components/ui/PanelModal';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Send, Loader2, MessageCircle, Trash2, X } from 'lucide-react';
 import conexionesService from '@/services/conexionesService';
 import { sanitizeInput } from '@/lib/sanitize';
 import ChatExportPdfButton from '@/components/chat/ChatExportPdfButton';
-import { usePanelAuthContext } from '@/context/PanelAuthContext';
-import { profileDisplayName } from '@/lib/staffChat';
 
 export default function AlumnoChat({ alumnoId, alumnoNombre }) {
-  const { profile } = usePanelAuthContext();
-  const instructorNombre = profileDisplayName(profile);
   const [mensajes, setMensajes] = useState([]);
   const [texto, setTexto] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [instructorConectado, setInstructorConectado] = useState(false);
+  const { profile } = usePanelAuthContext();
+  const { isOnline } = useActiveProfileSessions();
+  const instructorConectado = isOnline(profile?.assigned_instructor_id);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
   const bottomRef = useRef(null);
@@ -27,7 +27,6 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
   useEffect(() => {
     if (!alumnoId) return undefined;
     loadMensajes();
-    loadEstadoInstructor();
     const onVisible = () => {
       if (document.visibilityState === 'visible') loadMensajes();
     };
@@ -47,21 +46,11 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
         loadMensajes();
       }
     });
-    const unsubscribeConexion = conexionesService.subscribeConexiones((event) => {
-      const payload = conexionesService.parseWsPayload(event);
-      if (payload?.type === 'conexion' || event.type === 'poll') loadEstadoInstructor();
-    });
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       unsubscribeChat();
-      unsubscribeConexion();
     };
   }, [alumnoId]);
-
-  const loadEstadoInstructor = async () => {
-    const data = await conexionesService.conexiones.filter({ alumno_id: alumnoId }, '-fecha_conexion', 1);
-    setInstructorConectado(data.length > 0 && !data[0].fecha_desconexion);
-  };
 
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -177,7 +166,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
                   created_date: m.created_date,
                 })}
               />
-              <button
+              <button aria-label="Limpiar conversación"
                 type="button"
                 onClick={() => setShowClearConfirm(true)}
                 disabled={!mensajes.length}
@@ -234,7 +223,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
           </div>
 
           <form onSubmit={handleSend} className="border-t border-border-subtle p-4 flex items-center gap-3">
-            <input
+            <input aria-label="Escribe un mensaje..."
               type="text"
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
@@ -257,7 +246,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
         <PanelModal label="Limpiar chat" onClose={() => setShowClearConfirm(false)} className="max-w-sm glass-card p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-heading text-lg font-bold text-foreground">Limpiar chat</h3>
-              <button onClick={() => setShowClearConfirm(false)} className="text-muted-foreground hover:text-foreground">
+              <button type="button" aria-label="Cerrar confirmación" onClick={() => setShowClearConfirm(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="w-5 h-5" />
               </button>
             </div>
