@@ -63,34 +63,76 @@ function parseWsPayload(event: any) {
   return raw;
 }
 
-function createWsSubscription(url: string, onEvent: (event: any) => void, pollMs = 15000) {
+type RealtimeEvent = { type: 'poll' | 'ws'; data?: unknown };
+type Listener = { callback: (event: RealtimeEvent) => void; pollMs: number; timer?: ReturnType<typeof setInterval> };
+type Subscription = { listeners: Set<Listener>; dispose: () => void; catchUp: () => void };
+const subscriptions = new Map<string, Subscription>();
+
+/** All mounted sections in this window share one authenticated event socket. */
+function createWsSubscription(url: string, onEvent: (event: RealtimeEvent) => void, pollMs = 15000) {
+  let subscription = subscriptions.get(url);
+  if (!subscription) {
+    subscription = createTransport(url);
+    subscriptions.set(url, subscription);
+  }
+  const listener: Listener = { callback: onEvent, pollMs };
+  subscription.listeners.add(listener);
+  subscription.catchUp();
+  return () => {
+    clearInterval(listener.timer);
+    subscription.listeners.delete(listener);
+    if (!subscription.listeners.size) {
+      subscription.dispose();
+      if (subscriptions.get(url) === subscription) subscriptions.delete(url);
+    }
+  };
+}
+
+function createTransport(url: string): Subscription {
+  const listeners = new Set<Listener>();
   let ws: WebSocket | null = null;
-  let poll: ReturnType<typeof setInterval> | null = null;
   let closed = false;
   let reconnect: ReturnType<typeof setTimeout> | null = null;
   let failures = 0;
-
-  const stopPoll = () => {
-    if (poll) {
-      clearInterval(poll);
-      poll = null;
+  const emit = (event: RealtimeEvent) => {
+    for (const listener of listeners) listener.callback(event);
+  };
+  const catchUp = () => {
+    for (const listener of listeners) {
+      // Also reconcile missed notices while connected, e.g. after laptop sleep.
+      const interval = typeof WebSocket !== 'undefined' && ws?.readyState === WebSocket.OPEN ? 30000 : listener.pollMs;
+      if (!listener.timer) listener.timer = setInterval(() => listener.callback({ type: 'poll' }), interval);
     }
   };
-
-  const startPoll = () => {
-    if (poll || closed) return;
-    poll = setInterval(() => onEvent({ type: 'poll' }), pollMs);
+  const resetPolling = () => {
+    for (const listener of listeners) { clearInterval(listener.timer); listener.timer = undefined; }
+    catchUp();
+  };
+  const scheduleReconnect = () => {
+    if (closed || reconnect) return;
+    resetPolling();
+    reconnect = setTimeout(() => {
+      reconnect = null;
+      void connectWs();
+    }, Math.min(30000, 1000 * 2 ** Math.min(failures++, 5)));
   };
 
-  const connectWs = () => {
+  const connectWs = async () => {
     if (!url || closed || typeof WebSocket === 'undefined') {
-      startPoll();
+      catchUp();
       return;
     }
     try {
+      // A closed socket may have outlived the access cookie. The HTTP client
+      // renews it using the HttpOnly refresh cookie before the next handshake.
+      if (failures) await apiClient.get(endpoints.auth.me);
+      if (closed) return;
       const current = new WebSocket(windowBoundUrl(url));
       ws = current;
-      current.onopen = () => { failures = 0; stopPoll(); onEvent({ type: 'poll' }); };
+      current.onopen = () => {
+        if (closed || current !== ws) return;
+        failures = 0; resetPolling(); emit({ type: 'poll' });
+      };
       current.onmessage = (event) => {
         if (closed || current !== ws) return;
         let data = event.data;
@@ -99,30 +141,35 @@ function createWsSubscription(url: string, onEvent: (event: any) => void, pollMs
         } catch {
           // mantener string
         }
-        onEvent({ type: 'ws', data });
+        if (data?.type === 'resync_required') emit({ type: 'poll' });
+        else emit({ type: 'ws', data });
       };
       current.onclose = () => {
         if (current !== ws) return;
         ws = null;
-        if (!closed) {
-          startPoll();
-          reconnect = setTimeout(connectWs, Math.min(30000, 1000 * 2 ** Math.min(failures++, 5)));
-        }
+        scheduleReconnect();
       };
       current.onerror = () => current.close();
     } catch {
-      startPoll();
+      scheduleReconnect();
     }
   };
 
-  connectWs();
-
-  return () => {
+  const onVisible = () => {
+    if (document.visibilityState === 'visible') emit({ type: 'poll' });
+  };
+  const onOnline = () => { emit({ type: 'poll' }); if (!ws && !reconnect) void connectWs(); };
+  document.addEventListener('visibilitychange', onVisible);
+  window.addEventListener('online', onOnline);
+  void connectWs();
+  return { listeners, catchUp, dispose: () => {
     closed = true;
     if (reconnect) clearTimeout(reconnect);
-    stopPoll();
+    for (const listener of listeners) clearInterval(listener.timer);
+    document.removeEventListener('visibilitychange', onVisible);
+    window.removeEventListener('online', onOnline);
     ws?.close();
-  };
+  } };
 }
 
 export const conexionesService = {

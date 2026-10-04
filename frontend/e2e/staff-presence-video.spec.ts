@@ -7,7 +7,7 @@ async function login(page: Page, email: string, password: string, route: string)
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/${route}$`));
   const headers = {
-    Origin: 'http://127.0.0.1:8011',
+    Origin: new URL(page.url()).origin,
     'X-UASSpain-Window-ID': await page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || ''),
   };
   const result = await page.request.get('/api/auth/me/', { headers });
@@ -21,7 +21,8 @@ const dialog = (page: Page) => page.getByRole('dialog', { name: 'Videollamada UA
 
 async function deniedSocket(page: Page, callId: string) {
   return page.evaluate(id => new Promise<boolean>(resolve => {
-    const socket = new WebSocket(`ws://${location.host}/ws/videollamada/${id}/?window_id=${sessionStorage.getItem('uasspain.window_session_id')}`);
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${protocol}//${location.host}/ws/videollamada/${id}/?window_id=${sessionStorage.getItem('uasspain.window_session_id')}`);
     const timer = setTimeout(() => { socket.close(); resolve(false); }, 5000);
     socket.onmessage = () => { clearTimeout(timer); socket.close(); resolve(false); };
     socket.onerror = () => { clearTimeout(timer); socket.close(); resolve(true); };

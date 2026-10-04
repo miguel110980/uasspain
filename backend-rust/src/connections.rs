@@ -683,6 +683,7 @@ pub async fn direct_broadcast(
                 .ok_or(AppError::Internal)?,
         );
     }
+    state.events.publish("connections", json!({"type":"mensaje", "action":"created"})).await;
     Ok((StatusCode::CREATED, Json(created)))
 }
 
@@ -703,6 +704,9 @@ pub async fn mark_read(
         .execute(pool(&state)?)
         .await?
         .rows_affected();
+    if updated > 0 {
+        state.events.publish("connections", json!({"type":"mensaje", "action":"read"})).await;
+    }
     Ok(Json(json!({"updated":updated})))
 }
 pub async fn clear_chat(
@@ -718,6 +722,9 @@ pub async fn clear_chat(
         .await?
         .rows_affected();
     sqlx::query("UPDATE conexiones_conexion SET ultimo_mensaje='',ultima_fecha=NULL,updated_date=NOW() WHERE alumno_id=$1").bind(alumno).execute(pool(&state)?).await?;
+    if deleted > 0 {
+        state.events.publish("connections", json!({"type":"mensaje", "action":"cleared"})).await;
+    }
     Ok(Json(
         json!({"detail":"Conversación limpiada correctamente.","deleted":deleted}),
     ))
@@ -774,6 +781,9 @@ pub async fn staff_mark_read(
 ) -> Result<Json<Value>, AppError> {
     let claims = staff(&state, &headers)?;
     let updated=sqlx::query("UPDATE conexiones_mensajestaff SET leido_destinatario=TRUE,updated_date=NOW() WHERE remitente_id=$1 AND destinatario_id=$2 AND NOT leido_destinatario").bind(input.peer_id).bind(claims.profile_id).execute(pool(&state)?).await?.rows_affected();
+    if updated > 0 {
+        state.events.publish("connections", json!({"type":"mensaje_staff", "action":"read"})).await;
+    }
     Ok(Json(json!({"updated":updated})))
 }
 pub async fn staff_clear(
@@ -784,6 +794,9 @@ pub async fn staff_clear(
     let claims = staff(&state, &headers)?;
     authorize_staff_pair(&state, &claims, input.peer_id).await?;
     let deleted=sqlx::query("DELETE FROM conexiones_mensajestaff WHERE (remitente_id=$1 AND destinatario_id=$2) OR (remitente_id=$2 AND destinatario_id=$1)").bind(claims.profile_id).bind(input.peer_id).execute(pool(&state)?).await?.rows_affected();
+    if deleted > 0 {
+        state.events.publish("connections", json!({"type":"mensaje_staff", "action":"cleared"})).await;
+    }
     Ok(Json(
         json!({"detail":"Conversación limpiada correctamente.","deleted":deleted}),
     ))

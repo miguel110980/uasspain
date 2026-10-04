@@ -23,6 +23,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
   const scrollContainerRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  const messageLoad = useRef(0);
 
   useEffect(() => {
     if (!alumnoId) return undefined;
@@ -31,18 +32,18 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
       if (document.visibilityState === 'visible') loadMensajes();
     };
     document.addEventListener('visibilitychange', onVisible);
-    const unsubscribeChat = conexionesService.subscribeChatRoom(alumnoId, (event) => {
+    const unsubscribeChat = conexionesService.subscribeMensajes((event) => {
       const payload = conexionesService.parseWsPayload(event);
       if (payload?.type === 'mensaje' && payload?.data) {
         const msg = payload.data;
-        if (msg.remitente !== 'alumno') {
+        if (String(msg.alumno_id) === String(alumnoId) && msg.remitente !== 'alumno') {
           setMensajes((prev) => {
             if (prev.some((m) => m.id === msg.id)) return prev;
             return [...prev, msg];
           });
           setNewMessageCount((c) => c + 1);
         }
-      } else if (payload?.type === 'message' || event.type === 'poll') {
+      } else if (payload?.type === 'mensaje' || event.type === 'poll') {
         loadMensajes();
       }
     });
@@ -67,25 +68,27 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
 
   const loadMensajes = async () => {
     if (!alumnoId) return;
+    const request = ++messageLoad.current;
     try {
       const data = await conexionesService.mensajes.filter(
         { alumno_id: String(alumnoId) },
         'created_date',
       );
+      if (request !== messageLoad.current) return;
       setMensajes(Array.isArray(data) ? data : []);
       setError('');
       await conexionesService.mensajes.markRead(alumnoId);
     } catch {
-      setError('No se pudieron cargar los mensajes. Inténtalo de nuevo.');
+      if (request === messageLoad.current) setError('No se pudieron cargar los mensajes. Inténtalo de nuevo.');
     } finally {
-      setLoading(false);
+      if (request === messageLoad.current) setLoading(false);
     }
   };
 
   const handleSend = async (e) => {
     e.preventDefault();
     const contenido = sanitizeInput(texto, 'message');
-    if (!contenido.trim()) return;
+    if (!contenido.trim() || sending) return;
     setSending(true);
     setError('');
     try {

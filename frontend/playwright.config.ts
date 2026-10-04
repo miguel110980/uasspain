@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+const secureOrigin = process.env.E2E_BROWSER_ORIGIN;
 
 export default defineConfig({
   testDir: './e2e',
@@ -7,13 +8,14 @@ export default defineConfig({
   timeout: 90_000,
   retries: 0,
   use: {
-    baseURL: 'http://127.0.0.1:8011',
+    baseURL: secureOrigin || 'http://127.0.0.1:8011',
+    ignoreHTTPSErrors: Boolean(secureOrigin),
     browserName: 'chromium',
     launchOptions: { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
-  webServer: {
+  webServer: secureOrigin ? undefined : {
     command: 'npm run dev -- --host 127.0.0.1 --port 8011 --strictPort',
     url: 'http://127.0.0.1:8011',
     reuseExistingServer: false,

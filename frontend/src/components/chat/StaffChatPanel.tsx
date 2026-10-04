@@ -6,7 +6,6 @@ import { sanitizeInput } from '@/lib/sanitize';
 import {
   profileDisplayName,
   staffChatPeerStorageKey,
-  staffChatRoomId,
   staffMessageFromMe,
 } from '@/lib/staffChat';
 import { useActiveProfileSessions } from '@/hooks/useActiveProfileSessions';
@@ -75,6 +74,7 @@ export default function StaffChatPanel({
   const scrollContainerRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  const messageLoad = useRef(0);
 
   useEffect(() => {
     peerRef.current = peerSeleccionado;
@@ -85,19 +85,21 @@ export default function StaffChatPanel({
   }, [peers]);
 
   const loadMensajes = useCallback(async (peerId, silent = false) => {
+    const request = ++messageLoad.current;
     if (!silent) setLoadingMensajes(true);
     try {
       const data = await conexionesService.mensajesStaff.filter(
         { peer_id: String(peerId) },
         'created_date',
       );
+      if (request !== messageLoad.current || String(peerRef.current?.id) !== String(peerId)) return;
       setMensajes(Array.isArray(data) ? data : []);
       setError('');
       await conexionesService.mensajesStaff.markRead(peerId);
     } catch {
-      setError('No se pudieron cargar los mensajes.');
+      if (request === messageLoad.current) setError('No se pudieron cargar los mensajes.');
     } finally {
-      if (!silent) setLoadingMensajes(false);
+      if (!silent && request === messageLoad.current) setLoadingMensajes(false);
     }
   }, []);
 
@@ -105,7 +107,8 @@ export default function StaffChatPanel({
     if (myProfileId) {
       sessionStorage.setItem(staffChatPeerStorageKey(myProfileId), String(peerId));
     }
-    setPeerSeleccionado({ id: peerId, nombre });
+    peerRef.current = { id: peerId, nombre };
+    setPeerSeleccionado(peerRef.current);
     setMensajes([]);
     loadMensajes(peerId);
   }, [loadMensajes, myProfileId]);
@@ -249,20 +252,6 @@ export default function StaffChatPanel({
     };
   }, [myProfileId, peers, loadMeta, loadMensajes, handleIncomingStaffMessage]);
 
-  useEffect(() => {
-    if (!peerSeleccionado?.id || !myProfileId) return undefined;
-    const roomId = staffChatRoomId(myProfileId, peerSeleccionado.id);
-    return conexionesService.subscribeChatRoom(roomId, (event) => {
-      const payload = conexionesService.parseWsPayload(event);
-      if (payload?.type === 'mensaje_staff') {
-        handleIncomingStaffMessage(payload);
-      } else if (payload?.type === 'mensaje' || payload?.type === 'message' || event.type === 'poll') {
-        loadMensajes(peerSeleccionado.id, true);
-        loadMeta();
-      }
-    });
-  }, [peerSeleccionado?.id, myProfileId, loadMensajes, loadMeta, handleIncomingStaffMessage]);
-
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -334,7 +323,7 @@ export default function StaffChatPanel({
   const handleSend = async (e) => {
     e.preventDefault();
     const contenido = sanitizeInput(texto, 'message');
-    if (!contenido.trim() || !peerSeleccionado) return;
+    if (!contenido.trim() || !peerSeleccionado || sending) return;
     setSending(true);
     setError('');
     try {
@@ -342,13 +331,15 @@ export default function StaffChatPanel({
         destinatario_id: String(peerSeleccionado.id),
         contenido,
       });
-      setTexto('');
-      setMensajes((prev) => {
-        if (prev.some((m) => m.id === created.id)) return prev;
-        return [...prev, created];
-      });
-      scrollToBottom();
-      loadMensajes(peerSeleccionado.id, true);
+      if (String(peerRef.current?.id) === String(peerSeleccionado.id)) {
+        setTexto('');
+        setMensajes((prev) => {
+          if (prev.some((m) => m.id === created.id)) return prev;
+          return [...prev, created];
+        });
+        scrollToBottom();
+        loadMensajes(peerSeleccionado.id, true);
+      }
       loadMeta();
     } catch (err) {
       const msg = err?.response?.data?.detail || err?.message || 'No se pudo enviar el mensaje.';

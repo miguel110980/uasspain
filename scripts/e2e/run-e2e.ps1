@@ -1,13 +1,23 @@
 # Runner E2E Rust: pila aislada -> semillas por API -> suite -> teardown.
 param(
-    [switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser, [switch]$FrontendOnly,
-    [ValidateSet('all', 'panels', 'presence', 'assignments', 'modals', 'courses')]
+    [switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser, [switch]$FrontendOnly, [switch]$SecureBrowser,
+    [ValidateSet('all', 'panels', 'presence', 'assignments', 'modals', 'courses', 'sessions', 'realtime')]
     [string[]]$BrowserScope = @('all')
 )
 
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $ComposeFile = Join-Path $Root 'docker-compose.e2e.yml'
+$ComposeArgs = @('-f', $ComposeFile)
+$PreviousBrowserOrigin = $env:E2E_BROWSER_ORIGIN
+if ($SecureBrowser) {
+    if ($BrowserScope -contains 'all') { $BrowserScope = @('sessions', 'realtime', 'presence') }
+    if ($BrowserScope | Where-Object { $_ -notin @('sessions', 'realtime', 'presence') }) {
+        throw 'SecureBrowser supports sessions, realtime and presence scopes.'
+    }
+    $ComposeArgs += @('-f', (Join-Path $Root 'docker-compose.realtime-e2e.yml'))
+    $env:E2E_BROWSER_ORIGIN = 'https://localhost:8444'
+}
 $BackendContext = Join-Path $Root 'backend-rust'
 $Docker = (Get-Command docker -ErrorAction Stop).Source
 $ExitCode = 1
@@ -63,15 +73,15 @@ try {
     $env:E2E_BACKUP_SSH_PUB = (Get-Content -LiteralPath "$PrivKey.pub" -Raw).Trim()
 
     Write-Host '==> Recreando pila E2E aislada'
-    & $Docker compose -f $ComposeFile down -v --remove-orphans
+    & $Docker compose @ComposeArgs down -v --remove-orphans
     if ($LASTEXITCODE -ne 0) { throw 'teardown E2E inicial falló' }
-    & $Docker compose -f $ComposeFile up -d --build --wait --wait-timeout 180
+    & $Docker compose @ComposeArgs up -d --build --wait --wait-timeout 180
     if ($LASTEXITCODE -ne 0) {
-        & $Docker compose -f $ComposeFile logs --no-color backend-e2e
+        & $Docker compose @ComposeArgs logs --no-color backend-e2e
         throw 'up --wait E2E falló'
     }
 
-    $DbName = (& $Docker compose -f $ComposeFile exec -T postgres-e2e `
+    $DbName = (& $Docker compose @ComposeArgs exec -T postgres-e2e `
         psql -U uasspain -d test_e2e_uasspain -Atc 'select current_database()').Trim()
     if ($DbName -ne 'test_e2e_uasspain') { throw "BD E2E inesperada: $DbName" }
 
@@ -93,7 +103,7 @@ try {
     $StudentId = [string]$Student.id
     if ($StudentId -notmatch '^[0-9a-fA-F-]{36}$') { throw 'ID de alumno E2E no válido' }
     $ActivateSql = "UPDATE accounts_userprofile SET status='activo', otp_verified=TRUE WHERE id='$StudentId'::uuid;"
-    & $Docker compose -f $ComposeFile exec -T postgres-e2e `
+    & $Docker compose @ComposeArgs exec -T postgres-e2e `
         psql -U uasspain -d test_e2e_uasspain -v ON_ERROR_STOP=1 -c $ActivateSql | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'activación de alumno E2E falló' }
 
@@ -104,7 +114,7 @@ try {
     }
     $SecondStudentId = [string]$SecondStudent.id
     if ($SecondStudentId -notmatch '^[0-9a-fA-F-]{36}$') { throw 'ID del segundo alumno E2E no válido' }
-    & $Docker compose -f $ComposeFile exec -T postgres-e2e `
+    & $Docker compose @ComposeArgs exec -T postgres-e2e `
         psql -U uasspain -d test_e2e_uasspain -v ON_ERROR_STOP=1 `
         -c "UPDATE accounts_userprofile SET status='activo', otp_verified=TRUE WHERE id='$SecondStudentId'::uuid;" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'activación del segundo alumno E2E falló' }
@@ -115,21 +125,21 @@ try {
     } | Out-Null
 
     Write-Host '==> Preparando destinos SFTP E2E'
-    $BackendId = (& $Docker compose -f $ComposeFile ps -q backend-e2e).Trim()
+    $BackendId = (& $Docker compose @ComposeArgs ps -q backend-e2e).Trim()
     & $Docker cp $PrivKey "${BackendId}:/app/backup_keys/backup_sftp_ed25519"
     if ($LASTEXITCODE -ne 0) { throw 'copia de clave SFTP E2E falló' }
     foreach ($Service in @('sftp-ext1-e2e', 'sftp-ext2-e2e')) {
-        & $Docker compose -f $ComposeFile exec -T -u 0 $Service `
+        & $Docker compose @ComposeArgs exec -T -u 0 $Service `
             sh -c 'chown 1000:1000 /backups && chmod 750 /backups'
         if ($LASTEXITCODE -ne 0) { throw 'preparación del destino SFTP E2E falló' }
     }
-    & $Docker compose -f $ComposeFile exec -T -u 0 sftp-ext1-e2e `
+    & $Docker compose @ComposeArgs exec -T -u 0 sftp-ext1-e2e `
         sh -c "printf 'CORRUPT-E2E-BACKUP' > /backups/uasspain_full_20200101_000000.sql.gz.enc"
     if ($LASTEXITCODE -ne 0) { throw 'preparación de backup corrupto E2E falló' }
 
     $KnownHosts = @()
     foreach ($Service in @('sftp-ext1-e2e', 'sftp-ext2-e2e')) {
-        $Public = (& $Docker compose -f $ComposeFile exec -T $Service `
+        $Public = (& $Docker compose @ComposeArgs exec -T $Service `
             cat /config/ssh_host_keys/ssh_host_ed25519_key.pub).Trim() -split '\s+'
         if ($LASTEXITCODE -ne 0 -or $Public.Count -lt 2) { throw 'lectura de clave pública SFTP E2E falló' }
         $KnownHosts += "[$Service]:2222 $($Public[0]) $($Public[1])"
@@ -146,7 +156,7 @@ try {
     # Default behavior still executes every API and operational gate.
     if (-not $FrontendOnly) {
     Write-Host '==> Ejecutando suite funcional en Python efímero fijado'
-    & $Docker compose -f $ComposeFile exec -T backend-e2e mkdir -p /app/backups/destination-local
+    & $Docker compose @ComposeArgs exec -T backend-e2e mkdir -p /app/backups/destination-local
     if ($LASTEXITCODE -ne 0) { throw 'Directorio del destino local E2E no disponible' }
     & $Docker run --rm `
         --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true `
@@ -159,9 +169,9 @@ try {
     if ($ExitCode -ne 0) { throw 'La suite API E2E falló' }
 
     Write-Host '==> Validando recuperacion y OTP con correo de fixture cifrado (sin SMTP externo)'
-    & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
+    & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a autenticacion E2E fallo' }
-    & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'readiness previa a autenticacion E2E fallo' }
     & node (Join-Path $Root 'scripts/e2e/e2e-auth.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de recuperacion y OTP E2E fallo' }
@@ -175,17 +185,17 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'La suite de asignaciones E2E fallo' }
 
     Write-Host '==> Validando backups simplificados y restauracion real'
-    & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
+    & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a backups E2E fallo' }
-    & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'readiness previa a backups E2E fallo' }
     & node (Join-Path $Root 'scripts/e2e/e2e-backups.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de backups E2E fallo' }
 
     Write-Host '==> Validando cursos, temario transaccional y permisos contra PostgreSQL'
-    & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
+    & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a cursos E2E fallo' }
-    & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'readiness previa a cursos E2E fallo' }
     & node (Join-Path $Root 'scripts/e2e/e2e-courses.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de cursos E2E fallo' }
@@ -203,7 +213,7 @@ try {
     $ExpiryFixture = (Invoke-Operations 'deadline-prepare') | ConvertFrom-Json
     $ExpiryId = [string]$ExpiryFixture.attempt_id
     if ($ExpiryId -notmatch '^[0-9a-fA-F-]{36}$') { throw 'ID del intento de plazo E2E no válido' }
-    & $Docker compose -f $ComposeFile exec -T postgres-e2e psql -U uasspain -d test_e2e_uasspain `
+    & $Docker compose @ComposeArgs exec -T postgres-e2e psql -U uasspain -d test_e2e_uasspain `
         -v ON_ERROR_STOP=1 -c "UPDATE examenes_intento SET started_at=NOW()-INTERVAL '41 minutes', expires_at=NOW()-INTERVAL '1 minute' WHERE id='$ExpiryId'::uuid;" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'preparación del plazo E2E falló' }
     Invoke-Operations 'deadline-verify'
@@ -212,33 +222,36 @@ try {
     Write-Host '==> Probando caída y recuperación de dependencias aisladas'
     foreach ($Dependency in @('redis-e2e', 'postgres-e2e')) {
         try {
-            & $Docker compose -f $ComposeFile stop $Dependency | Out-Null
+            & $Docker compose @ComposeArgs stop $Dependency | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'paro de dependencia E2E falló' }
             Invoke-Operations $(if ($Dependency -eq 'redis-e2e') { 'redis-down' } else { 'db-down' })
         } finally {
-            & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 $Dependency | Out-Null
+            & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 $Dependency | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'recuperación de dependencia E2E falló' }
         }
         Invoke-Operations 'recovered'
     }
     }
+    $ExitCode = 0
     if (-not $SkipBrowser) {
         # Each group uses the unchanged production login limit. A backend restart
         # between groups isolates test traffic instead of weakening that limit.
         $BrowserGroups = @(
-            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|staff-presence-video.spec|student-assignment.spec') },
+            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@session-regression|@realtime-regression|staff-presence-video.spec|student-assignment.spec') },
             @{ Key = 'presence'; Label = 'presencia y videollamada'; Arguments = @('staff-presence-video.spec.ts') },
             @{ Key = 'assignments'; Label = 'asignación de alumnos'; Arguments = @('student-assignment.spec.ts') },
             @{ Key = 'modals'; Label = 'modales y datos'; Arguments = @('--grep', '@panel-modals') },
-            @{ Key = 'courses'; Label = 'cursos'; Arguments = @('--grep', '@course-module') }
+            @{ Key = 'courses'; Label = 'cursos'; Arguments = @('--grep', '@course-module') },
+            @{ Key = 'sessions'; Label = 'persistencia y recuperación de sesión'; Arguments = @('--grep', '@session-regression') },
+            @{ Key = 'realtime'; Label = 'chat y medios en tiempo real'; Arguments = @('--grep', '@realtime-regression') }
         )
         # Invoke Node directly so Windows cmd does not interpret regex pipes.
         $PlaywrightCli = Join-Path $Root 'frontend/node_modules/@playwright/test/cli.js'
         foreach ($BrowserGroup in $BrowserGroups | Where-Object { $BrowserScope -contains 'all' -or $BrowserScope -contains $_.Key }) {
             Write-Host "==> Preparando navegador: $($BrowserGroup.Label)"
-            & $Docker compose -f $ComposeFile restart backend-e2e | Out-Null
+            & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'reinicio del backend E2E fallo' }
-            & $Docker compose -f $ComposeFile up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+            & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'readiness tras reinicio del backend E2E fallo' }
             Push-Location (Join-Path $Root 'frontend')
             try {
@@ -253,7 +266,7 @@ try {
 finally {
     if (-not $Keep) {
         Write-Host '==> Eliminando exclusivamente la pila y volúmenes E2E'
-        & $Docker compose -f $ComposeFile down -v --remove-orphans | Out-Null
+        & $Docker compose @ComposeArgs down -v --remove-orphans | Out-Null
     }
     if (Test-Path -LiteralPath $KeyDir) {
         $ResolvedKeyDir = (Resolve-Path -LiteralPath $KeyDir).Path
@@ -265,6 +278,7 @@ finally {
     }
     $env:E2E_FIELD_ENCRYPTION_KEY = $PreviousKey
     $env:E2E_BACKUP_SSH_PUB = $PreviousPublicKey
+    $env:E2E_BROWSER_ORIGIN = $PreviousBrowserOrigin
 }
 
 exit $ExitCode

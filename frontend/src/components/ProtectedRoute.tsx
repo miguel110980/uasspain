@@ -3,6 +3,7 @@ import { Loader2, XCircle } from 'lucide-react';
 import usePanelAuth from '@/hooks/usePanelAuth';
 import PanelAuthContext from '@/context/PanelAuthContext';
 import authService from '@/services/authService';
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
 
 const ROLE_MESSAGES = {
   admin: 'Solo los administradores pueden acceder a esta sección.',
@@ -28,6 +29,13 @@ export default function ProtectedRoute({ role, children }) {
         <Loader2 className="w-8 h-8 text-primary animate-spin" aria-label="Cargando" />
       </div>
     );
+  }
+
+  if (auth.loadError) {
+    return <main className="min-h-screen bg-background text-foreground flex items-center justify-center p-6">
+      <div className="w-full max-w-md"><h1 className="font-heading text-xl mb-4">Comprobando sesión</h1>
+        <DataLoadNotice error={auth.loadError} retry={auth.retry} /></div>
+    </main>;
   }
 
   if (auth.unauthorized) {

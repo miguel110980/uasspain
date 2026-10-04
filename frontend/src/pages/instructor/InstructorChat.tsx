@@ -41,6 +41,9 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
   const scrollContainerRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  const messageLoad = useRef(0);
+  const profilesRef = useRef(profiles);
+  profilesRef.current = profiles;
 
   useEffect(() => {
     alumnoSeleccionadoRef.current = alumnoSeleccionado;
@@ -80,38 +83,21 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
   }, []);
 
   useEffect(() => {
-    if (!alumnoSeleccionado?.id) return undefined;
-    return conexionesService.subscribeChatRoom(alumnoSeleccionado.id, (event) => {
-      const payload = conexionesService.parseWsPayload(event);
-      if (payload?.type === 'mensaje' && payload?.data) {
-        const msg = payload.data;
-        if (msg.remitente !== 'instructor') {
-          setMensajes((prev) => {
-            if (prev.some((m) => m.id === msg.id)) return prev;
-            return [...prev, msg];
-          });
-          setNewMessageCount((c) => c + 1);
-        }
-      } else if (payload?.type === 'message' || event.type === 'poll') {
-        loadMensajes(alumnoSeleccionado.id);
-      }
-    });
-  }, [alumnoSeleccionado?.id]);
-
-  useEffect(() => {
     if (!loading) loadConversaciones();
   }, [profiles]);
 
   const loadConversaciones = async () => {
+    try {
     const todos = await conexionesService.mensajes.list('-created_date', 500);
+    const currentProfiles = profilesRef.current;
     const porAlumno: Record<string, any> = {};
     todos.forEach((m) => {
       const key = String(m.alumno_id);
       if (!porAlumno[key]) porAlumno[key] = { ultimo: m, noLeidos: 0 };
       if (m.remitente === 'alumno' && !m.leido_instructor) porAlumno[key].noLeidos += 1;
     });
-    const profileIds = new Set(profiles.map((p) => String(p.id)));
-    const lista = profiles.map((p) => {
+    const profileIds = new Set(currentProfiles.map((p) => String(p.id)));
+    const lista = currentProfiles.map((p) => {
       const conv = porAlumno[String(p.id)];
       return {
         alumnoId: p.id,
@@ -139,7 +125,9 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
       return new Date(b.ultimaFecha).getTime() - new Date(a.ultimaFecha).getTime();
     });
     setConversaciones(lista);
-    setLoading(false);
+    } catch {
+      setError('No se pudieron actualizar las conversaciones. Se reintentará al recuperar la conexión.');
+    } finally { setLoading(false); }
   };
 
   const handleScroll = useCallback(() => {
@@ -156,17 +144,19 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
   }, []);
 
   const loadMensajes = async (alumnoId) => {
+    const request = ++messageLoad.current;
     try {
       const data = await conexionesService.mensajes.filter(
         { alumno_id: String(alumnoId) },
         'created_date',
       );
+      if (request !== messageLoad.current || String(alumnoSeleccionadoRef.current?.id) !== String(alumnoId)) return;
       setMensajes(Array.isArray(data) ? data : []);
       setError('');
       await conexionesService.mensajes.markRead(alumnoId);
       loadConversaciones();
     } catch {
-      setError('No se pudieron cargar los mensajes.');
+      if (request === messageLoad.current) setError('No se pudieron cargar los mensajes.');
     }
   };
 
@@ -175,14 +165,17 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
       onOpenStaffChat?.(conv.profile);
       return;
     }
-    setAlumnoSeleccionado({ id: conv.alumnoId, nombre: conv.nombre, profile: conv.profile });
+    const selected = { id: conv.alumnoId, nombre: conv.nombre, profile: conv.profile };
+    alumnoSeleccionadoRef.current = selected;
+    setAlumnoSeleccionado(selected);
+    setMensajes([]);
     loadMensajes(conv.alumnoId);
   };
 
   const handleSend = async (e) => {
     e.preventDefault();
     const contenido = sanitizeInput(texto, 'message');
-    if (!contenido.trim() || !alumnoSeleccionado) return;
+    if (!contenido.trim() || !alumnoSeleccionado || sending) return;
     setSending(true);
     setError('');
     try {
@@ -192,12 +185,14 @@ function UsuariosChat({ profiles, onOpenStaffChat }) {
         remitente: 'instructor',
         contenido,
       });
-      setTexto('');
-      setMensajes((prev) => {
-        if (prev.some((m) => m.id === created.id)) return prev;
-        return [...prev, created];
-      });
-      scrollToBottom();
+      if (String(alumnoSeleccionadoRef.current?.id) === String(created.alumno_id)) {
+        setTexto('');
+        setMensajes((prev) => {
+          if (prev.some((m) => m.id === created.id)) return prev;
+          return [...prev, created];
+        });
+        scrollToBottom();
+      }
       loadConversaciones();
     } catch (err) {
       const msg = err?.response?.data?.detail || err?.message || 'No se pudo enviar el mensaje.';

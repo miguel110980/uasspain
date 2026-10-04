@@ -31,7 +31,7 @@ apiClient.interceptors.request.use(async (config) => {
   return config;
 });
 
-let refreshPromise = null;
+let refreshPromise: Promise<unknown> | null = null;
 
 function refreshUrl() {
   return API_BASE_URL ? `${API_BASE_URL}/api/auth/refresh/` : '/api/auth/refresh/';
@@ -53,19 +53,21 @@ apiClient.interceptors.response.use(
 
     if (error.response?.data?.code === 'session_window_mismatch') return Promise.reject(error);
     if (!refreshPromise) {
-      refreshPromise = axios
-        .post(
+      // Assign the shared promise before yielding. Concurrent 401 responses
+      // must not rotate the same refresh cookie more than once.
+      refreshPromise = (async () => {
+        const windowId = await ensureWindowSession();
+        const response = await axios.post(
           refreshUrl(),
           encodeFormBody({}),
           {
             withCredentials: true,
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-UASSpain-Window-Id': await ensureWindowSession() },
+            timeout: 30000,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-UASSpain-Window-Id': windowId },
           },
-        )
-        .then((res) => res.data)
-        .catch((refreshError) => {
-          throw refreshError;
-        })
+        );
+        return response.data;
+      })()
         .finally(() => {
           refreshPromise = null;
         });

@@ -8,12 +8,13 @@ import { useSession } from '@/hooks/useSession';
  * @param {'admin'|'instructor'|'alumno'} requiredRole
  */
 export function usePanelAuth(requiredRole) {
-  const { data: me, isLoading, isError } = useSession();
+  const { data: me, isLoading, isError, error, refetch } = useSession();
+  const invalidSession = isError && (error as { response?: { status?: number } })?.response?.status === 401;
   const roleSetRef = useRef(null);
 
   useEffect(() => {
-    if (isError) authService.redirectToLogin(window.location.pathname);
-  }, [isError]);
+    if (invalidSession) authService.redirectToLogin(window.location.pathname + window.location.search);
+  }, [invalidSession]);
 
   useEffect(() => {
     if (!me || isLoading) return;
@@ -26,6 +27,10 @@ export function usePanelAuth(requiredRole) {
   }, [me, isLoading, requiredRole]);
 
   return useMemo(() => {
+    if (isError && !me && !invalidSession) {
+      return { loading: false, user: null, profile: null, unauthorized: false, blockedMessage: '',
+        loadError: 'No se pudo comprobar la sesión. Comprueba la conexión y vuelve a intentarlo.', retry: refetch };
+    }
     if (isLoading || !me) {
       return { loading: true, user: null, profile: null, unauthorized: false, blockedMessage: '' };
     }
@@ -60,7 +65,7 @@ export function usePanelAuth(requiredRole) {
       unauthorized: false,
       blockedMessage: '',
     };
-  }, [isLoading, me, requiredRole]);
+  }, [isLoading, isError, invalidSession, me, requiredRole, refetch]);
 }
 
 export default usePanelAuth;

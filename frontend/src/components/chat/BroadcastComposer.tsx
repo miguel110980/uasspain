@@ -30,7 +30,7 @@ export default function BroadcastComposer({ recipients, title, description, onSe
   const submit = async (event) => {
     event.preventDefault();
     const contenido = sanitizeInput(message, 'message').trim();
-    if (!contenido || selected.size === 0) return;
+    if (!contenido || selected.size === 0 || sending) return;
     setSending(true);
     setError('');
     setFeedback('');

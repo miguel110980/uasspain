@@ -70,6 +70,8 @@ export function useWebrtc(callId: string) {
             if (disposed || socket !== current) return;
             const signal: Signal = JSON.parse(event.data);
             if (signal.type === 'welcome') {
+              attempts = 0;
+              setError('');
               ownId = signal.peer_id || '';
               setModerator(signal.moderator === true);
               setStatus('Esperando participantes…');
