@@ -48,14 +48,14 @@ try {
   }
   await page.goto(origin + '/');
   await page.getByRole('link', { name: 'Tecnología', exact: true }).first().click();
-  await page.getByRole('heading', { name: 'Stack Tecnológico', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Stack Tecnológico', level: 1, exact: true }).waitFor();
   assert.equal(new URL(page.url()).pathname, '/tecnologia');
   await page.goBack();
   await page.waitForURL(origin + '/');
   await page.locator('main h1').first().waitFor();
   await page.goForward();
   await page.waitForURL(origin + '/tecnologia');
-  await page.getByRole('heading', { name: 'Stack Tecnológico', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Stack Tecnológico', level: 1, exact: true }).waitFor();
   report.history = { back: '/', forward: '/tecnologia', passed: true };
   if (process.env.FRONTEND_TEST_MANIFEST) {
     const manifest = JSON.parse(await readFile(process.env.FRONTEND_TEST_MANIFEST, 'utf8'));
@@ -81,7 +81,7 @@ try {
   const alias = await request(origin + '/tecnolog%C3%ADa'); assert.equal(alias.status, 308);
   assert.equal(alias.headers.location, '/tecnologia');
   await page.goto(origin + '/tecnolog%C3%ADa');
-  await page.getByRole('heading', { name: 'Stack Tecnológico', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Stack Tecnológico', level: 1, exact: true }).waitFor();
   assert.equal(new URL(page.url()).pathname, '/tecnologia');
   const redirect = await request(origin.replace('https:', 'http:') + '/tecnologia');
   assert.equal(redirect.status, 301); assert.equal(redirect.headers.location, origin + '/tecnologia');
@@ -110,7 +110,7 @@ try {
       assert.equal(documents, 2, 'one initial document plus one recovery, without loops');
     } else {
       await recoveryPage.waitForFunction(() => Object.keys(document.getElementById('root')).some(k => k.startsWith('__reactContainer')));
-      if (chunk === 'Tecnologia') await recoveryPage.getByRole('heading', { name: 'Stack Tecnológico', exact: true }).waitFor();
+      if (chunk === 'Tecnologia') await recoveryPage.getByRole('heading', { name: 'Stack Tecnológico', level: 1, exact: true }).waitFor();
       else await recoveryPage.locator('h1').first().waitFor();
       assert.equal(await recoveryPage.getByText('No se pudo cargar la aplicación', { exact: true }).count(), 0);
       assert.equal(documents, 2);

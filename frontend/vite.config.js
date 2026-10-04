@@ -7,6 +7,7 @@ import { defineConfig } from 'vite'
 const apiProxyTarget = process.env.VITE_DEV_PROXY_API_ORIGIN || 'http://127.0.0.1:8000'
 const wsProxyTarget = process.env.VITE_DEV_PROXY_WS_ORIGIN || 'ws://127.0.0.1:8000'
 const mediaProxyTarget = process.env.VITE_DEV_PROXY_MEDIA_ORIGIN || apiProxyTarget
+// The HTML and lazy chunks share this identity; recovery compares it with version.json.
 const buildId = randomUUID()
 
 // https://vite.dev/config/
