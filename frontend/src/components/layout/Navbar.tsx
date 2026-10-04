@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import { useQuery } from '@tanstack/react-query';
@@ -67,6 +66,11 @@ export default function Navbar() {
   const rafRef = useRef(null);
   const location = useLocation();
   const { data: session } = useSession();
+  useEffect(() => {
+    // The parent may commit before this prerendered Suspense boundary hydrates.
+    // Replay queued navigation clicks only once its handlers are attached.
+    window.dispatchEvent(new Event('uasspain:ready'));
+  }, []);
   const { data: managedCourses = [] } = useQuery({
     queryKey: ['public', 'courses'],
     queryFn: contentService.publicCourses,
@@ -268,13 +272,9 @@ export default function Navbar() {
           {link.label}
           <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${dropdownOpen === link.label ? 'rotate-180' : ''}`} />
         </button>
-        <AnimatePresence>
+        <>
           {dropdownOpen === link.label && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.2 }}
+            <div
               id={`desktop-menu-${link.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
               className={`${styles.desktopMenu} absolute top-full left-1/2 -translate-x-1/2 mt-3 ${link.label === 'Formación' ? 'w-64 max-w-[calc(100vw-2rem)]' : 'w-56'} rounded-lg shadow-2xl border border-border bg-popover z-50`}
             >
@@ -313,9 +313,9 @@ export default function Navbar() {
                       </Link>
                     ))}
               </div>
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
+        </>
       </div>
     );
   };
@@ -397,14 +397,10 @@ export default function Navbar() {
       </div>
 
       {/* ── Mobile menu ── */}
-      <AnimatePresence>
+      <>
         {mobileOpen && (
-          <motion.div
+          <div
             ref={mobileMenuRef}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
             id="main-mobile-menu"
             role="dialog"
             aria-label="Menú de navegación"
@@ -440,13 +436,9 @@ export default function Navbar() {
                     </Link>
                   )}
                   {(link.children || link.groups) && (
-                    <AnimatePresence>
+                    <>
                       {mobileDropdownOpen === link.label && (
-                        <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          transition={{ duration: 0.2 }}
+                        <div
                           className="pl-4 space-y-1 overflow-hidden"
                         >
                           {link.groups
@@ -487,16 +479,16 @@ export default function Navbar() {
                                   {child.label}
                                 </Link>
                               ))}
-                        </motion.div>
+                        </div>
                       )}
-                    </AnimatePresence>
+                    </>
                   )}
                 </React.Fragment>
               ))}
             </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </>
 
       {authOpen && <Suspense fallback={null}><AuthModal isOpen={authOpen} onClose={handleAuthClose} /></Suspense>}
     </nav>

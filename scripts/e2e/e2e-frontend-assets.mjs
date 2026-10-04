@@ -35,6 +35,7 @@ try {
   page.on('pageerror', e => errors.push(e.message));
   page.on('response', r => { if (/\/assets\/.*\.(js|css)$/.test(r.url())) assets.add(r.url()); });
   for (const route of routes) {
+    console.log('Route:', route);
     const response = await request(origin + route);
     assert.equal(response.status, 200, route);
     assert.match(response.headers['cache-control'], /no-store/, route);

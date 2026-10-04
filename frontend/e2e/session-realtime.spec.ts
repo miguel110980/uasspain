@@ -46,12 +46,13 @@ test('@session-regression refresh, full navigation, token renewal and temporary 
       await page.reload(); await renewal;
       await expect(page.locator('header h1')).toHaveText('Dashboard');
       expect(await binding(page)).toBe(id);
-      await page.route('**/api/auth/me/', route => route.fulfill({ status: 503, json: { detail: 'Temporary isolated API failure' } }));
+      const sessionEndpoint = (url: URL) => url.pathname === '/api/auth/me/';
+      await page.route(sessionEndpoint, route => route.fulfill({ status: 503, json: { detail: 'Temporary isolated API failure' } }));
       await page.reload();
       await expect(page.getByRole('heading', { name: 'Comprobando sesión' })).toBeVisible();
       await expect(page).toHaveURL(new RegExp(`/${account.role}$`));
       expect(await binding(page)).toBe(id);
-      await page.unroute('**/api/auth/me/');
+      await page.unroute(sessionEndpoint);
       await page.getByRole('button', { name: 'Reintentar', exact: true }).click();
       await expect(page.locator('header h1')).toHaveText('Dashboard');
     } finally { await context.close(); }

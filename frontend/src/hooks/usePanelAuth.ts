@@ -9,7 +9,8 @@ import { useSession } from '@/hooks/useSession';
  */
 export function usePanelAuth(requiredRole) {
   const { data: me, isLoading, isError, error, refetch } = useSession();
-  const invalidSession = isError && (error as { response?: { status?: number } })?.response?.status === 401;
+  const invalidSession = (isError && (error as { response?: { status?: number } })?.response?.status === 401)
+    || (!isLoading && !isError && me === null);
   const roleSetRef = useRef(null);
 
   useEffect(() => {

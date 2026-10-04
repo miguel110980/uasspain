@@ -10,7 +10,7 @@ import { IMAGES } from '@/lib/images';
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="home-page min-h-screen bg-background text-foreground">
       <Navbar />
       <main className="public-content">
       <HeroSection bgImageLight={IMAGES.heroLight} bgImageDark={IMAGES.heroDark} />

@@ -162,7 +162,7 @@ test('chat messages appear bidirectionally without a page reload', async ({ brow
     const reply = `Respuesta alumno ${Date.now()}`;
     await student.getByPlaceholder('Escribe un mensaje...').fill(reply);
     await student.getByRole('button', { name: 'Enviar mensaje', exact: true }).click();
-    await expect(instructor.getByText(reply, { exact: true }).filter({ visible: true })).toBeVisible({ timeout: 5000 });
+    await expect(instructor.getByRole('region', { name: 'Conversación con E2E Alumno', exact: true }).getByText(reply, { exact: true })).toBeVisible({ timeout: 5000 });
     await student.reload();
     await student.locator('aside:visible nav').getByRole('button', { name: 'Chat', exact: true }).click();
     await expect(student.getByText(reply, { exact: true })).toBeVisible();

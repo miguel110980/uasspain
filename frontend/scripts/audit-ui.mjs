@@ -11,6 +11,7 @@ const origin = process.env.UI_AUDIT_ORIGIN || 'https://localhost';
 const folder = path.resolve(process.env.UI_AUDIT_REPORT || path.join(root, '..', '.run', 'frontend-ui-audit'));
 const engine = process.env.UI_AUDIT_BROWSER || 'chromium';
 const widths = (process.env.UI_AUDIT_WIDTHS || '320,390,768,1280,1440,2560').split(',').map(Number);
+const roles = (process.env.UI_AUDIT_ROLES || 'public,admin,instructor,alumno').split(',');
 const report = { origin, engine, widths, screens: [], errors: [], warnings: [], failures: [], writesIntercepted: 0 };
 await mkdir(folder, { recursive: true });
 const app = await readFile(path.join(root, 'src', 'App.tsx'), 'utf8');
@@ -30,7 +31,10 @@ async function setup(role) {
   await page.route(url => url.pathname.startsWith('/api/'), async route => {
     const request = route.request(), p = new URL(request.url()).pathname;
     const me = fixture.profiles.find(profile => profile.role === role);
-    if (p === '/api/auth/me/') return route.fulfill({ status: me ? 200 : 401, json: me ? { ...me, session_role: role, full_name: `${me.nombre} ${me.apellidos}`, profile: me } : { detail: 'Sin sesión' } });
+    if (p === '/api/auth/me/') {
+      const optional = new URL(request.url()).searchParams.get('optional') === 'true';
+      return route.fulfill({ status: me || optional ? 200 : 401, json: me ? { ...me, session_role: role, full_name: `${me.nombre} ${me.apellidos}`, profile: me } : optional ? null : { detail: 'Sin sesión' } });
+    }
     if (request.method() !== 'GET') {
       report.writesIntercepted++;
       return route.fulfill({ status: p.includes('refresh') ? 401 : 200, json: { detail: 'Respuesta sintética' } });
@@ -75,6 +79,18 @@ async function inspect(page, role, section) {
       const screen = { role, section, theme, width, ...bounds, violations: [] };
       // Both themes at the smallest and desktop widths; all widths get layout checks.
       if (width === Math.min(...widths) || width === Math.max(...widths.filter(w => w <= 1440))) {
+        // Paint each deferred Home section in the current theme before inspecting
+        // its contrast. Offscreen content-visibility can retain old computed
+        // colors until the section enters the viewport; scrolling exercises the
+        // same rendering path as the user and still audits every node.
+        if (await page.locator('.home-page').count()) {
+          const position = await page.evaluate(() => scrollY);
+          for (const element of await page.locator('.home-page main section').all()) {
+            await element.scrollIntoViewIfNeeded();
+            await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          }
+          await page.evaluate(y => scrollTo({ top: y, behavior: 'instant' }), position);
+        }
         const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
         screen.violations = results.violations.map(v => ({ id: v.id, impact: v.impact, nodes: v.nodes.map(n => ({ target: n.target, html: n.html, summary: n.failureSummary })) }));
         const filename = `${role}-${section}-${theme}-${width}`.replace(/[^\w-]/g, '_') + '.png';
@@ -86,10 +102,11 @@ async function inspect(page, role, section) {
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(150);
 }
 
 try {
-  for (const role of ['public', 'admin', 'instructor', 'alumno']) {
+  for (const role of roles) {
     const { context, page } = await setup(role);
     if (role === 'public') {
       for (const route of publicRoutes) {

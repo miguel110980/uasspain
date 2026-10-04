@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { createServer } from 'vite';
 import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderToStaticMarkup, renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 
@@ -15,15 +15,19 @@ try {
   const { MemoryRouter } = await server.ssrLoadModule('react-router-dom');
   const source = await readFile('src/App.tsx', 'utf8');
   const modules = new Map([...source.matchAll(/const (\w+) = lazy\(\(\) => import\('([^']+)'\)\);/g)].map(m => [m[1], m[2]]));
+  for (const [, alias, fallback] of source.matchAll(/const (\w+) = \w+ \|\| (\w+);/g)) {
+    if (modules.has(fallback)) modules.set(alias, modules.get(fallback));
+  }
   const routes = [...source.matchAll(/<Route path="([^"]+)" element=\{<(\w+)\s*\/>\}/g)]
     .filter(m => !m[1].includes(':') && !m[1].includes('*') && !/^\/(elegir-panel|restablecer-contrasena)/.test(m[1]));
   if (!['/', '/formacion', '/contacto', '/nosotros'].every(route => routes.some(match => match[1] === route))) throw new Error('Public route discovery failed; check App route declarations.');
   const { SITE, getSeoForPath, organizationJsonLd } = await server.ssrLoadModule('/src/lib/seoConfig.ts');
+  const { AppProviders } = await server.ssrLoadModule('/src/App.tsx');
   const origin = new URL(SITE.url);
   if (!['http:', 'https:'].includes(origin.protocol) || origin.pathname !== '/' || origin.search || origin.hash || origin.username || origin.password) throw new Error('VITE_SITE_URL must be a public origin.');
   const base = await readFile('dist/index.html', 'utf8');
   const manifest = JSON.parse(await readFile('dist/.vite/manifest.json', 'utf8'));
-  function preload(modulePath) {
+  function preload(modulePath, priority = 'auto', scripts = true) {
     const visited = new Set();
     const styles = new Set([...base.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"/g)].map(match => match[1]));
     function collect(key) {
@@ -37,7 +41,7 @@ try {
         styles.add(href);
         return true;
       }).map(file => `<link rel="stylesheet" crossorigin href="/${file}" />`).join('');
-      return css + `<link rel="modulepreload" href="/${entry.file}" />` + (entry.imports || []).map(collect).join('');
+      return css + (scripts ? `<link rel="modulepreload" href="/${entry.file}" fetchpriority="${priority}" />` : '') + (entry.imports || []).map(collect).join('');
     }
     const source = `src/${modulePath.replace(/^\.\//, '')}`;
     const key = [source, `${source}.tsx`, `${source}.ts`].find(candidate => manifest[candidate]);
@@ -70,18 +74,42 @@ try {
     if (!modulePath) throw new Error(`No component module for ${route}`);
     const { default: Page } = await server.ssrLoadModule(`/src/${modulePath.replace(/^\.\//, '')}`);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const body = renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [route] },
+    const page = React.createElement(MemoryRouter, { initialEntries: [route] },
       React.createElement(ThemeProvider, { attribute: 'class', defaultTheme: 'dark', enableSystem: false },
-        React.createElement(QueryClientProvider, { client }, React.createElement(Page)))))
+        React.createElement(QueryClientProvider, { client }, React.createElement(Page))));
+    const markup = route === '/' ? renderToString(React.createElement(AppProviders, { client },
+      React.createElement(MemoryRouter, { initialEntries: [route] },
+        React.createElement(React.Suspense, null, React.createElement(Page))))) : renderToStaticMarkup(page);
+    const body = markup
       // In-view animations must not hide the server-rendered text without JS.
       .replace(/opacity:0(?=;|")/g, 'opacity:1')
-      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, route === '/' ? match => match : '');
     client.clear();
     if (!/<h1\b/.test(body)) throw new Error(`Public page ${route} has no H1.`);
     const seo = getSeoForPath(route);
     const folder = path.join('dist', route.slice(1));
     await mkdir(folder, { recursive: true });
-    await writeFile(path.join(folder, 'index.html'), documentFor(route, body, seo).replace('</head>', `${preload(modulePath)}</head>`));
+    let html = documentFor(route, body, seo).replace('</head>', `${preload(modulePath, 'auto', route !== '/')}</head>`);
+    if (route === '/') {
+      html = html.replace('<div id="root">', '<div id="root" data-prerendered="home">');
+      // Use the actual compiled CSS: avoid extra render-blocking round trips
+      // while keeping the same styles and a single source of truth.
+      for (const match of [...html.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"[^>]*>/g)]) {
+        let css = await readFile(path.join('dist', match[1].replace(/^\//, '')), 'utf8');
+        // Deliver critical Latin fonts with the initial document. Their original
+        // files remain the source of truth and fallback for other public routes.
+        for (const font of [...css.matchAll(/url\((\/fonts\/[^)]+-critical\.woff2)\)/g)]) {
+          const bytes = await readFile(path.join('dist', font[1].slice(1)));
+          css = css.replaceAll(font[0], `url(data:font/woff2;base64,${bytes.toString('base64')})`);
+        }
+        // Vite recognizes the stylesheet link during subsequent lazy imports.
+        // Its compiled contents are already applied inline; disable only the
+        // duplicate external load, which would otherwise block rendering again.
+        html = html.replace(match[0], `<style data-stylesheet="${match[1]}">${css.replace(/<\/style/gi, '<\\/style')}</style>`);
+      }
+      html = html.replace(/<link[^>]+rel="preload"[^>]+href="\/fonts\/[^\"]+"[^>]*>/g, '');
+    }
+    await writeFile(path.join(folder, 'index.html'), html);
     if (!seo.noindex) urls.push(`${origin.origin}${route === '/' ? '/' : route}`);
   }
   const loading = '<main><p role="status">Cargando UASSPAIN…</p></main>';

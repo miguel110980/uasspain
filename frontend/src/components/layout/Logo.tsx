@@ -50,6 +50,10 @@ export default function Logo({ size = 'md', withTagline = true, to = '/', classN
       >
         <img
           src={IMAGES.logo}
+          srcSet="/images/logo-64.webp 64w, /images/logo-128.webp 128w, /images/logo-256.webp 256w"
+          sizes={size === 'footer' ? '48px' : size === 'header' ? '(max-width: 767px) 56px, 104px' : '152px'}
+          width={256}
+          height={171}
           alt="UASSPAIN"
           className={`${s.img} w-auto object-contain relative z-10`}
         />

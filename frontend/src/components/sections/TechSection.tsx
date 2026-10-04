@@ -1,5 +1,4 @@
 import React from 'react';
-import { motion } from 'framer-motion';
 import useScrollReveal from '@/hooks/useScrollReveal';
 import { Brain, Satellite, Navigation, Cpu, Thermometer, Radio, Wifi, Eye } from 'lucide-react';
 
@@ -23,13 +22,10 @@ export default function TechSection({ techImage }) {
       <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
       <div className="absolute bottom-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
 
-      <div ref={ref} className="max-w-7xl mx-auto px-6">
+      <div ref={ref} className={`max-w-7xl mx-auto px-6 home-reveal ${isVisible ? 'is-visible' : ''}`}>
         <div className="grid lg:grid-cols-5 gap-12 items-start">
           {/* Left - Image & header */}
-          <motion.div
-            initial={{ opacity: 0, x: -30 }}
-            animate={isVisible ? { opacity: 1, x: 0 } : {}}
-            transition={{ duration: 0.7 }}
+          <div
             className="lg:col-span-2"
           >
             <div className="inline-flex items-center gap-2 mb-6 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">
@@ -46,20 +42,17 @@ export default function TechSection({ techImage }) {
               garantizando resultados de máxima calidad y fiabilidad operacional.
             </p>
             <div className="relative overflow-hidden hidden lg:block">
-              <img src={techImage} loading="lazy" width={1280} height={720} alt="Drone profesional con sensores avanzados" className="w-full aspect-video object-cover" />
+              <img src={techImage} srcSet="/images/tech-480.webp 480w, /images/tech-960.webp 960w, /images/tech-1280.webp 1280w" sizes="(max-width: 1023px) calc(100vw - 48px), 600px" decoding="async" loading="lazy" width={1280} height={720} alt="Drone profesional con sensores avanzados" className="w-full aspect-video object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-card via-card/20 to-transparent" />
               <div className="absolute inset-0 border border-primary/10" />
             </div>
-          </motion.div>
+          </div>
 
           {/* Right - Tech grid */}
           <div className="lg:col-span-3 grid sm:grid-cols-2 gap-4">
-            {techs.map((tech, i) => (
-              <motion.div
+            {techs.map((tech) => (
+              <div
                 key={tech.title}
-                initial={{ opacity: 0, y: 20 }}
-                animate={isVisible ? { opacity: 1, y: 0 } : {}}
-                transition={{ duration: 0.5, delay: 0.1 + i * 0.08 }}
                 className="group p-6 border border-border-subtle hover:border-primary/20 bg-surface-subtle hover:bg-primary/5 transition-all duration-300"
               >
                 <div className="flex items-start gap-4">
@@ -71,7 +64,7 @@ export default function TechSection({ techImage }) {
                     <p className="text-xs text-muted-foreground leading-relaxed">{tech.desc}</p>
                   </div>
                 </div>
-              </motion.div>
+              </div>
             ))}
           </div>
         </div>

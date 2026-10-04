@@ -72,9 +72,10 @@ export const authService = {
     return value;
   },
 
-  async fetchMe() {
-    const res = await apiClient.get(endpoints.auth.me);
-    return publicUser(unwrapItem(res));
+  async fetchMe(optional = false) {
+    const res = await apiClient.get(endpoints.auth.me, optional ? { params: { optional: true } } : undefined);
+    const data = unwrapItem(res);
+    return data == null ? null : publicUser(data);
   },
 
   /** @deprecated Preferir fetchMe() con useSession(). */

@@ -9,8 +9,8 @@ export default function PanelChoice() {
   const { data: me, isLoading, isError } = useSession();
 
   useEffect(() => {
-    if (isError) authService.redirectToLogin('/elegir-panel');
-  }, [isError]);
+    if (isError || (!isLoading && me === null)) authService.redirectToLogin('/elegir-panel');
+  }, [isError, isLoading, me]);
 
   useEffect(() => {
     if (!me) return;

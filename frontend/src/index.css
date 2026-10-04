@@ -1,6 +1,16 @@
 @import 'tailwindcss';
 @config '../tailwind.config.js';
 
+/* Match the heading's fallback advance widths so font-display: swap does not
+   turn the mobile hero's two lines into three while the font is loading. */
+@font-face {
+  font-family: 'Space Grotesk Fallback';
+  src: local('Arial Bold');
+  font-style: normal;
+  font-weight: 700;
+  size-adjust: 88.25%;
+}
+
 @font-face {
   font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap;
   src: url('/fonts/inter.woff2') format('woff2');
@@ -12,6 +22,53 @@
 @font-face {
   font-family: 'JetBrains Mono'; font-style: normal; font-weight: 100 800; font-display: swap;
   src: url('/fonts/jetbrains-mono.woff2') format('woff2');
+}
+
+/* Latin characters use smaller files with identical glyphs and metrics.
+   The original variable fonts above remain available for every other glyph. */
+@font-face {
+  font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Space Grotesk'; font-style: normal; font-weight: 300 700; font-display: swap;
+  src: url('/fonts/space-grotesk-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 100 800; font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Space Grotesk'; font-style: normal; font-weight: 700; font-display: swap;
+  src: url('/fonts/space-grotesk-latin-bold.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-regular.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter Critical'; font-style: normal; font-weight: 300 700; font-display: swap;
+  src: url('/fonts/inter-critical.woff2') format('woff2');
+  unicode-range: U+0020, U+0025-003A, U+0040-005A, U+0061-007A, U+00A1, U+00A9, U+00B0, U+00B7, U+00BF, U+00C1, U+00C9, U+00CD, U+00D1, U+00D3, U+00DA, U+00DC, U+00E1, U+00E9, U+00ED, U+00F1, U+00F3, U+00FA, U+00FC, U+2013-2014, U+2018-2019, U+201C-201D, U+2026, U+20AC;
+}
+@font-face {
+  font-family: 'Space Grotesk Critical'; font-style: normal; font-weight: 600 700; font-display: swap;
+  src: url('/fonts/space-grotesk-critical.woff2') format('woff2');
+  unicode-range: U+0020, U+0025-003A, U+0040-005A, U+0061-007A, U+00A1, U+00A9, U+00B0, U+00B7, U+00BF, U+00C1, U+00C9, U+00CD, U+00D1, U+00D3, U+00DA, U+00DC, U+00E1, U+00E9, U+00ED, U+00F1, U+00F3, U+00FA, U+00FC, U+2013-2014, U+2018-2019, U+201C-201D, U+2026, U+20AC;
+}
+@font-face {
+  font-family: 'JetBrains Mono Critical'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('/fonts/jetbrains-mono-critical.woff2') format('woff2');
+  unicode-range: U+0020, U+0025-003A, U+0040-005A, U+0061-007A, U+00A1, U+00A9, U+00B0, U+00B7, U+00BF, U+00C1, U+00C9, U+00CD, U+00D1, U+00D3, U+00DA, U+00DC, U+00E1, U+00E9, U+00ED, U+00F1, U+00F3, U+00FA, U+00FC, U+2013-2014, U+2018-2019, U+201C-201D, U+2026, U+20AC;
 }
 
 @layer base {
@@ -45,7 +102,7 @@
     --chart-5: 186 80% 30%;
     --radius: 0.5rem;
 
-    --font-heading: 'Space Grotesk', sans-serif;
+    --font-heading: 'Space Grotesk', 'Space Grotesk Fallback', sans-serif;
     --font-body: 'Inter', sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
 
@@ -347,8 +404,29 @@
 .public-content { overflow-x: clip; }
 .public-content h1, .public-content h2 { overflow-wrap: anywhere; }
 
+.home-page {
+  --font-body: 'Inter Critical', 'Inter', sans-serif;
+  --font-heading: 'Space Grotesk Critical', 'Space Grotesk', 'Space Grotesk Fallback', sans-serif;
+  --font-mono: 'JetBrains Mono Critical', 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
+}
+
+/* Skip layout/paint of offscreen sections while retaining their DOM, links and
+   accessibility tree. The browser renders them normally as the user scrolls. */
+.home-page .public-content > section:not(#inicio), .home-page > footer {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 800px;
+}
+
+/* Public content is visible without JavaScript. Only the hydrated, below-fold
+   sections animate as they enter the viewport; the hero never waits for JS. */
+.home-reveal { transition: opacity .6s ease, transform .6s ease; }
+html[data-hydrated] .home-reveal:not(.is-visible) { opacity: 0; transform: translateY(24px); }
+html[data-hydrated] .home-reveal.is-visible { opacity: 1; transform: none; }
+
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
+  html[data-hydrated] .home-reveal, html[data-hydrated] .home-reveal:not(.is-visible) { opacity: 1; transform: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

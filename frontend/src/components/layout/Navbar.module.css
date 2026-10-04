@@ -218,3 +218,6 @@
     transition: none;
   }
 }
+@keyframes menu-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.desktopMenu { animation: menu-enter .2s ease-out; }
+.mobileMenu { animation: menu-enter .3s ease-out; }

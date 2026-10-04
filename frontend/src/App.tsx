@@ -1,8 +1,8 @@
-import { Toaster } from "@/components/ui/toaster"
+import { useToast } from '@/components/ui/use-toast';
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
-import { Suspense, lazy, useEffect } from 'react';
+import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
+import { Suspense, lazy, useEffect, type ComponentType } from 'react';
 import { refreshCourseQueries } from '@/services/contentService';
 import { ThemeProvider } from 'next-themes';
 import PageNotFound from './lib/PageNotFound';
@@ -10,7 +10,6 @@ import ScrollToTop from './components/ScrollToTop';
 import SeoHead from './components/seo/SeoHead';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppErrorBoundary from './components/AppErrorBoundary';
-import { MotionConfig } from 'framer-motion';
 
 const Home = lazy(() => import('./pages/Home'));
 const Nosotros = lazy(() => import('./pages/Nosotros'));
@@ -34,6 +33,13 @@ const RestablecerContrasena = lazy(() => import('./pages/RestablecerContrasena')
 const PoliticaPrivacidad = lazy(() => import('./pages/PoliticaPrivacidad'));
 const AvisoLegal = lazy(() => import('./pages/AvisoLegal'));
 const PoliticaCookies = lazy(() => import('./pages/PoliticaCookies'));
+const Toaster = lazy(() => import('@/components/ui/toaster').then(module => ({ default: module.Toaster })));
+const MotionConfig = lazy(() => import('framer-motion').then(module => ({ default: module.MotionConfig })));
+
+function ToastHost() {
+  const { toasts } = useToast();
+  return toasts.length ? <Suspense fallback={null}><Toaster /></Suspense> : null;
+}
 
 const PageLoader = () => (
   <div className="fixed inset-0 flex items-center justify-center bg-background">
@@ -41,24 +47,44 @@ const PageLoader = () => (
   </div>
 );
 
-function App() {
+function RouteMotion({ children }) {
+  const { pathname } = useLocation();
+  // Home and navigation use CSS motion. Other routes retain their existing
+  // Framer Motion provider and respect the user's reduced-motion preference.
+  return pathname === '/' ? children : <Suspense fallback={<PageLoader />}>
+    <MotionConfig reducedMotion="user">{children}</MotionConfig>
+  </Suspense>;
+}
+
+export function AppProviders({ children, client = queryClientInstance }) {
+  return <AppErrorBoundary>
+      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} scriptProps={{ src: __THEME_INIT_URL__, defer: true }}>
+        <QueryClientProvider client={client}>
+          {children}
+          <ToastHost />
+        </QueryClientProvider>
+      </ThemeProvider>
+  </AppErrorBoundary>;
+}
+
+function App({ initialHome }: { initialHome?: ComponentType } = {}) {
+  const HomePage = initialHome || Home;
   useEffect(() => {
+    document.documentElement.dataset.hydrated = 'true';
     if (typeof BroadcastChannel === 'undefined') return undefined;
     const channel = new BroadcastChannel('uasspain-courses');
     channel.onmessage = event => { if (event.data === 'changed') refreshCourseQueries(); };
     return () => channel.close();
   }, []);
   return (
-    <AppErrorBoundary>
-    <MotionConfig reducedMotion="user">
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
-    <QueryClientProvider client={queryClientInstance}>
+    <AppProviders>
       <Router>
         <SeoHead />
         <ScrollToTop />
+        <RouteMotion>
         <Suspense fallback={<PageLoader />}>
           <Routes>
-            <Route path="/" element={<Home />} />
+            <Route path="/" element={<HomePage />} />
             <Route path="/nosotros" element={<Nosotros />} />
             <Route path="/tecnologia" element={<Tecnologia />} />
             <Route path="/tecnología" element={<Navigate to="/tecnologia" replace />} />
@@ -85,12 +111,9 @@ function App() {
             <Route path="*" element={<PageNotFound />} />
           </Routes>
         </Suspense>
+        </RouteMotion>
       </Router>
-      <Toaster />
-    </QueryClientProvider>
-    </ThemeProvider>
-    </MotionConfig>
-    </AppErrorBoundary>
+    </AppProviders>
   );
 }
 

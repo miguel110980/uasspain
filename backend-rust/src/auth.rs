@@ -6,10 +6,10 @@ use std::{
 
 use axum::{
     Json,
-    extract::{Request, State},
+    extract::{Query, Request, State},
     http::{
         HeaderMap, StatusCode,
-        header::{AUTHORIZATION, COOKIE, SET_COOKIE},
+        header::{AUTHORIZATION, CACHE_CONTROL, COOKIE, SET_COOKIE},
     },
     middleware::Next,
     response::{IntoResponse, Response},
@@ -431,10 +431,39 @@ async fn finish_login(
     Ok(response)
 }
 
+#[derive(Default, Deserialize)]
+pub struct SessionQuery {
+    #[serde(default)]
+    optional: bool,
+}
+
 pub async fn me(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, AppError> {
+    Query(query): Query<SessionQuery>,
+) -> Result<Response, AppError> {
+    // Public navigation may ask whether a session exists. Only a request with
+    // no session credentials can be anonymous; invalid/expired tokens still
+    // take the normal authentication and refresh path.
+    let session_cookie = headers
+        .get(COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|cookies| {
+            cookies.split(';').map(str::trim).any(|cookie| {
+                cookie.split_once('=').is_some_and(|(name, value)| {
+                    !value.is_empty()
+                        && (name == state.tokens.access_cookie
+                            || name == state.tokens.refresh_cookie)
+                })
+            })
+        });
+    if query.optional && !headers.contains_key(AUTHORIZATION) && !session_cookie {
+        return Ok((
+            [(CACHE_CONTROL, "private, no-store")],
+            Json(serde_json::Value::Null),
+        )
+            .into_response());
+    }
     let claims = authenticate(&state, &headers, "access")?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let row = sqlx::query_as::<_, ProfileRow>(ProfileRow::SELECT_BY_ID)
@@ -443,11 +472,15 @@ pub async fn me(
         .await?
         .ok_or(AppError::NotFound)?;
     let profile = ProfileView::from_row(row, &state.cipher)?;
-    Ok(Json(serde_json::json!({
-        "id": profile.id, "user_id": claims.user_id, "email": profile.email,
-        "full_name": profile.full_name(), "role": profile.role, "roles": profile.roles,
-        "session_role": claims.role, "status": profile.status, "profile": profile
-    })))
+    Ok((
+        [(CACHE_CONTROL, "private, no-store")],
+        Json(serde_json::json!({
+            "id": profile.id, "user_id": claims.user_id, "email": profile.email,
+            "full_name": profile.full_name(), "role": profile.role, "roles": profile.roles,
+            "session_role": claims.role, "status": profile.status, "profile": profile
+        })),
+    )
+        .into_response())
 }
 
 pub async fn logout(

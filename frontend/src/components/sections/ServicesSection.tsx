@@ -1,5 +1,4 @@
 import React from 'react';
-import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import useScrollReveal from '@/hooks/useScrollReveal';
 import { Shield, Siren, Camera, Radio, SprayCan, ScanLine, Thermometer, ArrowRight } from 'lucide-react';
@@ -56,12 +55,9 @@ const services = [
   },
 ];
 
-function ServiceCard({ service, index, isVisible }) {
+function ServiceCard({ service }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 30 }}
-      animate={isVisible ? { opacity: 1, y: 0 } : {}}
-      transition={{ duration: 0.6, delay: index * 0.1 }}
+    <div
       className="group relative p-8 glass-card hover:border-primary/30 transition-all duration-500 overflow-hidden"
     >
       {/* Coord label */}
@@ -93,7 +89,7 @@ function ServiceCard({ service, index, isVisible }) {
 
       {/* Bottom border animation */}
       <div className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-primary to-blue-500 group-hover:w-full transition-all duration-500" />
-    </motion.div>
+    </div>
   );
 }
 
@@ -110,12 +106,9 @@ export default function ServicesSection() {
         }}
       />
 
-      <div ref={ref} className="max-w-7xl mx-auto px-6">
+      <div ref={ref} className={`max-w-7xl mx-auto px-6 home-reveal ${isVisible ? 'is-visible' : ''}`}>
         {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={isVisible ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.6 }}
+        <div
           className="text-center mb-16"
         >
           <div className="inline-flex items-center gap-2 mb-6 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">
@@ -130,12 +123,12 @@ export default function ServicesSection() {
           <p className="text-muted-foreground max-w-2xl mx-auto">
             Soluciones aéreas profesionales adaptadas a las necesidades específicas de cada sector y operación.
           </p>
-        </motion.div>
+        </div>
 
         {/* Grid */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {services.map((service, i) => (
-            <ServiceCard key={service.title} service={service} index={i} isVisible={isVisible} />
+          {services.map((service) => (
+            <ServiceCard key={service.title} service={service} />
           ))}
         </div>
       </div>

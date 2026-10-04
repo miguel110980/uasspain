@@ -1,5 +1,4 @@
 ﻿import React from 'react';
-import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { ArrowRight, ChevronDown, Shield, Cpu, Globe } from 'lucide-react';
 import { useTheme } from 'next-themes';
@@ -16,7 +15,10 @@ export default function HeroSection({ bgImageLight, bgImageDark }) {
   return (
     <section id="inicio" className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-background">
       <div className="absolute inset-0">
-        <img src={bgImage} alt="Drone aéreo profesional" fetchPriority="high" className="hero-image w-full h-full object-cover opacity-55 dark:opacity-65" />
+        <picture>
+          <source media="(max-width: 767px)" srcSet={`/images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-portrait-320.webp 320w, /images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-portrait-472.webp 472w`} sizes="100vw" />
+          <img src={bgImage} srcSet={`/images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-640.webp 640w, /images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-1280.webp 1280w, /images/hero-${(resolvedTheme || 'dark') === 'dark' ? 'oscuro' : 'claro'}-1672.webp 1672w`} sizes="100vw" width={1672} height={941} alt="Drone aéreo profesional" fetchPriority="high" className="hero-image w-full h-full object-cover opacity-55 dark:opacity-65" />
+        </picture>
         <div className="hero-shade absolute inset-0 bg-gradient-to-b from-background/45 via-background/15 to-background" />
         <div className="hero-side-shade absolute inset-0 bg-gradient-to-r from-background/40 via-transparent to-background/40" />
       </div>
@@ -29,10 +31,7 @@ export default function HeroSection({ bgImageLight, bgImageDark }) {
       </div>
 
       <div className="relative z-10 w-full max-w-7xl mx-auto px-6 pt-28 pb-16 flex flex-col items-center text-center">
-        <motion.div
-          initial={false}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        <div
           className="hero-copy"
         >
           <h1 className="font-heading text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-foreground leading-[1] tracking-tighter mb-5">
@@ -73,18 +72,15 @@ export default function HeroSection({ bgImageLight, bgImageDark }) {
               </div>
             ))}
           </div>
-        </motion.div>
+        </div>
       </div>
 
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1.2 }}
+      <div
         className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
       >
         <ChevronDown className="w-4 h-4 text-primary/40 animate-bounce" />
         <span className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground/40">Desplazar</span>
-      </motion.div>
+      </div>
     </section>
   );
 }

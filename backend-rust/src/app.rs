@@ -620,6 +620,50 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
+    async fn optional_session_is_anonymous_only_without_credentials() {
+        for (path, authorization, cookie, expected) in [
+            ("/api/auth/me/", None, None, StatusCode::UNAUTHORIZED),
+            ("/api/auth/me/?optional=true", None, None, StatusCode::OK),
+            (
+                "/api/auth/me/?optional=true",
+                Some("Bearer invalid"),
+                None,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                "/api/auth/me/?optional=true",
+                None,
+                Some("uasspain_access=invalid"),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                "/api/auth/me/?optional=true",
+                None,
+                Some("uasspain_refresh=invalid"),
+                StatusCode::UNAUTHORIZED,
+            ),
+        ] {
+            let mut request = Request::builder().uri(path);
+            if let Some(value) = authorization {
+                request = request.header("authorization", value);
+            }
+            if let Some(value) = cookie {
+                request = request.header("cookie", value);
+            }
+            let response = build_router(Arc::new(AppState::for_test()))
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{path}");
+            if expected == StatusCode::OK {
+                assert_eq!(response.headers()["cache-control"], "private, no-store");
+                let body = response.into_body().collect().await.unwrap().to_bytes();
+                assert_eq!(body.as_ref(), b"null");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn rejected_sessions_retain_security_and_allowed_origin_headers() {
         let response = build_router(Arc::new(AppState::for_test()))
             .oneshot(

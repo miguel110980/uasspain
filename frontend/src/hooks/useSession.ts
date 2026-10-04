@@ -7,7 +7,7 @@ export const SESSION_QUERY_KEY = ['auth', 'me'];
 export function useSession() {
   return useQuery({
     queryKey: SESSION_QUERY_KEY,
-    queryFn: () => authService.fetchMe(),
+    queryFn: () => authService.fetchMe(true),
     staleTime: 60_000,
     retry: false,
   });
