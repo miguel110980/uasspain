@@ -104,8 +104,15 @@ gate(sql('SELECT count(*) FROM _sqlx_migrations WHERE success') === '16', 'resto
 gate(Number(sql("SELECT count(*) FROM core_auditlog WHERE action LIKE 'backup_%'")) >= 5, 'operations_are_audited');
 // An internal safety dump has no recovery manifest. It must not replace the
 // final recovery point usable from the panel in the retention protection.
+// The restored dump also contains earlier API-suite recovery points. Make this
+// selected point the newest usable one before asserting its protection.
+sql("UPDATE backups_backupjob SET created_date=NOW()-INTERVAL '21 days'");
 sql(`UPDATE backups_backupjob SET created_date=NOW()-INTERVAL '20 days' WHERE id='${full.id}'`);
-gate((await call('retention/', 'POST', {})).status === 200 && sql(`SELECT count(*) FROM backups_backupjob WHERE id='${full.id}' AND verified AND manifest_checksum<>''`) === '1', 'retention_keeps_last_usable_point_beside_newer_safety_dump');
+sql(`INSERT INTO backups_backupjob SELECT (jsonb_populate_record(NULL::backups_backupjob,to_jsonb(j)||jsonb_build_object('id',gen_random_uuid(),'created_date',NOW(),'initiated_by','restore-safety','parent_backup_id',NULL,'base_full_id',NULL,'manifest','{}'::jsonb,'manifest_checksum','','manifest_path',''))).* FROM backups_backupjob j WHERE j.id='${full.id}'`);
+const retained = await call('retention/', 'POST', {});
+const usableAfterRestore = sql(`SELECT count(*) FROM backups_backupjob WHERE id='${full.id}' AND verified AND manifest_checksum<>''`);
+if (retained.status !== 200 || usableAfterRestore !== '1') console.error('Retention diagnostic:', JSON.stringify({ status: retained.status, response: retained.body, usableAfterRestore, catalog: sql("SELECT job_type,status,verified,length(manifest_checksum),initiated_by FROM backups_backupjob ORDER BY created_date") }));
+gate(retained.status === 200 && usableAfterRestore === '1', 'retention_keeps_last_usable_point_beside_newer_safety_dump');
 gate(sql("SELECT bool_and(NOT rolsuper AND NOT rolcreaterole) FROM pg_roles WHERE rolname IN ('uasspain_app','uasspain_migrator','uasspain_backup','uasspain_restore')") === 't', 'production_roles_are_not_superusers');
 gate(sql("SELECT NOT has_table_privilege('uasspain_app','_sqlx_migrations','INSERT') AND NOT has_table_privilege('uasspain_backup','auth_user','INSERT') AND NOT has_schema_privilege('uasspain_app','public','CREATE')") === 't', 'restoration_preserves_minimum_privileges');
 gate(sql("SELECT bool_and(pg_get_userbyid(relowner)='uasspain_migrator') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'") === 't', 'restored_tables_remain_owned_by_migrator');

@@ -29,6 +29,7 @@ const checkRoot='/var/lib/postgresql/data/rollback-physical-check';
 const socket='/tmp/postgres-archive-check';
 let checkCreated=false,checkStarted=false;
 try {
+  const image=JSON.parse(docker(['inspect','uasspain-postgres']).toString())[0].Image;
   assert.equal(shell('findmnt -n -o FSTYPE --mountpoint /var/lib/postgresql/data'),'fuse.gocryptfs');
   assert.equal(shell('cat /proc/swaps').split('\n').filter(Boolean).length,1,'Swap must be disabled');
   const records=[];
@@ -38,7 +39,7 @@ try {
     const manifestPath=resolve(destination,`${volume}.json`);
     if(!existsSync(encryptedPath)) {
       assert.ok(!existsSync(manifestPath),'Incomplete archive already exists');
-      const data=docker(['run','--rm','--network','none','--read-only','--cap-drop','ALL','--user','postgres','-v',`${volume}:/source:ro`,'--entrypoint','tar','uasspain-postgres:encrypted','-C','/source','-cf','-','.']);
+      const data=docker(['run','--rm','--network','none','--read-only','--cap-drop','ALL','--user','postgres','-v',`${volume}:/source:ro`,'--entrypoint','tar',image,'-C','/source','-cf','-','.']);
       const nonce=randomBytes(12),c=createCipheriv('aes-256-gcm',key,nonce);
       const encrypted=Buffer.concat([nonce,c.update(data),c.final(),c.getAuthTag()]);
       assert.equal(sha(decrypt(encrypted)),sha(data));

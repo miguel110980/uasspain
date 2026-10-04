@@ -41,6 +41,94 @@ La versión final usa `/assets/Tecnologia-V9FzXBOK.js`. Los nueve chunks de Tecn
 
 ## Resultados y repetición
 
+La fase Home/Docker del 4 de octubre vuelve a validar el frontend actualizado:
+21 rutas con acceso directo y refresco, 151 assets HTTPS, Firefox 157 (6 rutas,
+142 respuestas de assets) y navegación desde cuatro versiones sin recargar.
+La prueba `e2e-home-rendering.mjs` comprueba contenido con JavaScript desactivado,
+conservación del H1 original durante la hidratación, el primer clic en Acceso
+mientras se descarga App, menú móvil y cambio de tema. Todos pasan sin errores.
+
+La Home conserva el HTML de sus componentes reales, hidrata después del primer
+contenido pintado y utiliza CSS para sus animaciones. Framer Motion y los avisos
+se cargan cuando la ruta o el usuario los necesitan. El CSS compilado se entrega
+inline y el cargador reconoce esa misma hoja para evitar aplicarla dos veces.
+Los nombres de clases CSS Modules se mantienen iguales entre SSR y cliente.
+Las imágenes tienen variantes WebP y dimensiones; las fuentes críticas se
+subdividen preservando los originales como fallback. El favicon usa su tamaño
+real, evitando dos descargas iniciales del icono completo. Se mantiene CSP.
+
+La sesión pública anónima devuelve `200 null` con `private, no-store` solamente
+en `me?optional=true` y sin credenciales. Las sesiones inválidas siguen dando 401.
+Los guards de panel y de elección de rol redirigen correctamente al acceso.
+
+Para regenerar los assets desde los originales, use
+`node frontend/scripts/optimize-images.mjs` y
+`python frontend/scripts/optimize-fonts.py` con fonttools 4.66.1,
+brotli 1.2.0 y zopfli 0.4.3 instalados en un entorno Python propio.
+Los archivos optimizados se versionan; Python no se necesita durante el build
+Docker ni en ejecución.
+
+Los cinco servicios usan raíz de solo lectura, `cap_drop: ALL`,
+`no-new-privileges`, tmpfs, límites de PID/CPU/RAM y healthchecks.
+Nginx edge y el backend funcionan sin root; los procesos Nginx del frontend y
+Redis abandonan root después de preparar sus permisos. PostgreSQL necesita
+FUSE/SYS_ADMIN para montar el sistema cifrado, pero el servidor se ejecuta con
+cero capabilities. El healthcheck del edge ahora valida CA y hostname.
+Las cinco imágenes ejecutadas coinciden con las construidas, incluido Redis
+recreado conservando su volumen. La base conserva 5 usuarios, 5 perfiles,
+14 cursos y 16 migraciones, sin cambiar el esquema.
+
+La limpieza conserva el almacén cifrado, claves DPAPI, copias de recuperación,
+assets antiguos necesarios y los informes vigentes. Dependabot se conserva
+porque el repositorio contiene 13 PR suyas; la entrada Docker pasa a señalar
+sus cinco Dockerfiles reales en lugar de la raíz sin Dockerfile, usando
+[directories](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference).
+No se consultaron ejecuciones ni configuración de GitHub Actions.
+
+Lighthouse 13.5.0 sobre `https://localhost`, móvil estándar 412×823,
+simulación de red y CPU ×4, dio **100/100/100/100 en tres ejecuciones
+consecutivas** después de actualizar la pila y completar los escaneos.
+No se interceptaron peticiones, cambiaron categorías o desactivaron funciones
+en esa medición. El baseline era 85/100/96/100.
+
+| Ejecución | Performance | Accesibilidad | Buenas prácticas | SEO | FCP | LCP | TBT | CLS |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 100 | 100 | 100 | 100 | 1,276 s | 1,680 s | 61,5 ms | 0,002566 |
+| 2 | 100 | 100 | 100 | 100 | 1,351 s | 1,651 s | 13 ms | 0,002566 |
+| 3 | 100 | 100 | 100 | 100 | 1,246 s | 1,651 s | 24,5 ms | 0,002566 |
+
+Frontend: typecheck, lint, build (149 entradas del manifiesto) y 20/20
+unitarias pasan. Rust 1.99: formato, check, Clippy `-D warnings` y 82/82
+tests pasan. La regresión reúne 95 casos de navegador: los 82 casos correctos
+del primer grupo, el chat repetido con selector de conversación inequívoco y
+los otros 12 casos de presencia, asignaciones, modales, cursos, sesión y
+comunicación. La prueba de fallo temporal de sesión se actualizó para interceptar
+el pathname también con `optional=true`; sesiones y comunicación se validaron
+de nuevo a través del Nginx HTTPS compilado. La auditoría verifica 768 estados
+de los cuatro roles, dos temas y seis anchuras, con cero errores, avisos,
+fallos de disposición o de accesibilidad.
+
+API adicional: recuperación/OTP 46 casos, permisos de panel 29, asignación 24,
+backups/restauración 72 y cursos 48 pasan, además de la suite API general,
+plazos, concurrencia y recuperación tras caída de PostgreSQL/Redis.
+Los dispositivos de medios y el correo son fixtures aisladas; no se probó
+SMTP ni Google externos porque no están configurados en la instalación.
+
+Trivy 0.75.0 comprueba las cinco imágenes ejecutadas y los lockfiles completos
+Cargo/npm, incluyendo dependencias de desarrollo: cero vulnerabilidades altas
+y críticas. `npm audit` devuelve cero vulnerabilidades. Gitleaks 8.28 comprueba
+árbol e historial (47 commits) con cero hallazgos; el historial incluye los
+paths de secretos locales aunque estén excluidos del escaneo del árbol.
+No se requiere rotación por hallazgos de Git. Herramientas de escaneo fijadas
+por digest, sin modificar imágenes o datos durante la inspección.
+
+Los informes vigentes están en `.run/home100/final/` (tres JSON/HTML originales
+y resumen), `.run/home100/security/`, `.run/home100/ui-final/report.json`,
+`.run/home100/hardening.json` y `.run/home100/cleanup.json`. Se repiten con
+`node scripts/e2e/e2e-home-lighthouse.mjs`,
+`node frontend/scripts/audit-ui.mjs` y
+`powershell -NoProfile -File scripts/verify-production-security.ps1`.
+
 - Build: 133 entradas del manifiesto verificadas, incluidos imports dinámicos y referencias del HTML.
 - Chromium: 21 rutas con acceso directo y refresco, 134 recursos JS/CSS por HTTPS, atrás/adelante, alias, 404 reales, recuperación de fallos inyectados y prevención de bucles.
 - Firefox 157.0: seis comprobaciones de ruta —directo y refresco de ambas variantes, Inicio y navegación a Tecnología—; 83 respuestas de assets con 200 y MIME correcto, sin errores de módulos.

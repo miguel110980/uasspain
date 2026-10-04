@@ -17,6 +17,6 @@ USER nginx
 EXPOSE 8080 8443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget -q -O /dev/null --no-check-certificate https://127.0.0.1:8443/healthz || exit 1
+    CMD curl --fail --silent --show-error --cacert /run/secrets/backend_tls_ca https://127.0.0.1:8443/healthz -o /dev/null || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

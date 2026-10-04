@@ -39,10 +39,10 @@ try {
   const swaps=shell('cat /proc/swaps').split('\n').slice(1).filter(line=>line.trim());
   if(!permitSwapForStaging) assert.equal(swaps.length,0,'Unencrypted WSL swap must be disabled before activation');
   // Inspect raw persistent bytes in a separate container without FUSE/key.
-  const raw=docker(['run','--rm','--network','none','--read-only','--cap-drop','ALL','--user','postgres','-v',`${volumes[0].Name}:/cipher:ro`,'--entrypoint','sh','uasspain-postgres:encrypted','-c','test ! -e /cipher/pgdata && test ! -e /cipher/PG_VERSION && test ! -e /cipher/pg_wal && find /cipher -type f | wc -l']);
+  const raw=docker(['run','--rm','--network','none','--read-only','--cap-drop','ALL','--user','postgres','-v',`${volumes[0].Name}:/cipher:ro`,'--entrypoint','sh',info.Image,'-c','test ! -e /cipher/pgdata && test ! -e /cipher/PG_VERSION && test ! -e /cipher/pg_wal && find /cipher -type f | wc -l']);
   assert.ok(Number(raw)>100,'Expected encrypted cluster files');
   const wrongKey="mkdir /tmp/plain; printf '%064d\\n' 0 > /tmp/wrong; gocryptfs -q -passfile /tmp/wrong /cipher /tmp/plain >/tmp/result 2>&1; result=$?; test \"$result\" -eq 12";
-  docker(['run','--rm','--network','none','--read-only','--cap-drop','ALL','--cap-add','SYS_ADMIN','--device','/dev/fuse','--tmpfs','/tmp','-v',`${volumes[0].Name}:/cipher:ro`,'--entrypoint','sh','uasspain-postgres:encrypted','-c',wrongKey]);
+  docker(['run','--rm','--network','none','--read-only','--cap-drop','ALL','--cap-add','SYS_ADMIN','--device','/dev/fuse','--tmpfs','/tmp','-v',`${volumes[0].Name}:/cipher:ro`,'--entrypoint','sh',info.Image,'-c',wrongKey]);
   const report={verified_utc:new Date().toISOString(),project,ciphertext_volume:volumes[0].Name,storage_encryption:'gocryptfs-AES-256-GCM',encrypted_names:true,pgdata_wal_temp_logs_covered:true,no_plaintext_persistent_mount:true,key_tmpfs_removed:true,postgres_capabilities_zero:true,raw_volume_unreadable_without_key:true,wrong_key_rejected:true,swap_disabled:swaps.length===0,activation_allowed:swaps.length===0};
   const artifact=resolve(root,'.run',project);mkdirSync(artifact,{recursive:true});
   writeFileSync(resolve(artifact,'storage-verification.json'),JSON.stringify(report,null,2)+'\n');

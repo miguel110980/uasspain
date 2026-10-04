@@ -1,7 +1,7 @@
 # Runner E2E Rust: pila aislada -> semillas por API -> suite -> teardown.
 param(
     [switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser, [switch]$FrontendOnly, [switch]$SecureBrowser,
-    [ValidateSet('all', 'panels', 'presence', 'assignments', 'modals', 'courses', 'sessions', 'realtime')]
+    [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'sessions', 'realtime')]
     [string[]]$BrowserScope = @('all')
 )
 
@@ -238,6 +238,7 @@ try {
         # between groups isolates test traffic instead of weakening that limit.
         $BrowserGroups = @(
             @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@session-regression|@realtime-regression|staff-presence-video.spec|student-assignment.spec') },
+            @{ Key = 'chat'; Label = 'chat bidireccional'; Arguments = @('panels.spec.ts', '--grep', 'chat messages appear bidirectionally') },
             @{ Key = 'presence'; Label = 'presencia y videollamada'; Arguments = @('staff-presence-video.spec.ts') },
             @{ Key = 'assignments'; Label = 'asignación de alumnos'; Arguments = @('student-assignment.spec.ts') },
             @{ Key = 'modals'; Label = 'modales y datos'; Arguments = @('--grep', '@panel-modals') },
@@ -247,7 +248,7 @@ try {
         )
         # Invoke Node directly so Windows cmd does not interpret regex pipes.
         $PlaywrightCli = Join-Path $Root 'frontend/node_modules/@playwright/test/cli.js'
-        foreach ($BrowserGroup in $BrowserGroups | Where-Object { $BrowserScope -contains 'all' -or $BrowserScope -contains $_.Key }) {
+        foreach ($BrowserGroup in $BrowserGroups | Where-Object { ($BrowserScope -contains 'all' -and $_.Key -ne 'chat') -or $BrowserScope -contains $_.Key }) {
             Write-Host "==> Preparando navegador: $($BrowserGroup.Label)"
             & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'reinicio del backend E2E fallo' }

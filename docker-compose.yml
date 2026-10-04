@@ -158,6 +158,7 @@ services:
 
   # ─── Backend Rust/Axum — edge + data ────────────────────────────
   backend:
+    image: uasspain-backend:rust1.99.0-ubuntu26.04
     build:
       context: ./backend-rust
       dockerfile: Dockerfile
@@ -302,6 +303,7 @@ services:
 
   # ─── Frontend (nginx interno + SPA) — solo alcanzable desde edge ─────
   frontend:
+    image: uasspain-frontend:nginx1.30.5-alpine3.24
     build:
       context: .
       dockerfile: frontend/Dockerfile
@@ -362,6 +364,7 @@ services:
 
   # ─── Nginx edge: ÚNICO servicio con puertos públicos (80/443) ────────
   nginx:
+    image: uasspain-nginx:1.30.5-alpine3.24
     build:
       context: ./nginx
     container_name: uasspain-nginx
@@ -397,12 +400,15 @@ services:
       test:
         [
           "CMD",
-          "wget",
-          "-q",
-          "-O",
-          "/dev/null",
-          "--no-check-certificate",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--cacert",
+          "/run/secrets/backend_tls_ca",
           "https://127.0.0.1:8443/healthz",
+          "-o",
+          "/dev/null",
         ]
       interval: 30s
       timeout: 5s
@@ -450,7 +456,8 @@ volumes:
   media_data:
     driver: local
   frontend_static:
-    driver: local
+    name: ${FRONTEND_STATIC_VOLUME_NAME:-uasspain_frontend_static}
+    external: true
   backup_keys:
     driver: local
 

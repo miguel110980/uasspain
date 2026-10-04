@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: infra/postgres/Dockerfile
       target: postgres-encrypted
-    image: uasspain-postgres:encrypted
+    image: uasspain-postgres:18.6-alpine3.24-encrypted
     entrypoint: ["/usr/local/bin/encrypted-postgres-entrypoint.sh"]
     command:
       - postgres

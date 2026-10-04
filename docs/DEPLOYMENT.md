@@ -2,12 +2,15 @@
 
 ## Despliegue soportado
 
-UASSpain se despliega con `docker-compose.yml`. No se soportan Django, `manage.py`, servicios Python ni instalacion nativa.
+UASSpain se despliega combinando `docker-compose.yml` y
+`docker-compose.encrypted.yml` mediante el script de arranque. Este overlay
+mantiene obligatorio el cifrado de PostgreSQL, independientemente de BitLocker.
+No se soportan Django, `manage.py`, servicios Python ni instalacion nativa.
 
 ```powershell
-docker compose config --quiet
+docker compose -f docker-compose.yml -f docker-compose.encrypted.yml config --quiet
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-encrypted-stack.ps1 -Build
-docker compose ps
+docker compose -f docker-compose.yml -f docker-compose.encrypted.yml ps
 ```
 
 Solo Nginx publica `127.0.0.1:80/443`. Compruebe `https://127.0.0.1/healthz` y `https://127.0.0.1/readyz`.
@@ -17,11 +20,12 @@ Solo Nginx publica `127.0.0.1:80/443`. Compruebe `https://127.0.0.1/healthz` y `
 Configure `SITE_URL` con el origen HTTPS público definitivo. Compose usa ese
 valor tanto en el build del frontend (`VITE_SITE_URL`) como en el backend:
 canonical, Open Graph, robots y sitemaps deben coincidir. Cambiarlo exige
-reconstruir el frontend. El build prerenderiza los componentes de las 30 rutas
-públicas; 27 se incluyen en `sitemap-static.xml`. El índice `sitemap.xml`
+reconstruir el frontend. El build prerenderiza los componentes de las 16 rutas
+públicas; 13 se incluyen en `sitemap-static.xml`. El índice `sitemap.xml`
 incluye también `sitemap-courses.xml`, actualizado desde los cursos publicados.
 Nginx valida la existencia del curso y compone su HTML público con SSI; los
-cursos pendientes/inexistentes responden 404. Conserve esta configuración al
+cursos pendientes conservan su página informativa sin indexación y los inexistentes
+responden 404. Conserve esta configuración al
 poner otro proxy delante; las rutas privadas y el API llevan `noindex`.
 
 Para comprobar el sitio compilado por HTTPS con una CA autorizada:

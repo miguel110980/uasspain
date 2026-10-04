@@ -17,7 +17,12 @@ updates:
     labels: [dependencies, frontend]
 
   - package-ecosystem: docker
-    directory: /
+    directories:
+      - /backend-rust
+      - /frontend
+      - /nginx
+      - /infra/postgres
+      - /infra/redis
     schedule:
       interval: weekly
       day: monday
