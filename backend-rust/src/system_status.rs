@@ -7,9 +7,9 @@ use crate::{
 use axum::{
     Json,
     extract::{ConnectInfo, Request, State},
-    http::HeaderMap,
+    http::{HeaderMap, header::HOST},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -148,7 +148,7 @@ pub async fn status(
         google_oauth: runtime_config::google_view(google),
         users,
         academic,
-        security: json!({"jwt_cookie_secure":state.tokens.secure_cookie,"reverse_proxy":std::env::var("REVERSE_PROXY").unwrap_or_default(),"trust_proxy":runtime_config::env_true("TRUST_PROXY")&&!std::env::var("TRUSTED_PROXY_HOST").unwrap_or_default().is_empty(),"allowed_hosts":allowed_hosts(),"csp":true,"hsts":state.tokens.secure_cookie}),
+        security: json!({"jwt_cookie_secure":state.tokens.secure_cookie,"reverse_proxy":std::env::var("REVERSE_PROXY").unwrap_or_default(),"trust_proxy":runtime_config::env_true("TRUST_PROXY")&&!std::env::var("TRUSTED_PROXY_HOST").unwrap_or_default().is_empty(),"allowed_hosts":state.allowed_hosts,"csp":true,"hsts":state.tokens.secure_cookie}),
         two_factor: runtime_config::setting(&state, "auth_policy")
             .await?
             .unwrap_or_else(|| json!({"enabled":false,"required_roles":[]})),
@@ -172,12 +172,60 @@ fn parse_allowed_hosts(config: &str) -> Vec<String> {
         .collect()
 }
 
-fn allowed_hosts() -> Vec<String> {
-    std::env::var("ALLOWED_HOSTS_FILE")
-        .ok()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .map(|config| parse_allowed_hosts(&config))
-        .unwrap_or_default()
+pub(crate) fn allowed_hosts() -> Vec<String> {
+    match std::env::var("ALLOWED_HOSTS_FILE") {
+        Ok(path) => std::fs::read_to_string(path)
+            .map(|config| parse_allowed_hosts(&config))
+            .unwrap_or_default(), // A configured but unreadable allowlist denies all requests.
+        Err(_) => vec!["localhost".into(), "127.0.0.1".into()], // Local development only.
+    }
+}
+
+fn host_is_allowed(value: &str, allowed: &[String]) -> bool {
+    let host = match value.split_once(':') {
+        Some((host, port)) => {
+            if port.is_empty()
+                || !port.bytes().all(|b| b.is_ascii_digit())
+                || port.parse::<u16>().is_err()
+            {
+                return false;
+            }
+            host
+        }
+        None => value,
+    };
+    !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        && allowed.iter().any(|entry| entry.eq_ignore_ascii_case(host))
+}
+
+pub async fn validate_host(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let mut hosts = request.headers().get_all(HOST).iter();
+    let header = hosts.next();
+    let authority = request.uri().authority().map(|value| value.as_str());
+    let host = match header {
+        Some(value) => value.to_str().ok(),
+        None => authority, // HTTP/2 may supply :authority without a Host header.
+    };
+    let conflicting_authority = match (header, authority) {
+        (Some(value), Some(authority)) => value
+            .to_str()
+            .map_or(true, |value| !value.eq_ignore_ascii_case(authority)),
+        _ => false,
+    };
+    if hosts.next().is_some()
+        || conflicting_authority
+        || !host.is_some_and(|host| host_is_allowed(host, &state.allowed_hosts))
+    {
+        return AppError::Validation("Host no permitido.".into()).into_response();
+    }
+    next.run(request).await
 }
 
 pub async fn sanitize_proxy_headers(mut request: Request, next: Next) -> Response {
@@ -338,5 +386,64 @@ mod tests {
             ),
             ["localhost", "127.0.0.1"]
         );
+    }
+
+    #[tokio::test]
+    async fn shared_host_allowlist_is_enforced_by_the_backend() {
+        use axum::{
+            body::Body,
+            http::{Request, StatusCode},
+        };
+        use tower::ServiceExt;
+
+        let mut state = crate::AppState::for_test();
+        state.allowed_hosts = super::parse_allowed_hosts(
+            "localhost 1;\n127.0.0.1 1;\nuasspain.com 1;\nwww.uasspain.com 1;\n",
+        );
+        assert_eq!(
+            state.allowed_hosts,
+            ["localhost", "127.0.0.1", "uasspain.com", "www.uasspain.com"]
+        );
+        let app = crate::app::build_router(std::sync::Arc::new(state));
+        for (host, expected) in [
+            ("localhost", StatusCode::OK),
+            ("127.0.0.1", StatusCode::OK),
+            ("uasspain.com", StatusCode::OK),
+            ("www.uasspain.com", StatusCode::OK),
+            ("localhost:8445", StatusCode::OK),
+            ("127.0.0.1:8445", StatusCode::OK),
+            ("uasspain.com:443", StatusCode::OK),
+            ("www.uasspain.com:443", StatusCode::OK),
+            ("LOCALHOST:8445", StatusCode::OK),
+            ("WWW.UASSPAIN.COM", StatusCode::OK),
+            ("uas-spain.com", StatusCode::BAD_REQUEST),
+            ("www.uas-spain.com", StatusCode::BAD_REQUEST),
+            ("evil-uasspain.com", StatusCode::BAD_REQUEST),
+            ("uasspain.com.evil.com", StatusCode::BAD_REQUEST),
+            ("random.example.com", StatusCode::BAD_REQUEST),
+            ("0.0.0.0", StatusCode::BAD_REQUEST),
+            ("*", StatusCode::BAD_REQUEST),
+            ("", StatusCode::BAD_REQUEST),
+            ("localhost:", StatusCode::BAD_REQUEST),
+            ("localhost:abc", StatusCode::BAD_REQUEST),
+            ("localhost:65536", StatusCode::BAD_REQUEST),
+            ("localhost:443:80", StatusCode::BAD_REQUEST),
+            ("localhost@random.example.com", StatusCode::BAD_REQUEST),
+            ("localhost/path", StatusCode::BAD_REQUEST),
+            (" localhost", StatusCode::BAD_REQUEST),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/health/live/")
+                        .header("host", host)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "Host: {host}");
+        }
     }
 }

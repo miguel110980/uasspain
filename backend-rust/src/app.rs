@@ -30,6 +30,7 @@ pub struct AppState {
     pub events: crate::cache::EventBus,
     pub restores: Arc<RwLock<HashMap<uuid::Uuid, serde_json::Value>>>,
     pub started: Instant,
+    pub allowed_hosts: Vec<String>,
 }
 
 impl AppState {
@@ -46,6 +47,7 @@ impl AppState {
             events: crate::cache::EventBus::from_env().await?,
             restores: Arc::new(RwLock::new(HashMap::new())),
             started: Instant::now(),
+            allowed_hosts: crate::system_status::allowed_hosts(),
         })
     }
 
@@ -58,6 +60,7 @@ impl AppState {
             events: crate::cache::EventBus::default(),
             restores: Arc::new(RwLock::new(HashMap::new())),
             started: Instant::now(),
+            allowed_hosts: vec!["localhost".into(), "127.0.0.1".into()],
         }
     }
 }
@@ -499,6 +502,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             auth::validate_active_session,
         ))
         .layer(cors)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::system_status::validate_host,
+        ))
         .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn(
             crate::system_status::sanitize_proxy_headers,
@@ -593,6 +600,69 @@ fn cors_layer() -> CorsLayer {
 #[cfg(test)]
 mod tests {
     #[tokio::test]
+    async fn host_allowlist_rejects_missing_duplicate_and_conflicting_hosts() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+
+        let app = super::build_router(std::sync::Arc::new(super::AppState::for_test()));
+        let requests = [
+            Request::builder().uri("/api/health/live/"),
+            Request::builder()
+                .uri("/api/health/live/")
+                .header("host", "localhost")
+                .header("host", "localhost"),
+            Request::builder()
+                .uri("http://localhost/api/health/live/")
+                .header("host", "127.0.0.1"),
+            Request::builder()
+                .uri("/api/health/live/")
+                .header("host", "random.example.com")
+                .header("x-forwarded-host", "localhost"),
+        ];
+        for request in requests {
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+            assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+            assert!(response.headers().contains_key("content-security-policy"));
+        }
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .version(axum::http::Version::HTTP_2)
+                    .uri("https://localhost:8445/api/health/live/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn empty_host_allowlist_fails_closed() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+
+        let mut state = super::AppState::for_test();
+        state.allowed_hosts.clear();
+        let response = super::build_router(std::sync::Arc::new(state))
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health/live/")
+                    .header("host", "localhost")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn detailed_administration_endpoints_are_not_public() {
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
@@ -604,7 +674,13 @@ mod tests {
             "/api/backups/servers/",
         ] {
             let response = super::build_router(std::sync::Arc::new(super::AppState::for_test()))
-                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .oneshot(
+                    Request::builder()
+                        .header("host", "localhost")
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
@@ -643,7 +719,7 @@ mod tests {
                 StatusCode::UNAUTHORIZED,
             ),
         ] {
-            let mut request = Request::builder().uri(path);
+            let mut request = Request::builder().header("host", "localhost").uri(path);
             if let Some(value) = authorization {
                 request = request.header("authorization", value);
             }
@@ -668,6 +744,7 @@ mod tests {
         let response = build_router(Arc::new(AppState::for_test()))
             .oneshot(
                 Request::builder()
+                    .header("host", "localhost")
                     .uri("/api/auth/me/")
                     .header("authorization", "Bearer invalid")
                     .header("origin", "http://localhost:5173")
@@ -693,6 +770,7 @@ mod tests {
         let response = build_router(Arc::new(AppState::for_test()))
             .oneshot(
                 Request::builder()
+                    .header("host", "localhost")
                     .uri("/api/health/live/")
                     .body(Body::empty())
                     .unwrap(),
@@ -711,6 +789,7 @@ mod tests {
         let response = build_router(Arc::new(AppState::for_test()))
             .oneshot(
                 Request::builder()
+                    .header("host", "localhost")
                     .uri("/missing")
                     .body(Body::empty())
                     .unwrap(),
@@ -725,6 +804,7 @@ mod tests {
         let response = build_router(Arc::new(AppState::for_test()))
             .oneshot(
                 Request::builder()
+                    .header("host", "localhost")
                     .method("POST")
                     .uri("/api/auth/login/")
                     .header("origin", "https://attacker.invalid")
@@ -742,6 +822,7 @@ mod tests {
         let response = build_router(Arc::new(AppState::for_test()))
             .oneshot(
                 Request::builder()
+                    .header("host", "localhost")
                     .method("POST")
                     .uri("/api/auth/login/")
                     .header("content-type", "application/json")
