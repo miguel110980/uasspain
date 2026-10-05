@@ -252,6 +252,9 @@ pub async fn update(
 ) -> Result<Json<ProfileView>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     let mut tx = pool(&state)?.begin().await?;
+    if input.login_2fa_enabled_override.is_some() {
+        crate::runtime_config::lock_email_auth_config(&mut tx).await?;
+    }
     let current =
         sqlx::query_as::<_, ProfileRow>(&format!("{} FOR UPDATE", ProfileRow::SELECT_BY_ID))
             .bind(id)
@@ -290,6 +293,9 @@ pub async fn update(
     }
     if claims.role != "admin" {
         input.assigned_instructor_id = None;
+    }
+    if input.login_2fa_enabled_override == Some(Some(true)) {
+        crate::runtime_config::require_email_2fa_ready(&state, &mut tx).await?;
     }
     normalize_role_change(&current.role, &mut input.role, &mut input.roles)?;
     let target_roles = input

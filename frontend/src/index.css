@@ -248,8 +248,9 @@
     color: hsl(var(--text-primary));
     color-scheme: light;
     font-family: var(--font-body);
+    /* Paint the selected theme immediately, including when Vite injects CSS.
+       A background transition otherwise fades in from a transparent body. */
     transition:
-      background-color 180ms ease,
       color 180ms ease,
       border-color 180ms ease;
   }

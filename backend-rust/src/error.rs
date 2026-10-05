@@ -20,6 +20,8 @@ pub enum AppError {
     Validation(String),
     #[error("service temporarily unavailable")]
     Unavailable,
+    #[error("login OTP delivery unavailable")]
+    OtpDeliveryUnavailable,
     #[error("rate limit exceeded")]
     RateLimited,
     #[error(transparent)]
@@ -67,6 +69,12 @@ impl IntoResponse for AppError {
                 "service_unavailable",
                 "Servicio temporalmente no disponible.".to_owned(),
             ),
+            Self::OtpDeliveryUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "otp_delivery_unavailable",
+                "No se ha podido enviar el código de acceso. Inténtelo de nuevo en unos instantes."
+                    .to_owned(),
+            ),
             Self::RateLimited => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "throttled",
@@ -110,6 +118,7 @@ impl IntoResponse for AppError {
                 "Error interno del servicio.".to_owned(),
             ),
         };
+        tracing::warn!(%correlation_id, status = status.as_u16(), code, "request failed");
         (
             status,
             Json(ErrorBody {

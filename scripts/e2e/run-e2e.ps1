@@ -1,6 +1,7 @@
 # Runner E2E Rust: pila aislada -> semillas por API -> suite -> teardown.
 param(
     [switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser, [switch]$FrontendOnly, [switch]$SecureBrowser,
+    [switch]$PreserveVolumes,
     [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'sessions', 'realtime')]
     [string[]]$BrowserScope = @('all')
 )
@@ -72,8 +73,25 @@ try {
     }
     $env:E2E_BACKUP_SSH_PUB = (Get-Content -LiteralPath "$PrivKey.pub" -Raw).Trim()
 
+    if ($PreserveVolumes) {
+        # Fresh isolated fixtures without deleting any existing Docker volume.
+        $PreservedRunId = [Guid]::NewGuid().ToString('N')
+        $VolumeOverrideDir = Join-Path $Root '.run/e2e-preserved-volumes'
+        New-Item -ItemType Directory -Force -Path $VolumeOverrideDir | Out-Null
+        $VolumeOverrideFile = Join-Path $VolumeOverrideDir "$PreservedRunId.json"
+        $E2EConfig = (& $Docker compose @ComposeArgs config --format json | ConvertFrom-Json)
+        if ($LASTEXITCODE -ne 0) { throw 'No se pudieron identificar los volumenes E2E' }
+        $FreshVolumes = @{}
+        foreach ($Volume in $E2EConfig.volumes.PSObject.Properties) {
+            $FreshVolumes[$Volume.Name] = @{ name = "uasspain-e2e-preserved-${PreservedRunId}-$($Volume.Name)" }
+        }
+        [IO.File]::WriteAllText($VolumeOverrideFile, (@{ volumes = $FreshVolumes } | ConvertTo-Json -Depth 4))
+        $ComposeArgs += @('-f', $VolumeOverrideFile)
+    }
+
     Write-Host '==> Recreando pila E2E aislada'
-    & $Docker compose @ComposeArgs down -v --remove-orphans
+    if ($PreserveVolumes) { & $Docker compose @ComposeArgs down --remove-orphans }
+    else { & $Docker compose @ComposeArgs down -v --remove-orphans }
     if ($LASTEXITCODE -ne 0) { throw 'teardown E2E inicial falló' }
     & $Docker compose @ComposeArgs up -d --build --wait --wait-timeout 180
     if ($LASTEXITCODE -ne 0) {
@@ -176,6 +194,18 @@ try {
     & node (Join-Path $Root 'scripts/e2e/e2e-auth.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de recuperacion y OTP E2E fallo' }
 
+    Write-Host '==> Validando el gate 2FA y fallo de transporte SMTP sin mailbox de desarrollo'
+    $SmtpComposeArgs = $ComposeArgs + @('-f', (Join-Path $Root 'docker-compose.auth-smtp-e2e.yml'))
+    try {
+        & $Docker compose @SmtpComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'La fase SMTP aislada no arranco' }
+        & node (Join-Path $Root 'scripts/e2e/e2e-auth-smtp.mjs')
+        if ($LASTEXITCODE -ne 0) { throw 'La regresion 2FA/SMTP fallo' }
+    } finally {
+        & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'No se pudo restaurar el mailbox aislado' }
+    }
+
     Write-Host '==> Validando alcance de paneles, asignaciones y contadores contra PostgreSQL'
     & node (Join-Path $Root 'scripts/e2e/e2e-panels.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de alcance de paneles E2E fallo' }
@@ -266,8 +296,13 @@ try {
 }
 finally {
     if (-not $Keep) {
-        Write-Host '==> Eliminando exclusivamente la pila y volúmenes E2E'
-        & $Docker compose @ComposeArgs down -v --remove-orphans | Out-Null
+        if ($PreserveVolumes) {
+            Write-Host '==> Retirando contenedores E2E; todos los volumenes se conservan'
+            & $Docker compose @ComposeArgs down --remove-orphans | Out-Null
+        } else {
+            Write-Host '==> Eliminando exclusivamente la pila y volúmenes E2E'
+            & $Docker compose @ComposeArgs down -v --remove-orphans | Out-Null
+        }
     }
     if (Test-Path -LiteralPath $KeyDir) {
         $ResolvedKeyDir = (Resolve-Path -LiteralPath $KeyDir).Path

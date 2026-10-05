@@ -514,9 +514,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 }
 
 async fn normalize_validation_status(request: Request<axum::body::Body>, next: Next) -> Response {
-    let mut response = next.run(request).await;
+    let response = next.run(request).await;
     if response.status() == StatusCode::UNPROCESSABLE_ENTITY {
-        *response.status_mut() = StatusCode::BAD_REQUEST;
+        return AppError::Validation("Solicitud no válida. Compruebe los campos enviados.".into())
+            .into_response();
     }
     response
 }
@@ -542,7 +543,7 @@ async fn security_headers(request: Request<axum::body::Body>, next: Next) -> Res
                 .any(|allowed| allowed.trim() == origin)
         });
     let mut response = if unsafe_method && (cross_site || origin_denied) {
-        StatusCode::FORBIDDEN.into_response()
+        crate::error::AppError::Forbidden.into_response()
     } else {
         next.run(request).await
     };

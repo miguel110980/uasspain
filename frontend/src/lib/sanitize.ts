@@ -23,13 +23,13 @@ const MAX_LENGTH = {
 export function sanitizeInput(value: unknown, kind: SanitizeKind = 'text') {
   if (value == null) return '';
   // Passwords are opaque credentials; never normalize or remove characters.
-  if (kind === 'password') return String(value).slice(0, MAX_LENGTH.password);
+  if (kind === 'password') return String(value);
+  // Identity fields must not become a different account after sanitization.
+  // Preserve valid address characters; the backend validates the full address.
+  if (kind === 'email') return String(value).trim().toLowerCase();
   let out = String(value).replace(CONTROL_CHARS, '').replace(DANGEROUS, '');
 
   switch (kind) {
-    case 'email':
-      out = out.trim().toLowerCase().replace(/[^\w.@+-]/g, '');
-      break;
     case 'phone':
       out = out.replace(/[^0-9+\s\-().]/g, '');
       break;

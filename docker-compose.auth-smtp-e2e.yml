@@ -1,0 +1,5 @@
+# Temporary isolated test phase; production services are never modified.
+services:
+  backend-e2e:
+    environment:
+      DEV_EMAIL: "false"

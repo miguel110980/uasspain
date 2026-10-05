@@ -127,7 +127,13 @@ pub async fn auth_policy_put(
         }
     }
     let value = json!({"enabled":input.enabled,"required_roles":roles});
-    sqlx::query("INSERT INTO core_systemsetting (id,created_date,updated_date,key,value) VALUES ($1,NOW(),NOW(),'auth_policy',$2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_date=NOW()").bind(Uuid::new_v4()).bind(&value).execute(pool(&state)?).await?;
+    let mut tx = pool(&state)?.begin().await?;
+    crate::runtime_config::lock_email_auth_config(&mut tx).await?;
+    if input.enabled {
+        crate::runtime_config::require_email_2fa_ready(&state, &mut tx).await?;
+    }
+    sqlx::query("INSERT INTO core_systemsetting (id,created_date,updated_date,key,value) VALUES ($1,NOW(),NOW(),'auth_policy',$2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_date=NOW()").bind(Uuid::new_v4()).bind(&value).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(Json(value))
 }
 async fn load_auth_policy(state: &AppState) -> Result<Value, AppError> {

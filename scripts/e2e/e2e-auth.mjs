@@ -8,6 +8,8 @@ let admin;
 try {
   admin = await adminClient();
   const client = apiClient();
+  const invalidShape = await client.call('/api/auth/login/', 'POST', { email: [], password: 'Invalid' });
+  gate(invalidShape.status === 400 && invalidShape.body.code === 'validation_error' && typeof invalidShape.body.correlation_id === 'string', 'invalid_json_shape_has_safe_json_contract');
   for (const email of ['', 'invalid', '<script>@', 'a'.repeat(255) + '@test.local']) {
     gate((await client.call('/api/auth/login/', 'POST', { email, password: 'Invalid' })).status === 400, 'invalid_email_rejected');
   }
@@ -39,10 +41,34 @@ try {
   const session = apiClient();
   gate((await session.call('/api/auth/login/', 'POST', { email: first.email.toUpperCase(), password: first.password })).status === 200, 'uppercase_login');
   gate((await session.call('/api/auth/me/')).body.profile.nombre === 'v1:not-an-encrypted-envelope', 'untrusted_cipher_prefix_preserved_as_plain_text');
+  const concurrency = await registerFixture(); fixtures.push(concurrency);
+  await client.call('/api/auth/verify-otp/', 'POST', { email: concurrency.email, code: concurrency.code });
+  await admin.call(`/api/profiles/${concurrency.id}/`, 'PATCH', { status: 'activo' });
+  const concurrentSessions = [apiClient(), apiClient()];
+  const concurrentLogins = await Promise.all(concurrentSessions.map(c => c.call('/api/auth/login/', 'POST', { email: concurrency.email, password: concurrency.password })));
+  gate(concurrentLogins.every(r => r.status === 200), 'concurrent_login_no_database_conflict');
+  const currentSessions = await Promise.all(concurrentSessions.map(c => c.call('/api/auth/me/')));
+  gate(currentSessions.filter(r => r.status === 200).length === 1, 'concurrent_login_single_active_session');
+  const staleSession = concurrentSessions[currentSessions.findIndex(r => r.status !== 200)];
+  let activeSession = concurrentSessions[currentSessions.findIndex(r => r.status === 200)];
+  gate((await staleSession.call('/api/auth/logout/', 'POST', {})).status === 200 && (await activeSession.call('/api/auth/me/')).status === 200, 'stale_logout_preserves_new_session');
+  const refreshingSession = apiClient(activeSession.windowId, { ...activeSession.cookies });
+  const loggingOutSession = apiClient(activeSession.windowId, { ...activeSession.cookies });
+  const refreshLogout = await Promise.all([refreshingSession.call('/api/auth/refresh/', 'POST', {}), loggingOutSession.call('/api/auth/logout/', 'POST', {})]);
+  gate([200, 401].includes(refreshLogout[0].status) && refreshLogout[1].status === 200 && (await refreshingSession.call('/api/auth/me/')).status === 401, 'refresh_logout_concurrent_no_zombie_session');
+  await activeSession.call('/api/auth/login/', 'POST', { email: concurrency.email, password: concurrency.password });
+  const replacement = apiClient();
+  const loginLogout = await Promise.all([replacement.call('/api/auth/login/', 'POST', { email: concurrency.email, password: concurrency.password }), activeSession.call('/api/auth/logout/', 'POST', {})]);
+  gate(loginLogout.every(r => r.status === 200) && (await replacement.call('/api/auth/me/')).status === 200, 'login_logout_concurrent_preserves_replacement');
+  activeSession = replacement;
   const oldRefresh = session.cookies.uasspain_refresh;
   gate((await session.call('/api/auth/refresh/', 'POST', {})).status === 200 && session.cookies.uasspain_refresh !== oldRefresh, 'refresh_rotation');
   const replay = apiClient(session.windowId, { ...session.cookies, uasspain_refresh: oldRefresh });
   gate((await replay.call('/api/auth/refresh/', 'POST', {})).status === 401 && (await session.call('/api/auth/me/')).status === 200, 'refresh_replay_rejected');
+  const refreshing = [apiClient(session.windowId, { ...session.cookies }), apiClient(session.windowId, { ...session.cookies })];
+  const rotations = await Promise.all(refreshing.map(c => c.call('/api/auth/refresh/', 'POST', {})));
+  gate(rotations.map(r => r.status).sort().join(',') === '200,401', 'refresh_concurrent_single_rotation');
+  Object.assign(session.cookies, refreshing[rotations.findIndex(r => r.status === 200)].cookies);
   const [header, encoded] = session.cookies.uasspain_access.split('.');
   const expiredClaims = JSON.parse(Buffer.from(encoded, 'base64url').toString());
   expiredClaims.exp = Math.floor(Date.now() / 1000) - 120;
@@ -51,6 +77,8 @@ try {
   const signature = createHmac('sha256', 'e2e-only-secret-key-with-at-least-thirty-two-bytes').update(unsigned).digest('base64url');
   const expiredSession = apiClient(session.windowId, { ...session.cookies, uasspain_access: `${unsigned}.${signature}` });
   gate((await expiredSession.call('/api/auth/me/')).status === 401 && (await expiredSession.call('/api/auth/refresh/', 'POST', {})).status === 200, 'session_expiry_and_refresh');
+  const expiredLogout = apiClient(activeSession.windowId, { ...activeSession.cookies, uasspain_access: `${unsigned}.${signature}` });
+  gate((await expiredLogout.call('/api/auth/logout/', 'POST', {})).status === 200 && (await activeSession.call('/api/auth/me/')).status === 401 && (await activeSession.call('/api/auth/refresh/', 'POST', {})).status === 401, 'logout_with_expired_access_revokes_refresh');
 
   before = new Set(mailFiles());
   const existing = await client.call('/api/auth/password-reset/', 'POST', { email: first.email.toUpperCase() });

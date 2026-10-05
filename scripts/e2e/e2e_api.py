@@ -20,6 +20,10 @@ WS_BASE = (
     if BASE.startswith("https://")
     else "ws://" + BASE.removeprefix("http://")
 )
+WS_CONNECT_OPTIONS = {}
+if urllib.parse.urlsplit(BASE).hostname == "backend-e2e":
+    WS_BASE = "ws://localhost:8000"
+    WS_CONNECT_OPTIONS = {"host": "backend-e2e", "port": 8000}
 ORIGIN = os.environ.get("E2E_ORIGIN", "https://localhost")
 CA_FILE = os.environ.get("E2E_CA_FILE", "").strip()
 TLS_CONTEXT = (
@@ -65,6 +69,9 @@ class Session:
     ):
         url = BASE + path
         hdrs = {"Origin": ORIGIN, "Referer": ORIGIN + "/", "X-UASSpain-Window-Id": self.window_id}
+        if urllib.parse.urlsplit(BASE).hostname == "backend-e2e":
+            # Docker's internal address isn't a public allowed Host.
+            hdrs["Host"] = "localhost"
         if headers:
             hdrs.update(headers)
         data = None
@@ -439,6 +446,7 @@ async def ws_collect(url, cookie, expect_n, timeout=6):
     got = []
     async with websockets.connect(
         url,
+        **WS_CONNECT_OPTIONS,
         ssl=TLS_CONTEXT,
         additional_headers={"Origin": ORIGIN, "Cookie": f"uasspain_access={cookie}", "X-UASSpain-Window-Id": WINDOW_LOOKUPS.get(cookie, "")},
         open_timeout=8,
@@ -459,6 +467,7 @@ async def ws_expect_reject(url, cookie, origin):
     try:
         async with websockets.connect(
             url,
+            **WS_CONNECT_OPTIONS,
             ssl=TLS_CONTEXT,
             additional_headers={
                 "Origin": origin,
@@ -874,6 +883,7 @@ async def main():
         async with (
             websockets.connect(
                 url,
+                **WS_CONNECT_OPTIONS,
                 ssl=TLS_CONTEXT,
                 additional_headers={
                     "Origin": ORIGIN,
@@ -883,6 +893,7 @@ async def main():
             ) as wsS,
             websockets.connect(
                 url,
+                **WS_CONNECT_OPTIONS,
                 ssl=TLS_CONTEXT,
                 additional_headers={
                     "Origin": ORIGIN,
@@ -959,7 +970,7 @@ async def main():
 
     staff_room = "staff-" + "-".join(sorted([id_a, id_i]))
     staff_url = f"{WS_BASE}/ws/chat/{staff_room}/"
-    async with websockets.connect(staff_url, ssl=TLS_CONTEXT, additional_headers={
+    async with websockets.connect(staff_url, **WS_CONNECT_OPTIONS, ssl=TLS_CONTEXT, additional_headers={
         "Origin": ORIGIN, "Cookie": f"uasspain_access={instr.access_cookie()}", "X-UASSpain-Window-Id": instr.window_id
     }, open_timeout=8) as staff_socket:
         st, _ = admin.call("POST", "/api/mensajes-staff/", {

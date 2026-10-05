@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const folder = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/images');
-for (const theme of ['claro', 'oscuro']) {
+for (const theme of ['claro']) {
   for (const width of [640, 1280, 1672]) {
     await sharp(path.join(folder, `hero_${theme}.png`)).resize({ width, withoutEnlargement: true })
       .webp({ quality: 72, effort: 6 }).toFile(path.join(folder, `hero-${theme}-${width}.webp`));

@@ -23,6 +23,7 @@ pub struct SmtpConfig {
     pub contact_recipient: String,
     pub timeout_seconds: u64,
     pub last_test_ok: Option<bool>,
+    pub last_test_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 #[derive(Deserialize)]
 pub struct SmtpWrite {
@@ -57,11 +58,16 @@ pub fn validate_smtp(config: &SmtpConfig) -> Result<(), AppError> {
     let email_valid =
         |email: &str| email.len() <= 254 && email.parse::<lettre::message::Mailbox>().is_ok();
     let host_valid = config.host.len() <= 253
-        && !config.host.starts_with('-')
-        && config
-            .host
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b".-:".contains(&b));
+        && (config.host.parse::<std::net::IpAddr>().is_ok()
+            || config.host.trim_end_matches('.').split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            }));
     if (!config.host.is_empty() && !host_valid)
         || (!config.security.is_empty() && !matches!(config.security.as_str(), "STARTTLS" | "TLS"))
         || config.username.len() > 254
@@ -85,6 +91,61 @@ pub fn validate_smtp(config: &SmtpConfig) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+// All administrative writers share this transaction lock so enabling 2FA
+// cannot race a change that disables its delivery infrastructure.
+pub async fn lock_email_auth_config(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), AppError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(724851903)")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+fn validate_email_2fa(
+    config: &SmtpConfig,
+    password: Option<&str>,
+    production: bool,
+    development_mailbox: bool,
+) -> Result<(), AppError> {
+    if development_mailbox && !production {
+        return Ok(());
+    }
+    if !config.enabled
+        || validate_smtp(config).is_err()
+        || !password.is_some_and(|value| !value.is_empty())
+    {
+        return Err(AppError::Validation(
+            "Configure SMTP con TLS o STARTTLS y una contraseña antes de activar el acceso 2FA por correo.".into(),
+        ));
+    }
+    if production
+        && (config.last_test_ok != Some(true)
+            || !config.last_test_at.is_some_and(|at| {
+                let age = chrono::Utc::now() - at;
+                age >= chrono::Duration::zero() && age < chrono::Duration::hours(24)
+            }))
+    {
+        return Err(AppError::Validation(
+            "En producción, envíe una prueba SMTP satisfactoria en las últimas 24 horas antes de activar el acceso 2FA por correo.".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub async fn require_email_2fa_ready(
+    state: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), AppError> {
+    let (config, password) = smtp_in_transaction(state, tx).await?;
+    validate_email_2fa(
+        &config,
+        password.as_deref(),
+        env_true("APP_PRODUCTION"),
+        env_true("DEV_EMAIL"),
+    )
 }
 pub async fn setting(state: &AppState, key: &str) -> Result<Option<Value>, AppError> {
     let Some(pool) = &state.pool else {
@@ -125,6 +186,30 @@ pub async fn smtp(state: &AppState) -> Result<(SmtpConfig, Option<String>), AppE
         let password = secret(state, "smtp_password").await?;
         return Ok((config, password));
     }
+    Ok(smtp_from_env())
+}
+
+async fn smtp_in_transaction(
+    state: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(SmtpConfig, Option<String>), AppError> {
+    let value: Option<Value> =
+        sqlx::query_scalar("SELECT value FROM core_systemsetting WHERE key='smtp'")
+            .fetch_optional(&mut **tx)
+            .await?;
+    let Some(value) = value else {
+        return Ok(smtp_from_env());
+    };
+    let config = serde_json::from_value(value).map_err(|_| AppError::Internal)?;
+    let ciphertext: Option<String> =
+        sqlx::query_scalar("SELECT ciphertext FROM core_systemsecret WHERE key='smtp_password'")
+            .fetch_optional(&mut **tx)
+            .await?;
+    let password = ciphertext.map(|s| state.cipher.decrypt(&s)).transpose()?;
+    Ok((config, password))
+}
+
+fn smtp_from_env() -> (SmtpConfig, Option<String>) {
     let username = std::env::var("EMAIL_HOST_USER").unwrap_or_default();
     let host = std::env::var("EMAIL_HOST").unwrap_or_default();
     let password = std::env::var("EMAIL_HOST_PASSWORD_FILE")
@@ -133,7 +218,7 @@ pub async fn smtp(state: &AppState) -> Result<(SmtpConfig, Option<String>), AppE
         .map(|s| s.trim().to_owned())
         .or_else(|| std::env::var("EMAIL_HOST_PASSWORD").ok())
         .filter(|s| !s.is_empty());
-    Ok((
+    (
         SmtpConfig {
             enabled: !host.is_empty(),
             host,
@@ -154,7 +239,7 @@ pub async fn smtp(state: &AppState) -> Result<(SmtpConfig, Option<String>), AppE
             ..Default::default()
         },
         password,
-    ))
+    )
 }
 async fn secret(state: &AppState, key: &str) -> Result<Option<String>, AppError> {
     let Some(pool) = &state.pool else {
@@ -211,18 +296,32 @@ pub async fn smtp_put(
     if input.password.len() > 4096 || input.password.starts_with("v1:") {
         return Err(AppError::Validation("Contraseña SMTP no válida.".into()));
     }
-    if input.password.is_empty() && secret(&state, "smtp_password").await?.is_none() {
-        // Preserve an environment-supplied password when adopting runtime config.
-        input.password = smtp(&state).await?.1.unwrap_or_default();
-    }
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let mut tx = pool.begin().await?;
+    lock_email_auth_config(&mut tx).await?;
+    let (_, existing_password) = smtp_in_transaction(&state, &mut tx).await?;
+    if input.password.is_empty() {
+        // Preserve an environment-supplied password when adopting runtime config.
+        input.password = existing_password.unwrap_or_default();
+    }
+    input.config.last_test_ok = None;
+    input.config.last_test_at = None;
+    let two_factor_enabled: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM core_systemsetting WHERE key='auth_policy' AND value->>'enabled'='true') OR EXISTS(SELECT 1 FROM accounts_userprofile WHERE login_2fa_enabled_override IS TRUE)",
+    ).fetch_one(&mut *tx).await?;
+    if two_factor_enabled {
+        validate_email_2fa(
+            &input.config,
+            Some(input.password.as_str()),
+            env_true("APP_PRODUCTION"),
+            env_true("DEV_EMAIL"),
+        )?;
+    }
     if !input.password.is_empty() {
         let ciphertext = state.cipher.encrypt(&input.password)?;
         sqlx::query("INSERT INTO core_systemsecret (id,key,ciphertext) VALUES ($1,'smtp_password',$2) ON CONFLICT (key) DO UPDATE SET ciphertext=EXCLUDED.ciphertext,updated_at=NOW(),rotated_at=NOW()")
             .bind(Uuid::new_v4()).bind(ciphertext).execute(&mut *tx).await?;
     }
-    input.config.last_test_ok = None;
     sqlx::query("INSERT INTO core_systemsetting (id,created_date,updated_date,key,value) VALUES ($1,NOW(),NOW(),'smtp',$2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_date=NOW()")
         .bind(Uuid::new_v4()).bind(json!(input.config)).execute(&mut *tx).await?;
     tx.commit().await?;
@@ -241,7 +340,14 @@ pub async fn smtp_test(
 ) -> Result<Json<Value>, AppError> {
     let profile = admin(&state, &headers)?;
     crate::auth::enforce_login_rate(&headers, &format!("smtp-test:{profile}"))?;
-    let (config, password) = smtp(&state).await?;
+    let mut tx = state
+        .pool
+        .as_ref()
+        .ok_or(AppError::Unavailable)?
+        .begin()
+        .await?;
+    lock_email_auth_config(&mut tx).await?;
+    let (config, password) = smtp_in_transaction(&state, &mut tx).await?;
     if !config.enabled || password.is_none() {
         return Err(AppError::Unavailable);
     }
@@ -255,7 +361,10 @@ pub async fn smtp_test(
     .await;
     let mut config = config;
     config.last_test_ok = Some(result.is_ok());
-    save(&state, "smtp", json!(config)).await?;
+    config.last_test_at = Some(chrono::Utc::now());
+    sqlx::query("INSERT INTO core_systemsetting (id,created_date,updated_date,key,value) VALUES ($1,NOW(),NOW(),'smtp',$2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_date=NOW()")
+        .bind(Uuid::new_v4()).bind(json!(config)).execute(&mut *tx).await?;
+    tx.commit().await?;
     audit(
         &state,
         profile,
@@ -330,6 +439,70 @@ pub async fn database_probe(state: &AppState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn valid_smtp_fixture() -> SmtpConfig {
+        SmtpConfig {
+            enabled: true,
+            host: "mail.example.invalid".into(),
+            port: 587,
+            security: "STARTTLS".into(),
+            username: "fixture@example.invalid".into(),
+            from_email: "fixture@example.invalid".into(),
+            timeout_seconds: 5,
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn email_2fa_requires_enabled_valid_smtp_and_password() {
+        let config = valid_smtp_fixture();
+        assert!(validate_email_2fa(&config, Some("fixture"), false, false).is_ok());
+        for password in [None, Some("")] {
+            assert!(validate_email_2fa(&config, password, false, false).is_err());
+        }
+        for config in [
+            SmtpConfig {
+                enabled: false,
+                ..config.clone()
+            },
+            SmtpConfig {
+                port: 0,
+                ..config.clone()
+            },
+            SmtpConfig {
+                security: "NONE".into(),
+                ..config.clone()
+            },
+            SmtpConfig {
+                from_email: "invalid".into(),
+                ..config
+            },
+        ] {
+            assert!(validate_email_2fa(&config, Some("fixture"), false, false).is_err());
+        }
+    }
+    #[test]
+    fn production_email_2fa_requires_recent_successful_transport_test() {
+        let mut config = valid_smtp_fixture();
+        assert!(validate_email_2fa(&config, Some("fixture"), true, false).is_err());
+        config.last_test_ok = Some(true);
+        assert!(validate_email_2fa(&config, Some("fixture"), true, false).is_err());
+        config.last_test_at = Some(chrono::Utc::now());
+        assert!(validate_email_2fa(&config, Some("fixture"), true, false).is_ok());
+        config.last_test_ok = Some(false);
+        assert!(validate_email_2fa(&config, Some("fixture"), true, false).is_err());
+        config.last_test_ok = Some(true);
+        for at in [
+            chrono::Utc::now() - chrono::Duration::hours(25),
+            chrono::Utc::now() + chrono::Duration::minutes(1),
+        ] {
+            config.last_test_at = Some(at);
+            assert!(validate_email_2fa(&config, Some("fixture"), true, false).is_err());
+        }
+    }
+    #[test]
+    fn development_mailbox_never_bypasses_production_smtp_gate() {
+        assert!(validate_email_2fa(&SmtpConfig::default(), None, false, true).is_ok());
+        assert!(validate_email_2fa(&SmtpConfig::default(), None, true, true).is_err());
+    }
     #[test]
     fn client_ids_are_validated() {
         assert!(valid_client_id(
@@ -361,6 +534,25 @@ mod tests {
         assert!(validate_smtp(&c).is_ok());
         c.enabled = true;
         assert!(validate_smtp(&c).is_err());
+    }
+    #[test]
+    fn smtp_host_requires_a_valid_dns_name_or_ip_address() {
+        let mut config = valid_smtp_fixture();
+        for host in [
+            "mail..example.invalid",
+            "mail-.invalid",
+            "-mail.invalid",
+            ":",
+            "mail.invalid:587",
+            "...",
+        ] {
+            config.host = host.into();
+            assert!(validate_smtp(&config).is_err());
+        }
+        for host in ["mail.example.invalid", "localhost", "127.0.0.1", "::1"] {
+            config.host = host.into();
+            assert!(validate_smtp(&config).is_ok());
+        }
     }
     #[tokio::test]
     async fn no_pool_is_not_connected() {

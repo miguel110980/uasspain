@@ -134,16 +134,17 @@ pub async fn login(
         if issued.rows_affected() != 1 {
             return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"detail":"Ya hay un codigo vigente. Revise su correo o espere un minuto para solicitar otro.","code":"otp_required"}))).into_response());
         }
-        if let Err(error) = crate::email::send(
+        if crate::email::send(
             &state,
             &canonical_email,
             "Código temporal de acceso UASSpain",
             &format!("Su código temporal de acceso es: {code}"),
         )
         .await
+        .is_err()
         {
-            let _ = sqlx::query("UPDATE accounts_userprofile SET login_otp_hash='',login_otp_created_at=NULL WHERE id=$1 AND login_otp_hash=$2").bind(row.id).bind(hash).execute(pool).await;
-            return Err(error);
+            sqlx::query("UPDATE accounts_userprofile SET login_otp_hash='',login_otp_created_at=NULL,login_otp_attempts=0 WHERE id=$1 AND login_otp_hash=$2").bind(row.id).bind(hash).execute(pool).await?;
+            return Err(AppError::OtpDeliveryUnavailable);
         }
         return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"detail":"Código de acceso enviado. Introduzca el OTP para completar el login.","code":"otp_required"}))).into_response());
     }
@@ -393,9 +394,23 @@ async fn finish_login(
         &session_key,
     )?;
     let refresh_jti = state.tokens.decode(&refresh, "refresh")?.jti.to_string();
+    let mut tx = pool.begin().await?;
+    let eligible: Option<bool> = sqlx::query_scalar("SELECT u.password=$2 AND u.is_active AND p.status='activo' AND p.otp_verified AND (p.role=$3 OR p.roles ? $3) FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 FOR UPDATE OF p")
+        .bind(row.id).bind(&row.password).bind(role).fetch_optional(&mut *tx).await?;
+    if eligible != Some(true) {
+        return Err(AppError::Unauthorized);
+    }
     sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,session_role=$2,updated_date=NOW(),active_window_lookup=$4,active_refresh_jti=$5 WHERE id=$3")
-        .bind(&session_key).bind(role).bind(row.id).bind(window_lookup).bind(refresh_jti).execute(pool).await?;
-    record_login(state, headers, row, role, method, &session_key).await?;
+        .bind(&session_key).bind(role).bind(row.id).bind(window_lookup).bind(refresh_jti).execute(&mut *tx).await?;
+    record_login(state, headers, row, role, method, &session_key, &mut tx).await?;
+    tx.commit().await?;
+    state
+        .events
+        .publish(
+            "connections",
+            serde_json::json!({"type":"conexion","action":"login"}),
+        )
+        .await;
     let secure = if state.tokens.secure_cookie {
         "; Secure"
     } else {
@@ -488,17 +503,31 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     if let Ok(claims) = authenticate(&state, &headers, "access")
+        .or_else(|_| authenticate(&state, &headers, "refresh"))
         && let Some(pool) = &state.pool
     {
-        let current: Option<String> =
-            sqlx::query_scalar("SELECT active_session_key FROM accounts_userprofile WHERE id=$1")
-                .bind(claims.profile_id)
-                .fetch_optional(pool)
-                .await?;
-        if !claims.session_key.is_empty() && current.as_deref() == Some(&claims.session_key) {
-            finalize_sessions(pool, claims.profile_id).await?;
-            sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,updated_date=NOW() WHERE id=$2")
-                .bind(Uuid::new_v4().simple().to_string()).bind(claims.profile_id).execute(pool).await?;
+        let mut tx = pool.begin().await?;
+        let current: Option<(Option<String>, String, String)> = sqlx::query_as(
+            "SELECT active_session_key,active_window_lookup,active_refresh_jti FROM accounts_userprofile WHERE id=$1 FOR UPDATE",
+        )
+        .bind(claims.profile_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((session, window, refresh_jti)) = current
+            && !claims.session_key.is_empty()
+            && session.as_deref() == Some(&claims.session_key)
+            && (claims.token_type != "refresh" || refresh_jti == claims.jti.to_string())
+        {
+            let lookup = state
+                .cipher
+                .blind_index(&format!("window:{}", window_id(&headers)?))?;
+            if window != lookup {
+                return Err(AppError::SessionWindowMismatch);
+            }
+            finalize_sessions(&mut tx, claims.profile_id).await?;
+            sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,active_refresh_jti='',active_window_lookup='',updated_date=NOW() WHERE id=$2")
+                .bind(Uuid::new_v4().simple().to_string()).bind(claims.profile_id).execute(&mut *tx).await?;
+            tx.commit().await?;
             state
                 .events
                 .publish(
@@ -823,6 +852,7 @@ pub async fn validate_active_session(
         || matches!(
             path.as_str(),
             "/api/auth/login/"
+                | "/api/auth/logout/"
                 | "/api/auth/register/"
                 | "/api/auth/google/"
                 | "/api/auth/google/challenge/"
@@ -908,9 +938,9 @@ async fn record_login(
     role: &str,
     method: &str,
     session_key: &str,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), AppError> {
-    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    finalize_sessions(pool, row.id).await?;
+    finalize_sessions(tx, row.id).await?;
     let username = state.cipher.decrypt(&row.profile_username)?;
     let name = format!(
         "{} {}",
@@ -933,20 +963,16 @@ async fn record_login(
         .map(str::trim)
         .filter(|value| value.parse::<std::net::IpAddr>().is_ok());
     sqlx::query("INSERT INTO conexiones_registroconexion (id,created_date,updated_date,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion,fecha_cierre) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,NOW(),'correcto',$7,$8,NOW(),$9::inet,$7,$7,$7,$7,$7,$7,$10,$7,$11,$12,$13,'activa',NULL,NULL)")
-        .bind(Uuid::new_v4()).bind(row.id).bind(state.cipher.encrypt(&username)?).bind(state.cipher.encrypt(&name)?).bind(state.cipher.encrypt(&email)?).bind(role).bind(&empty).bind(method).bind(ip).bind(state.cipher.encrypt(browser)?).bind(state.cipher.encrypt(os)?).bind(state.cipher.encrypt(device)?).bind(session_key).execute(pool).await?;
-    state
-        .events
-        .publish(
-            "connections",
-            serde_json::json!({"type":"conexion","action":"login"}),
-        )
-        .await;
+        .bind(Uuid::new_v4()).bind(row.id).bind(state.cipher.encrypt(&username)?).bind(state.cipher.encrypt(&name)?).bind(state.cipher.encrypt(&email)?).bind(role).bind(&empty).bind(method).bind(ip).bind(state.cipher.encrypt(browser)?).bind(state.cipher.encrypt(os)?).bind(state.cipher.encrypt(device)?).bind(session_key).execute(&mut **tx).await?;
     Ok(())
 }
 
-async fn finalize_sessions(pool: &sqlx::PgPool, profile_id: Uuid) -> Result<(), AppError> {
+async fn finalize_sessions(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    profile_id: Uuid,
+) -> Result<(), AppError> {
     sqlx::query("UPDATE conexiones_registroconexion SET estado_sesion='finalizada',fecha_cierre=NOW(),ultima_actividad=NOW(),tiempo_sesion=GREATEST(0,EXTRACT(EPOCH FROM (NOW()-fecha_hora))::integer),updated_date=NOW() WHERE profile_id=$1 AND estado_sesion='activa'")
-        .bind(profile_id).execute(pool).await?;
+        .bind(profile_id).execute(&mut **tx).await?;
     Ok(())
 }
 
