@@ -25,39 +25,97 @@ export default function HeroSection() {
       </div>
 
       <div className="absolute inset-0 pointer-events-none select-none overflow-hidden flex items-center justify-center" aria-hidden="true">
-        <div className="hero-radar absolute w-[500px] h-[500px] rounded-full">
-          <div className="hero-radar-sweep" />
-          <svg className="absolute inset-0 w-full h-full" viewBox="0 0 500 500" fill="none">
-            <g stroke="var(--radar-line)" strokeWidth="1">
-              <circle cx="250" cy="250" r="249" />
-              <circle cx="250" cy="250" r="180" />
-              <circle cx="250" cy="250" r="100" />
-              <path d="M250 4v12M250 484v12M4 250h12M484 250h12M75 75l8 8M425 75l-8 8M425 425l-8-8M75 425l8-8" />
-            </g>
-            <path d="M250 20v460M20 250h460" stroke="var(--radar-soft)" strokeWidth="1" />
-            <g fill="var(--radar-dot)">
-              <circle cx="130" cy="450" r="3" />
-              <circle cx="385" cy="445" r="3" />
-              <circle cx="250" cy="480" r="2.5" />
-            </g>
-          </svg>
-        </div>
-        <div className="hero-radar-outer absolute w-[800px] h-[800px] border rounded-full" />
-        <div className="absolute top-0 left-1/4 w-px h-full bg-gradient-to-b from-transparent via-primary/8 to-transparent" />
-        <div className="absolute inset-0 scanline opacity-20" />
+        <svg className="hero-radar" fill="none" focusable="false">
+          <defs>
+            <linearGradient id="hero-radar-sector" x1="830" y1="145" x2="922" y2="211" gradientUnits="userSpaceOnUse">
+              <stop stopColor="currentColor" stopOpacity="0.5" />
+              <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="hero-radar-ray" x1="684" y1="541" x2="886" y2="137" gradientUnits="userSpaceOnUse">
+              <stop stopColor="currentColor" stopOpacity="0" />
+              <stop offset="0.65" stopColor="currentColor" stopOpacity="0.85" />
+              <stop offset="1" stopColor="currentColor" stopOpacity="0.45" />
+            </linearGradient>
+            <filter id="hero-radar-glow" x="-100%" y="-100%" width="300%" height="300%">
+              <feGaussianBlur stdDeviation="3" />
+            </filter>
+            <radialGradient id="hero-radar-flare">
+              <stop stopColor="currentColor" stopOpacity="0.8" />
+              <stop offset="0.16" stopColor="currentColor" stopOpacity="0.45" />
+              <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+            </radialGradient>
+            {/* Occlude the overlay with the silhouette in the existing photo's coordinates. */}
+            <path id="hero-drone-silhouette" d="M593 222l7-36q19-12 40 0l8 31 149-7q22-20 57-18l26 9 6-20q21-12 35 3l4 39 120-8 3-32q19-8 33 7l2 50-14 11-4 31-11-24-115-11-22 14-12 23-50 1 3 32-38 13-38-18-4-32-35-28-95-8-12 37-14-6v-34z" />
+            <mask id="hero-radar-drone-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%">
+              <rect width="100%" height="100%" fill="white" />
+              <svg className="hero-radar-mask-desktop" width="100%" height="100%" viewBox="0 0 1672 941" preserveAspectRatio="xMidYMid slice">
+                <use href="#hero-drone-silhouette" fill="black" />
+              </svg>
+              <svg className="hero-radar-mask-mobile" width="100%" height="100%" viewBox="600 0 472 941" preserveAspectRatio="xMidYMid slice">
+                <use href="#hero-drone-silhouette" fill="black" />
+              </svg>
+            </mask>
+          </defs>
+          <g mask="url(#hero-radar-drone-mask)">
+            <svg className="hero-radar-dial" width="100%" height="100%" viewBox="0 0 1395 1127">
+              <g stroke="currentColor" strokeWidth="1.2">
+                <ellipse cx="680" cy="542" rx="510" ry="480" opacity="0.25" />
+                <ellipse cx="680" cy="542" rx="480" ry="457" opacity="0.6" />
+                <ellipse cx="680" cy="542" rx="440" ry="428" strokeDasharray="0.1 12" strokeLinecap="round" strokeWidth="2" opacity="0.8" />
+                <ellipse cx="680" cy="542" rx="393" ry="387" opacity="0.55" />
+                <ellipse cx="680" cy="542" rx="313" ry="281" strokeDasharray="0.1 5" strokeLinecap="round" opacity="0.4" />
+                <ellipse cx="680" cy="542" rx="284" ry="278" opacity="0.5" />
+                <ellipse cx="680" cy="542" rx="250" ry="247" strokeDasharray="0.1 5" strokeLinecap="round" opacity="0.35" />
+              </g>
+              <g stroke="currentColor" strokeWidth="1.3" opacity="0.45">
+                <path d="M685 99l-2 899M186 540l987 2" />
+                <path d="M675 114h24M676 155h16M675 920h16M675 968h15M209 463h8M207 616h10M1142 466h12M1141 616h13M263 393h13M1086 395h13M1085 686h14M262 684h12" />
+              </g>
+              <g className="hero-radar-sweep">
+                <circle cx="830" cy="231" r="42" fill="url(#hero-radar-flare)" />
+                <path d="M816 285L886 137A480 457 0 0 1 960 178L860 313A284 278 0 0 0 816 285Z" fill="url(#hero-radar-sector)" />
+                <path d="M806 282L857 194" stroke="currentColor" strokeWidth="6" opacity="0.8" filter="url(#hero-radar-glow)" />
+                <path d="M684 541L886 137" stroke="url(#hero-radar-ray)" strokeWidth="2" />
+              </g>
+              <g stroke="currentColor" strokeWidth="2" opacity="0.85">
+                <path d="M200 616Q187 542 203 466M208 616Q196 542 211 467M1155 468Q1166 542 1154 616M1148 468Q1158 542 1147 615M383 170Q442 135 500 120M918 144Q953 161 979 184M1087 822l-41 50" />
+              </g>
+              <g stroke="currentColor" strokeWidth="1.5" opacity="0.8">
+                <rect x="253" y="267" width="10" height="10" />
+                <rect x="142" y="537" width="10" height="5" />
+                <rect x="1206" y="539" width="11" height="5" />
+                <rect x="684" y="86" width="3" height="6" opacity="0.5" />
+                <rect x="681" y="989" width="5" height="6" opacity="0.5" />
+              </g>
+              <g fill="currentColor" filter="url(#hero-radar-glow)">
+                <circle cx="830" cy="231" r="8" />
+                <circle cx="927" cy="365" r="7" />
+                <circle cx="1109" cy="277" r="4" />
+                <circle cx="999" cy="922" r="4" />
+              </g>
+              <g className="hero-radar-nodes">
+                <circle cx="830" cy="231" r="4" />
+                <circle cx="927" cy="365" r="3.5" />
+              </g>
+              <g fill="currentColor" opacity="0.9">
+                <circle cx="1109" cy="277" r="2.8" />
+                <circle cx="999" cy="922" r="3.5" />
+                <circle cx="685" cy="155" r="2" />
+              </g>
+            </svg>
+          </g>
+        </svg>
       </div>
 
-      <div className="relative z-10 w-full max-w-7xl mx-auto px-6 pt-28 pb-16 flex flex-col items-center text-center">
+      <div className="hero-content relative z-10 w-full max-w-7xl mx-auto px-6 pt-28 pb-16 flex flex-col items-center text-center">
         <div
           className="hero-copy"
         >
-          <h1 className="font-heading text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-foreground leading-[1] tracking-tighter mb-5">
-            SOLUCIONES{' '}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-cyan-300 to-blue-400 text-glow-cyan">
-              AÉREAS
+          <h1 className="hero-title font-heading font-bold mb-5">
+            <span className="hero-title-line">
+              SOLUCIONES{' '}<span className="hero-title-cyan">AÉREAS</span>
             </span>
-            <br />
-            <span className="text-foreground/55">INTELIGENTES</span>
+            <span className="hero-title-line hero-title-second">INTELIGENTES</span>
           </h1>
 
           <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto mb-10 font-light leading-relaxed">
