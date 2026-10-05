@@ -113,15 +113,12 @@ export default function InstructorPanel() {
   useEffect(() => {
     const checkNoLeidos = async () => {
       try {
-        const [alumnoMsgs, staffMsgs] = await Promise.all([
-          conexionesService.mensajes.filter({ remitente: 'alumno', leido_instructor: false }),
-          conexionesService.mensajesStaff.filter({ leido_destinatario: false }),
+        const [alumnoUnread, staffUnread] = await Promise.all([
+          conexionesService.mensajes.unreadCount(),
+          conexionesService.mensajesStaff.unreadCount(),
         ]);
-        const staffIncoming = staffMsgs.filter(
-          (m) => authProfile?.id && String(m.destinatario_id) === String(authProfile.id),
-        );
-        setChatSinLeerAlumno(alumnoMsgs.length);
-        setChatSinLeerStaff(staffIncoming.length);
+        setChatSinLeerAlumno(alumnoUnread);
+        setChatSinLeerStaff(staffUnread);
       } catch {}
     };
     checkNoLeidos();

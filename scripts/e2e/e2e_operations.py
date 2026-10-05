@@ -5,6 +5,7 @@ import math
 import sys
 import time
 import urllib.parse
+import uuid
 
 from e2e_api import BASE, Session, login, ADMIN_EMAIL, ADMIN_PASSWORD, ALUM_EMAIL, ALUM_PASSWORD, INSTR_EMAIL, INSTR_PASSWORD
 
@@ -112,19 +113,25 @@ def probe(mode):
     print(f"PASS {mode}: liveness, bounded readiness and dependency state")
 
 
-def profile_lifecycle():
+def profile_lifecycle(prepare=False):
     admin = authenticated(ADMIN_EMAIL, ADMIN_PASSWORD)
     instructor = authenticated(INSTR_EMAIL, INSTR_PASSWORD)
-    status, teacher = admin.call("POST", "/api/users/crear-instructor/", {
-        "nombre": "Fixture", "apellidos": "Borrado", "email": "deletion-teacher@test.local",
-        "username": "deletion-teacher", "dni_nie": "22222222J", "fecha_nacimiento": "1990-01-01",
-        "password": "E2eDeletionTeacher_2026!", "es_admin": False})  # pragma: allowlist secret - isolated fixture
-    assert status == 201, (status, teacher)
-    status, student = Session("registration").call("POST", "/api/auth/register/", {
-        "nombre": "Fixture", "apellidos": "Alumno borrado", "email": "deletion-student@test.local",
-        "username": "deletion-student", "dni_nie": "33333333P", "fecha_nacimiento": "2000-01-01",
-        "password": "E2eDeletionStudent_2026!"})  # pragma: allowlist secret - isolated fixture
-    assert status == 201
+    if not prepare:
+        teacher = {"id": str(uuid.UUID(sys.argv[2]))}
+        student = {"id": str(uuid.UUID(sys.argv[3]))}
+    else:
+        status, teacher = admin.call("POST", "/api/users/crear-instructor/", {
+            "nombre": "Fixture", "apellidos": "Borrado", "email": "deletion-teacher@test.local",
+            "username": "deletion-teacher", "dni_nie": "22222222J", "fecha_nacimiento": "1990-01-01",
+            "password": "E2eDeletionTeacher_2026!", "es_admin": False})  # pragma: allowlist secret - isolated fixture
+        assert status == 201, (status, teacher)
+        status, student = Session("registration").call("POST", "/api/auth/register/", {
+            "nombre": "Fixture", "apellidos": "Alumno borrado", "email": "deletion-student@test.local",
+            "username": "deletion-student", "dni_nie": "33333333P", "fecha_nacimiento": "2000-01-01",
+            "password": "E2eDeletionStudent_2026!"})  # pragma: allowlist secret - isolated fixture
+        assert status == 201
+        print(json.dumps({"teacher_id": teacher["id"], "student_id": student["id"]}))
+        return
     assert admin.call("POST", f"/api/profiles/{teacher['id']}/assign-alumnos/", {"student_ids": [student["id"]]})[0] == 200
     assert instructor.call("DELETE", f"/api/profiles/{student['id']}/")[0] == 403
     teacher_session = authenticated("deletion-teacher@test.local", "E2eDeletionTeacher_2026!")
@@ -139,7 +146,8 @@ def profile_lifecycle():
     assert status == 200 and retained["assigned_instructor_id"] is None
     assert admin.call("GET", f"/api/examenes/{exam['id']}/")[0] == 200
     assert admin.call("DELETE", f"/api/profiles/{student['id']}/")[0] == 204
-    assert admin.call("GET", f"/api/mensajes/{message['id']}/")[0] == 404
+    assert admin.call("GET", f"/api/mensajes/{message['id']}/")[0] == 403
+    assert instructor.call("GET", f"/api/mensajes/{message['id']}/")[0] == 404
     assert admin.call("DELETE", f"/api/examenes/{exam['id']}/")[0] == 204
     print("PASS profile lifecycle: foreign instructor denied, dependent rows deleted, students/content retained, session revoked")
 
@@ -170,6 +178,8 @@ def auth_case():
 mode = sys.argv[1]
 if mode == "load":
     load()
+elif mode == "profile-lifecycle-prepare":
+    profile_lifecycle(True)
 elif mode == "profile-lifecycle":
     profile_lifecycle()
 elif mode == "auth-case":

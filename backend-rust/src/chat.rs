@@ -29,7 +29,7 @@ pub(crate) fn staff_room(first: Uuid, second: Uuid) -> String {
     format!("staff-{first}-{second}")
 }
 
-fn staff_peer(room: &str, member: Uuid) -> Option<Uuid> {
+pub(crate) fn staff_peer(room: &str, member: Uuid) -> Option<Uuid> {
     let pair = room.strip_prefix("staff-")?;
     let first: Uuid = pair.get(..36)?.parse().ok()?;
     let second: Uuid = pair.get(37..)?.parse().ok()?;
@@ -119,8 +119,9 @@ async fn authorize_room(
             && sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile WHERE id = $1 AND status = 'activo' AND (role = $2 OR roles @> jsonb_build_array($2::text)))")
                 .bind(peer).bind(expected_peer_role).fetch_one(pool).await?
     } else if let Ok(student_id) = room_id.parse::<Uuid>() {
-        (role == "alumno" && student_id == profile_id)
-            || (role == "instructor" && sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile WHERE id = $1 AND assigned_instructor_id = $2)").bind(student_id).bind(profile_id).fetch_one(pool).await?)
+        matches!(role, "alumno" | "instructor")
+            && sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id JOIN accounts_userprofile i ON i.id=p.assigned_instructor_id JOIN auth_user iu ON iu.id=i.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role='alumno' OR p.roles ? 'alumno') AND i.status='activo' AND iu.is_active AND (i.role='instructor' OR i.roles ? 'instructor') AND (($3='alumno' AND p.id=$2) OR ($3='instructor' AND p.assigned_instructor_id=$2)))")
+                .bind(student_id).bind(profile_id).bind(role).fetch_one(pool).await?
     } else {
         false
     };
@@ -146,16 +147,10 @@ async fn run_socket(socket: WebSocket, state: Arc<AppState>, room_id: String, cl
                         match event {
                             ChatEvent::Ping => { if send(&mut output, &ChatEvent::Pong).await.is_err() { break; } }
                             ChatEvent::Message { content, .. } if !content.trim().is_empty() && content.chars().count() <= 4000 => {
-                                if persist_message(&state, &room_id, claims.profile_id, &claims.role, &content).await.is_err() {
+                                if crate::connections::persist_socket_message(&state, &claims, &room_id, &content).await.is_err() {
                                     let _ = send(&mut output, &ChatEvent::Error { code: "persist_failed".to_owned() }).await;
                                     continue;
                                 }
-                                let event = ChatEvent::Message { room_id: room_id.clone(), sender_id: claims.profile_id, content };
-                                if let Ok(payload) = serde_json::to_value(&event) {
-                                    state.events.publish(event_topic.clone(), payload).await;
-                                }
-                                let kind = if room_id.starts_with("staff-") { "mensaje_staff" } else { "mensaje" };
-                                state.events.publish("connections", serde_json::json!({"type":kind,"action":"created"})).await;
                                 if send(&mut output, &ChatEvent::Ack { room_id: room_id.clone() }).await.is_err() { break; }
                             }
                             _ => {}
@@ -165,13 +160,18 @@ async fn run_socket(socket: WebSocket, state: Arc<AppState>, room_id: String, cl
                 Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                 _ => {}
             },
-            event = events.recv() => if let Ok(event) = event
-                && event.topic == event_topic
-                && let Ok(chat_event) = serde_json::from_value::<ChatEvent>(event.payload)
-                && !matches!(&chat_event, ChatEvent::Message { sender_id: event_sender, .. } if *event_sender == claims.profile_id)
-                && (!session_is_active(&state, &claims).await.unwrap_or(false)
-                    || authorize_room(&state, claims.profile_id, &claims.role, &room_id).await.is_err()
-                    || send(&mut output, &chat_event).await.is_err()) { break; },
+            event = events.recv() => match event {
+                Ok(event) if event.topic == event_topic || (event.topic == "connections" && event.payload.get("type").and_then(serde_json::Value::as_str) == Some("asignacion")) => {
+                    if !session_is_active(&state, &claims).await.unwrap_or(false)
+                        || authorize_room(&state, claims.profile_id, &claims.role, &room_id).await.is_err() { break; }
+                    if event.topic == event_topic && output.send(Message::Text(event.payload.to_string().into())).await.is_err() { break; }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    if output.send(Message::Text(serde_json::json!({"type":"resync_required","room_id":room_id}).to_string().into())).await.is_err() { break; }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                _ => {}
+            },
             _ = heartbeat.tick() => {
                 if !session_is_active(&state, &claims).await.unwrap_or(false)
                     || authorize_room(&state, claims.profile_id, &claims.role, &room_id).await.is_err()
@@ -180,47 +180,6 @@ async fn run_socket(socket: WebSocket, state: Arc<AppState>, room_id: String, cl
         }
     }
     let _ = output.close().await;
-}
-
-async fn persist_message(
-    state: &AppState,
-    room_id: &str,
-    sender_id: Uuid,
-    sender_role: &str,
-    content: &str,
-) -> Result<(), AppError> {
-    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let encrypted = state.cipher.encrypt(content.trim())?;
-    if let Some(peer_id) = staff_peer(room_id, sender_id) {
-        if !matches!(sender_role, "admin" | "instructor") {
-            return Err(AppError::Forbidden);
-        }
-        sqlx::query("INSERT INTO conexiones_mensajestaff (id, created_date, updated_date, remitente_id, destinatario_id, contenido, sender_role, leido_destinatario) VALUES ($1, NOW(), NOW(), $2, $3, $4, $5, FALSE)")
-            .bind(Uuid::new_v4()).bind(sender_id).bind(peer_id).bind(encrypted).bind(sender_role).execute(pool).await?;
-        return Ok(());
-    }
-    let student_id = if sender_role == "alumno" {
-        sender_id
-    } else {
-        room_id
-            .parse::<Uuid>()
-            .map_err(|_| AppError::Validation("Sala no válida.".to_owned()))?
-    };
-    let instructor_id: Option<Uuid> = if sender_role == "instructor" {
-        Some(sender_id)
-    } else {
-        sqlx::query_scalar("SELECT assigned_instructor_id FROM accounts_userprofile WHERE id = $1")
-            .bind(student_id)
-            .fetch_optional(pool)
-            .await?
-            .flatten()
-    };
-    if sender_role == "admin" || (sender_role == "instructor" && instructor_id != Some(sender_id)) {
-        return Err(AppError::Forbidden);
-    }
-    sqlx::query("INSERT INTO conexiones_mensaje (id, created_date, updated_date, alumno_id, instructor_id, conexion_id, alumno_nombre, remitente, contenido, leido_alumno, leido_instructor) VALUES ($1, NOW(), NOW(), $2, $3, NULL, '', $4, $5, FALSE, FALSE)")
-        .bind(Uuid::new_v4()).bind(student_id).bind(instructor_id).bind(sender_role).bind(encrypted).execute(pool).await?;
-    Ok(())
 }
 
 async fn send(

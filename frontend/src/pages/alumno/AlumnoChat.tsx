@@ -1,132 +1,56 @@
 import { usePanelAuthContext } from '@/context/PanelAuthContext';
 import { useActiveProfileSessions } from '@/hooks/useActiveProfileSessions';
-import PanelModal from '@/components/ui/PanelModal';
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Send, Loader2, MessageCircle, Trash2, X } from 'lucide-react';
-import conexionesService from '@/services/conexionesService';
+import { Send, Loader2, MessageCircle } from 'lucide-react';
+import { usePrivateStudentChat } from '@/hooks/usePrivateStudentChat';
 import { sanitizeInput } from '@/lib/sanitize';
 import ChatExportPdfButton from '@/components/chat/ChatExportPdfButton';
 
 export default function AlumnoChat({ alumnoId, alumnoNombre }) {
-  const [mensajes, setMensajes] = useState([]);
   const [texto, setTexto] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState('');
   const { profile } = usePanelAuthContext();
   const { isOnline } = useActiveProfileSessions();
+  const hasInstructor = Boolean(profile?.assigned_instructor_id);
+  const instructorName = profile?.assigned_instructor_name || (hasInstructor ? 'Instructor asignado' : 'Sin instructor asignado');
   const instructorConectado = isOnline(profile?.assigned_instructor_id);
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [clearing, setClearing] = useState(false);
-  const bottomRef = useRef(null);
-  const scrollContainerRef = useRef(null);
-  const isAtBottomRef = useRef(true);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const previousMessages = useRef<any[]>([]);
   const [newMessageCount, setNewMessageCount] = useState(0);
-  const messageLoad = useRef(0);
-
-  useEffect(() => {
-    if (!alumnoId) return undefined;
-    loadMensajes();
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') loadMensajes();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    const unsubscribeChat = conexionesService.subscribeMensajes((event) => {
-      const payload = conexionesService.parseWsPayload(event);
-      if (payload?.type === 'mensaje' && payload?.data) {
-        const msg = payload.data;
-        if (String(msg.alumno_id) === String(alumnoId) && msg.remitente !== 'alumno') {
-          setMensajes((prev) => {
-            if (prev.some((m) => m.id === msg.id)) return prev;
-            return [...prev, msg];
-          });
-          setNewMessageCount((c) => c + 1);
-        }
-      } else if (payload?.type === 'mensaje' || event.type === 'poll') {
-        loadMensajes();
-      }
-    });
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible);
-      unsubscribeChat();
-    };
-  }, [alumnoId]);
-
+  const chat = usePrivateStudentChat(String(alumnoId || ''), 'alumno', {
+    enabled:hasInstructor,
+    isVisible:() => Boolean(scrollContainerRef.current?.getClientRects().length),
+  });
+  const { messages:mensajes, loading, sending, error } = chat;
   const handleScroll = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const threshold = 80;
-    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-    if (isAtBottomRef.current) setNewMessageCount(0);
+    const element = scrollContainerRef.current;
+    if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 80) setNewMessageCount(0);
   }, []);
-
   const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    bottomRef.current?.scrollIntoView({ behavior:'smooth', block:'end' });
     setNewMessageCount(0);
   }, []);
-
-  const loadMensajes = async () => {
-    if (!alumnoId) return;
-    const request = ++messageLoad.current;
+  useEffect(() => {
+    const element = scrollContainerRef.current;
+    const atBottom = !element || element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+    const known = new Set(previousMessages.current.map(m => m.id));
+    const incoming = mensajes.filter(m => !known.has(m.id) && m.remitente === 'instructor');
+    if (incoming.length && previousMessages.current.length && !atBottom) setNewMessageCount(count => count + incoming.length);
+    if (atBottom) requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ block:'end' }));
+    previousMessages.current = mensajes;
+    if (!mensajes.length) setNewMessageCount(0);
+  }, [mensajes]);
+  const handleSend = async event => {
+    event.preventDefault();
+    const content = sanitizeInput(texto, 'message');
+    if (!content.trim() || sending || !chat.canSend) return;
     try {
-      const data = await conexionesService.mensajes.filter(
-        { alumno_id: String(alumnoId) },
-        'created_date',
-      );
-      if (request !== messageLoad.current) return;
-      setMensajes(Array.isArray(data) ? data : []);
-      setError('');
-      await conexionesService.mensajes.markRead(alumnoId);
-    } catch {
-      if (request === messageLoad.current) setError('No se pudieron cargar los mensajes. Inténtalo de nuevo.');
-    } finally {
-      if (request === messageLoad.current) setLoading(false);
-    }
+      await chat.send(content);
+      setTexto(current => current === texto ? '' : current);
+    } catch { /* Keep the student's draft and show the actual channel error. */ }
   };
-
-  const handleSend = async (e) => {
-    e.preventDefault();
-    const contenido = sanitizeInput(texto, 'message');
-    if (!contenido.trim() || sending) return;
-    setSending(true);
-    setError('');
-    try {
-      const created = await conexionesService.mensajes.create({
-        alumno_nombre: alumnoNombre,
-        remitente: 'alumno',
-        contenido,
-      });
-      setTexto('');
-      setMensajes((prev) => {
-        if (prev.some((m) => m.id === created.id)) return prev;
-        return [...prev, created];
-      });
-      scrollToBottom();
-      loadMensajes();
-    } catch {
-      setError('No se pudo enviar el mensaje. Comprueba tu conexión e inténtalo de nuevo.');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleClearChat = async () => {
-    if (!alumnoId || clearing) return;
-    setClearing(true);
-    setError('');
-    try {
-      await conexionesService.mensajes.clearChat(alumnoId);
-      setMensajes([]);
-      setShowClearConfirm(false);
-    } catch (err) {
-      const msg = err?.response?.data?.detail || err?.message || 'No se pudo limpiar la conversación.';
-      setError(msg);
-    } finally {
-      setClearing(false);
-    }
-  };
-
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
       <div className="mb-8">
@@ -135,7 +59,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
         </div>
         <h2 className="font-heading text-2xl font-bold text-foreground tracking-tight">Chat con el Instructor</h2>
         <p className="text-sm text-muted-foreground mt-1">Escribe tus dudas y el instructor te responderá aquí.</p>
-        {error && <p className="text-sm text-destructive mt-2">{error}</p>}
+        {!hasInstructor && <p role="status" className="text-sm text-muted-foreground mt-2">Aún no tienes un instructor asignado.</p>}{error && <p role="alert" className="text-sm text-destructive mt-2">{error} <button onClick={chat.retry} className="underline">Reintentar</button></p>}
       </div>
 
       <div className="glass-card flex flex-col md:flex-row h-[60vh]">
@@ -145,7 +69,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
               I
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">Instructor</p>
+              <p className="text-sm font-medium text-foreground truncate">{instructorName}</p>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className={`w-2 h-2 rounded-full ${instructorConectado ? 'bg-success' : 'bg-muted-foreground/40'}`} />
                 <span className="text-xs text-muted-foreground">{instructorConectado ? 'Conectado' : 'Desconectado'}</span>
@@ -161,24 +85,14 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
               <ChatExportPdfButton
                 title="Chat con instructor — UASSPAIN"
                 participantA={alumnoNombre || 'Alumno'}
-                participantB="Instructor"
+                participantB={instructorName}
                 messages={mensajes}
                 mapMessage={(m) => ({
-                  author: m.remitente === 'instructor' ? 'Instructor' : (alumnoNombre || 'Alumno'),
+                  author: m.remitente === 'instructor' ? instructorName : (alumnoNombre || 'Alumno'),
                   content: m.contenido || m.texto,
                   created_date: m.created_date,
                 })}
               />
-              <button aria-label="Limpiar conversación"
-                type="button"
-                onClick={() => setShowClearConfirm(true)}
-                disabled={!mensajes.length}
-                title="Limpiar conversación"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest border border-border-subtle text-muted-foreground hover:border-danger/40 hover:text-danger transition-colors rounded-sm disabled:opacity-40 disabled:pointer-events-none"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Limpiar
-              </button>
             </div>
           </div>
           <div
@@ -228,7 +142,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
           <form onSubmit={handleSend} className="border-t border-border-subtle p-4 flex items-center gap-3">
             <input aria-label="Escribe un mensaje..."
               type="text"
-              value={texto}
+              value={texto} disabled={!chat.canSend}
               onChange={(e) => setTexto(e.target.value)}
               placeholder="Escribe un mensaje..."
               className="flex-1 min-w-0 bg-surface-muted border border-border-subtle focus:border-transparent text-foreground placeholder:text-muted-foreground/40 px-4 py-2.5 text-sm outline-none transition-colors rounded-sm"
@@ -236,7 +150,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
             <button
               type="submit"
                   aria-label="Enviar mensaje"
-              disabled={sending || !texto.trim()}
+              disabled={sending || !texto.trim() || !chat.canSend}
               className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 font-bold uppercase tracking-tighter text-xs hover:bg-primary/80 transition-all duration-300 disabled:opacity-50"
             >
               {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
@@ -244,44 +158,6 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
           </form>
         </div>
       </div>
-
-      {showClearConfirm && (
-        <PanelModal label="Limpiar chat" onClose={() => setShowClearConfirm(false)} className="max-w-sm glass-card p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-heading text-lg font-bold text-foreground">Limpiar chat</h3>
-              <button type="button" aria-label="Cerrar confirmación" onClick={() => setShowClearConfirm(false)} className="text-muted-foreground hover:text-foreground">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              ¿Quieres limpiar esta conversación?
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Se eliminarán los mensajes de este chat. Esta acción no se puede deshacer.
-            </p>
-            {error && (
-              <p className="text-xs text-danger bg-danger-soft border border-danger-border px-3 py-2 rounded-sm">
-                {error}
-              </p>
-            )}
-            <div className="flex justify-end gap-3 pt-2">
-              <button
-                onClick={() => setShowClearConfirm(false)}
-                className="px-4 py-2 text-xs font-bold uppercase tracking-widest border border-border-subtle text-muted-foreground hover:text-foreground transition-all"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleClearChat}
-                disabled={clearing}
-                className="px-4 py-2 text-xs font-bold uppercase tracking-widest bg-danger-soft border border-danger-border text-danger hover:bg-danger/20 transition-all disabled:opacity-50"
-              >
-                {clearing ? <Loader2 className="w-4 h-4 animate-spin inline mr-1" /> : null}
-                Limpiar chat
-              </button>
-            </div>
-          </PanelModal>
-      )}
     </motion.div>
   );
 }

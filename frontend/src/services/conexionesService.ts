@@ -181,6 +181,12 @@ export const conexionesService = {
   },
   mensajes: {
     ...crud(endpoints.mensajes, MENSAJE_SCHEMA),
+    async unreadCount(alumnoId?: string) {
+      return (await apiClient.get(`${endpoints.mensajes}unread/`, { params: alumnoId ? { alumno_id:alumnoId } : {} })).data.count;
+    },
+    async summaries(alumnoId?: string) {
+      return unwrapList(await apiClient.get(`${endpoints.mensajes}summaries/`, { params: alumnoId ? { alumno_id:alumnoId } : {} }));
+    },
     async markRead(alumnoId) {
       const res = await apiClient.post(`${endpoints.mensajes}mark-read/`, { alumno_id: String(alumnoId) });
       return res.data;
@@ -200,6 +206,9 @@ export const conexionesService = {
   },
   mensajesStaff: {
     ...crud(endpoints.mensajesStaff),
+    async unreadCount() {
+      return (await apiClient.get(`${endpoints.mensajesStaff}unread/`)).data.count;
+    },
     async contacts() {
       const res = await apiClient.get(`${endpoints.mensajesStaff}contacts/`);
       return unwrapList(res);

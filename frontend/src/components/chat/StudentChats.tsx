@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, MessageCircle, Users } from 'lucide-react';
 import conexionesService from '@/services/conexionesService';
-import { profileHasAdmin, profileHasInstructor } from '@/lib/roles';
+import { hasRole } from '@/lib/roles';
 import { profileDisplayName } from '@/lib/staffChat';
 import { usePanelAuthContext } from '@/context/PanelAuthContext';
 import RoleBadge from '@/components/RoleBadge';
@@ -9,7 +9,7 @@ import BroadcastComposer from '@/components/chat/BroadcastComposer';
 import StudentChatConversation from '@/components/chat/StudentChatConversation';
 
 /** Existing private chats, presented together without sharing drafts or sends. */
-export default function StudentChats({ profiles, onOpenStaffChat }) {
+export default function StudentChats({ profiles }) {
   const { profile } = usePanelAuthContext();
   const [conversations, setConversations] = useState([]);
   const [openIds, setOpenIds] = useState<string[]>([]);
@@ -19,62 +19,57 @@ export default function StudentChats({ profiles, onOpenStaffChat }) {
   profilesRef.current = profiles;
   const latest = useRef(0);
 
-  const loadConversations = useCallback(async () => {
-    const request = ++latest.current;
-    try {
-      const rows = await conexionesService.mensajes.list('-created_date', 500);
-      if (request !== latest.current) return;
-      const byStudent: Record<string, any> = {};
-      for (const message of rows) {
-        const id = String(message.alumno_id);
-        const summary = byStudent[id] ||= { last: message, unread: 0 };
-        if (new Date(message.created_date) > new Date(summary.last.created_date)) summary.last = message;
-        if (message.remitente === 'alumno' && !message.leido_instructor) summary.unread++;
-      }
-      const ids = new Set(profilesRef.current.map(student => String(student.id)));
-      const next = profilesRef.current.map(student => {
-        const summary = byStudent[String(student.id)];
-        return { alumnoId: String(student.id), profile: student, nombre: profileDisplayName(student),
-          ultimoTexto: summary?.last.contenido || summary?.last.texto || '', ultimaFecha: summary?.last.created_date || null, noLeidos: summary?.unread || 0 };
-      });
-      for (const [id, summary] of Object.entries(byStudent)) {
-        if (!ids.has(id)) next.push({ alumnoId: id, nombre: summary.last.alumno_nombre || 'Alumno',
-          ultimoTexto: summary.last.contenido || summary.last.texto || '', ultimaFecha: summary.last.created_date, noLeidos: summary.unread });
-      }
-      next.sort((a, b) => a.ultimaFecha && b.ultimaFecha ? new Date(b.ultimaFecha).getTime() - new Date(a.ultimaFecha).getTime()
-        : a.ultimaFecha ? -1 : b.ultimaFecha ? 1 : a.nombre.localeCompare(b.nombre));
-      setConversations(next); setError('');
-    } catch {
-      if (request === latest.current) setError('No se pudieron actualizar las conversaciones.');
-    } finally {
-      if (request === latest.current) setLoading(false);
-    }
+  const openIdsRef = useRef(openIds); openIdsRef.current = openIds;
+  const mapSummary = useCallback(summary => {
+    const student = profilesRef.current.find(p => String(p.id) === String(summary.alumno_id)) || {
+      id:summary.alumno_id, nombre:summary.nombre, apellidos:summary.apellidos, role:'alumno', roles:['alumno'], status:'activo',
+    };
+    return { alumnoId:String(summary.alumno_id), profile:student, nombre:profileDisplayName(student),
+      ultimoTexto:summary.contenido, ultimaFecha:summary.created_date, lastId:summary.last_id, noLeidos:summary.unread };
   }, []);
-
+  const loadConversations = useCallback(async (roomId?: string) => {
+    const request = roomId ? 0 : ++latest.current;
+    try {
+      const rows = await conexionesService.mensajes.summaries(roomId);
+      if (!roomId && request !== latest.current) return;
+      const next = rows.map(mapSummary);
+      setConversations(previous => roomId ? previous.map(c => c.alumnoId === roomId ? next[0] : c).filter(Boolean) : next);
+      setError('');
+    } catch {
+      if (roomId || request === latest.current) setError('No se pudieron actualizar las conversaciones.');
+    } finally { if (roomId || request === latest.current) setLoading(false); }
+  }, [mapSummary]);
   useEffect(() => {
     void loadConversations();
     const unsubscribe = conexionesService.subscribeMensajes(event => {
-      if (event.type === 'poll' || conexionesService.parseWsPayload(event)?.type === 'mensaje') void loadConversations();
+      const payload = conexionesService.parseWsPayload(event);
+      if (event.type === 'poll' || payload?.type === 'asignacion') void loadConversations();
+      else if (payload?.type === 'mensaje' && payload.room_id && !openIdsRef.current.includes(String(payload.room_id))) void loadConversations(String(payload.room_id));
     });
-    const onVisible = () => { if (document.visibilityState === 'visible') void loadConversations(); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => { ++latest.current; unsubscribe(); document.removeEventListener('visibilitychange', onVisible); };
+    return () => { ++latest.current; unsubscribe(); };
   }, [loadConversations]);
-
   useEffect(() => { void loadConversations(); }, [profiles, loadConversations]);
-
-  const open = conversation => {
-    if (conversation.profile && (profileHasAdmin(conversation.profile) || profileHasInstructor(conversation.profile))) {
-      onOpenStaffChat?.(conversation.profile); return;
-    }
-    setOpenIds(previous => previous.includes(conversation.alumnoId) ? previous : [...previous, conversation.alumnoId]);
+  const changed = (studentId, message, action) => {
+    if (action === 'deleted') { void loadConversations(studentId); return; }
+    setConversations(previous => previous.map(c => {
+      if (c.alumnoId !== studentId) return c;
+      if (action === 'cleared') return { ...c, ultimoTexto:'', ultimaFecha:null, lastId:null, noLeidos:0 };
+      if (action === 'read') return { ...c, noLeidos:0 };
+      if (!message) return c;
+      const newer = !c.ultimaFecha || new Date(message.created_date).getTime() >= new Date(c.ultimaFecha).getTime();
+      return { ...c,
+        ...(newer ? { ultimoTexto:message.contenido, ultimaFecha:message.created_date, lastId:message.id } : {}),
+        noLeidos:c.noLeidos + (action === 'message' && message.id !== c.lastId && message.remitente === 'alumno' && !message.leido_instructor ? 1 : 0),
+      };
+    }));
   };
+  const open = conversation => setOpenIds(previous => previous.includes(conversation.alumnoId) ? previous : [...previous, conversation.alumnoId]);
   const opened = openIds.map(id => conversations.find(conversation => conversation.alumnoId === id)).filter(Boolean);
 
   if (loading) return <div className="flex justify-center py-20"><Loader2 aria-label="Cargando conversaciones" className="w-8 h-8 animate-spin text-primary" /></div>;
 
   return <div className="space-y-4">
-    <BroadcastComposer recipients={profiles.filter(student => !profileHasAdmin(student) && !profileHasInstructor(student))}
+    <BroadcastComposer recipients={conversations.map(c => c.profile).filter(student => hasRole(student, 'alumno'))}
       title="Mensaje para varios alumnos" description="Solo aparecen los alumnos asignados y cada uno recibe una conversación privada."
       onSend={(ids, content) => conexionesService.mensajes.broadcast(ids, content)} />
     <p className="text-sm text-muted-foreground">Abre los chats de varios alumnos para conversar con ellos en paralelo. Cada chat mantiene su propio borrador.</p>
@@ -100,7 +95,7 @@ export default function StudentChats({ profiles, onOpenStaffChat }) {
           <MessageCircle className="w-10 h-10 text-muted-foreground mb-3" /><p className="text-sm text-muted-foreground">Selecciona los alumnos para abrir sus conversaciones.</p>
         </div>}
         {opened.map(student => <StudentChatConversation key={student.alumnoId} student={student} instructorName={profileDisplayName(profile)}
-          onChanged={loadConversations} onClose={() => setOpenIds(previous => previous.filter(id => id !== student.alumnoId))} />)}
+          onChanged={(message, action) => changed(student.alumnoId, message, action)} onClose={() => setOpenIds(previous => previous.filter(id => id !== student.alumnoId))} />)}
       </div>
     </div>
   </div>;

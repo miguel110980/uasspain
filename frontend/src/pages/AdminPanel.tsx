@@ -121,9 +121,7 @@ export default function AdminPanel() {
     if (!authProfile?.id) return undefined;
     const checkStaffUnread = async () => {
       try {
-        const staffMsgs = await conexionesService.mensajesStaff.filter({ leido_destinatario: false });
-        const incoming = staffMsgs.filter((m) => String(m.destinatario_id) === String(authProfile.id));
-        setStaffUnread(incoming.length);
+        setStaffUnread(await conexionesService.mensajesStaff.unreadCount());
       } catch {}
     };
     checkStaffUnread();

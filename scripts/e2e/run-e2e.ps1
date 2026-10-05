@@ -2,7 +2,7 @@
 param(
     [switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser, [switch]$FrontendOnly, [switch]$SecureBrowser,
     [switch]$PreserveVolumes,
-    [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'sessions', 'realtime', 'concurrent')]
+    [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'sessions', 'realtime', 'concurrent', 'private')]
     [string[]]$BrowserScope = @('all')
 )
 
@@ -12,9 +12,9 @@ $ComposeFile = Join-Path $Root 'docker-compose.e2e.yml'
 $ComposeArgs = @('-f', $ComposeFile)
 $PreviousBrowserOrigin = $env:E2E_BROWSER_ORIGIN
 if ($SecureBrowser) {
-    if ($BrowserScope -contains 'all') { $BrowserScope = @('sessions', 'realtime', 'presence') }
-    if ($BrowserScope | Where-Object { $_ -notin @('sessions', 'realtime', 'presence') }) {
-        throw 'SecureBrowser supports sessions, realtime and presence scopes.'
+    if ($BrowserScope -contains 'all') { $BrowserScope = @('sessions', 'realtime', 'presence', 'concurrent', 'private') }
+    if ($BrowserScope | Where-Object { $_ -notin @('sessions', 'realtime', 'presence', 'concurrent', 'private') }) {
+        throw 'SecureBrowser supports sessions, realtime, presence, concurrent and private scopes.'
     }
     $ComposeArgs += @('-f', (Join-Path $Root 'docker-compose.realtime-e2e.yml'))
     $env:E2E_BROWSER_ORIGIN = 'https://localhost:8444'
@@ -231,11 +231,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'La suite de cursos E2E fallo' }
 
     function Invoke-Operations {
-        param([string]$Mode)
+        param([string]$Mode, [string[]]$FixtureArguments = @())
         & $Docker run --rm --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true `
             -v "${PSScriptRoot}:/workspace/e2e:ro" --network uasspain-e2e_e2e_net `
             -e E2E_BASE=http://backend-e2e:8000 -e E2E_ORIGIN=http://localhost:8010 `
-            $PythonImage /workspace/e2e/e2e_operations.py $Mode
+            $PythonImage /workspace/e2e/e2e_operations.py $Mode @FixtureArguments
         if ($LASTEXITCODE -ne 0) { throw "Prueba operacional falló: $Mode" }
     }
     Write-Host '==> Validando plazo de examen, concurrencia y carga acotada'
@@ -247,7 +247,16 @@ try {
         -v ON_ERROR_STOP=1 -c "UPDATE examenes_intento SET started_at=NOW()-INTERVAL '41 minutes', expires_at=NOW()-INTERVAL '1 minute' WHERE id='$ExpiryId'::uuid;" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'preparación del plazo E2E falló' }
     Invoke-Operations 'deadline-verify'
-    Invoke-Operations 'profile-lifecycle'
+    $Lifecycle = (Invoke-Operations 'profile-lifecycle-prepare') | ConvertFrom-Json
+    foreach ($Id in @($Lifecycle.student_id, $Lifecycle.teacher_id)) {
+        if ([string]$Id -notmatch '^[0-9a-fA-F-]{36}$') { throw 'ID del fixture lifecycle no valido' }
+    }
+    # Registration remains pending until OTP verification. Activate only this
+    # newly registered disposable fixture, never a real account.
+    & $Docker compose @ComposeArgs exec -T postgres-e2e psql -U uasspain -d test_e2e_uasspain -v ON_ERROR_STOP=1 `
+        -c "UPDATE accounts_userprofile SET status='activo',otp_verified=TRUE WHERE id='$($Lifecycle.student_id)'::uuid;" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'activacion del fixture lifecycle fallo' }
+    Invoke-Operations -Mode 'profile-lifecycle' -FixtureArguments @([string]$Lifecycle.teacher_id, [string]$Lifecycle.student_id)
     Invoke-Operations 'load'
     Write-Host '==> Validando 100 sesiones HTTP/WebSocket y carreras de autenticacion'
     & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
@@ -256,6 +265,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'readiness previa a concurrencia E2E fallo' }
     & node (Join-Path $Root 'scripts/e2e/e2e-concurrent-sessions.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de sesiones concurrentes E2E fallo' }
+    Write-Host '==> Validando aislamiento y moderacion de 20 canales privados de chat'
+    & node (Join-Path $Root 'scripts/e2e/e2e-chat-private.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de canales privados de chat E2E fallo' }
     Write-Host '==> Probando caída y recuperación de dependencias aisladas'
     foreach ($Dependency in @('redis-e2e', 'postgres-e2e')) {
         try {
@@ -271,10 +283,15 @@ try {
     }
     $ExitCode = 0
     if (-not $SkipBrowser) {
+        if ($SecureBrowser -and $BrowserScope -contains 'private') {
+            Write-Host '==> Validando cuotas reales del edge HTTPS con 20 canales privados'
+            & node (Join-Path $Root 'scripts/e2e/e2e-chat-edge.mjs')
+            if ($LASTEXITCODE -ne 0) { throw 'La regresion de cuotas de chat HTTPS fallo' }
+        }
         # Each group uses the unchanged production login limit. A backend restart
         # between groups isolates test traffic instead of weakening that limit.
         $BrowserGroups = @(
-            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@session-regression|@realtime-regression|@concurrent-regression|staff-presence-video.spec|student-assignment.spec') },
+            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@session-regression|@realtime-regression|@concurrent-regression|@private-channel-regression|@private-chat-measurement|staff-presence-video.spec|student-assignment.spec') },
             @{ Key = 'chat'; Label = 'chat bidireccional'; Arguments = @('panels.spec.ts', '--grep', 'chat messages appear bidirectionally') },
             @{ Key = 'presence'; Label = 'presencia y videollamada'; Arguments = @('staff-presence-video.spec.ts') },
             @{ Key = 'assignments'; Label = 'asignación de alumnos'; Arguments = @('student-assignment.spec.ts') },
@@ -282,7 +299,8 @@ try {
             @{ Key = 'courses'; Label = 'cursos'; Arguments = @('--grep', '@course-module') },
             @{ Key = 'sessions'; Label = 'persistencia y recuperación de sesión'; Arguments = @('--grep', '@session-regression') },
             @{ Key = 'realtime'; Label = 'chat y medios en tiempo real'; Arguments = @('--grep', '@realtime-regression') },
-            @{ Key = 'concurrent'; Label = 'paneles simultaneos y 50 ventanas'; Arguments = @('--grep', '@concurrent-regression') }
+            @{ Key = 'concurrent'; Label = 'paneles simultaneos y 50 ventanas'; Arguments = @('--grep', '@concurrent-regression') },
+            @{ Key = 'private'; Label = 'canales privados y recuperacion'; Arguments = @('--grep', '@private-channel-regression|@private-chat-measurement') }
         )
         # Invoke Node directly so Windows cmd does not interpret regex pipes.
         $PlaywrightCli = Join-Path $Root 'frontend/node_modules/@playwright/test/cli.js'

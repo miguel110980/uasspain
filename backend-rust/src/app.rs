@@ -385,6 +385,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(crate::connections::delete_message),
         )
         .route(
+            "/api/mensajes/summaries/",
+            get(crate::connections::message_summaries),
+        )
+        .route(
+            "/api/mensajes/unread/",
+            get(crate::connections::message_unread),
+        )
+        .route(
             "/api/mensajes/broadcast/",
             post(crate::connections::direct_broadcast),
         )

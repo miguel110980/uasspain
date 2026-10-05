@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import conexionesService from '@/services/conexionesService';
 import { profileHasAdmin, profileHasInstructor } from '@/lib/roles';
-import { buildStaffPeers, countStaffUnread, profileDisplayName, staffChatPeerStorageKey } from '@/lib/staffChat';
+import { buildStaffPeers, countStaffUnread, profileDisplayName } from '@/lib/staffChat';
 import { usePanelAuthContext } from '@/context/PanelAuthContext';
 import StaffChatPanel from '@/components/chat/StaffChatPanel';
 import StudentChats from '@/components/chat/StudentChats';
@@ -53,7 +53,7 @@ export default function InstructorChat({
           myProfileId: profile.id,
           profiles: staffContacts,
           staffMsgs,
-          roleFilter: (p) => profileHasAdmin(p) || profileHasInstructor(p),
+          roleFilter: (p) => profileHasAdmin(p),
           fallbackRole: 'admin',
           fallbackLabel: 'Contacto',
         }));
@@ -118,16 +118,6 @@ export default function InstructorChat({
     ];
   }, [admins]);
 
-  const [staffFocusPeerId, setStaffFocusPeerId] = useState(null);
-
-  const openStaffChatWith = (peer) => {
-    if (profile?.id && peer?.id) {
-      sessionStorage.setItem(staffChatPeerStorageKey(profile.id), String(peer.id));
-    }
-    setStaffFocusPeerId(peer?.id || null);
-    setTab('admin');
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex gap-2">
@@ -155,7 +145,7 @@ export default function InstructorChat({
         })}
       </div>
       <div className={tab === 'alumnos' ? '' : 'hidden'}>
-        <StudentChats profiles={chatProfiles} onOpenStaffChat={openStaffChatWith} />
+        <StudentChats profiles={chatProfiles} />
       </div>
       {profile?.id && (
         <div className={tab === 'admin' ? '' : 'hidden'}>
@@ -173,7 +163,6 @@ export default function InstructorChat({
               peerSingular="Contacto"
               emptyPeersText="No hay contactos disponibles."
               selectPeerText="Selecciona un contacto para ver la conversación."
-              focusPeerId={staffFocusPeerId}
               contactGroups={adminContactGroups}
             />
           )}

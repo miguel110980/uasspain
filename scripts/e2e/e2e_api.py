@@ -880,6 +880,16 @@ async def main():
 
     async def both_flow():
         recv_s, recv_i = [], []
+        async def receive_persisted(ws, expected):
+            # The private channel echoes each persisted row to both members.
+            # Match the reply by ID instead of mistaking an own-message echo
+            # or read receipt for the next incoming message.
+            async with asyncio.timeout(5):
+                while True:
+                    raw = await ws.recv()
+                    event = json.loads(raw)
+                    if event.get("type") == "message" and event.get("room_id") == room and event.get("data", {}).get("id") == expected.get("id"):
+                        return raw
         async with (
             websockets.connect(
                 url,
@@ -903,16 +913,16 @@ async def main():
             ) as wsI,
         ):
             await asyncio.sleep(0.3)
-            st1, _ = instr.call(
+            st1, first = instr.call(
                 "POST", "/api/mensajes/", {"alumno_id": id_s, "contenido": "E2E i to a"}
             )
             try:
-                recv_s.append(await asyncio.wait_for(wsS.recv(), timeout=5))
+                recv_s.append(await receive_persisted(wsS, first))
             except Exception as e:
                 recv_s.append(f"ERR {e}")
-            st2, _ = alum.call("POST", "/api/mensajes/", {"contenido": "E2E a to i"})
+            st2, second = alum.call("POST", "/api/mensajes/", {"contenido": "E2E a to i"})
             try:
-                recv_i.append(await asyncio.wait_for(wsI.recv(), timeout=5))
+                recv_i.append(await receive_persisted(wsI, second))
             except Exception as e:
                 recv_i.append(f"ERR {e}")
             return st1, st2, recv_s, recv_i

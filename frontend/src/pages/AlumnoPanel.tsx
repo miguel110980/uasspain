@@ -112,8 +112,8 @@ export default function AlumnoPanel() {
     if (!profile?.id) return;
     const checkNoLeidos = async () => {
       try {
-        const noLeidos = await conexionesService.mensajes.filter({ alumno_id: profile.id, remitente: 'instructor', leido_alumno: false });
-        setChatSinLeer(noLeidos.length > 0);
+        const noLeidos = await conexionesService.mensajes.unreadCount(String(profile.id));
+        setChatSinLeer(noLeidos > 0);
       } catch {}
     };
     checkNoLeidos();

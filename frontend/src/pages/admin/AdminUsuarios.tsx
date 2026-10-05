@@ -154,7 +154,6 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
         conexionesService.conexiones.deleteMany({ alumno_id: id }),
         examenesService.bloqueos.deleteMany({ alumno_id: id }),
         materialesService.completados.deleteMany({ alumno_id: id }),
-        conexionesService.mensajes.deleteMany({ alumno_id: id }),
       ]);
       await authService.deleteProfile(id);
       setProfiles((prev) => prev.filter((p) => p.id !== id));

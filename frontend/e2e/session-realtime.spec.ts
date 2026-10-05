@@ -225,7 +225,7 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
     // Force a transport interruption; delivery must catch up without a page reload.
     await student.context().clearCookies({ name: 'uasspain_access' });
     const renewed = student.waitForResponse(r => r.url().includes('/api/auth/refresh/') && r.status() === 200);
-    await student.evaluate(() => (window as ObservedWindow).auditSockets.filter(s => new URL(s.url).pathname === '/ws/conexiones/').forEach(s => s.close()));
+    await student.evaluate(() => (window as ObservedWindow).auditSockets.filter(s => new URL(s.url).pathname.startsWith('/ws/chat/')).forEach(s => s.close()));
     await instructor.locator('main').getByRole('button', { name: /^Alumnos(?:\s+\d+)?$/ }).filter({ visible: true }).click(); await selectStudent();
     const resumed = `Tras reconexión ${Date.now()}`;
     await send(instructor, resumed);

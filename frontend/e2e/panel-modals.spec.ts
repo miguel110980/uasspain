@@ -131,7 +131,7 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
     }
   });
 
-  test('student exam setup and chat confirmation remain accessible', async ({ page, browser }) => {
+  test('student exam setup and instructor moderation remain accessible', async ({ page, browser }) => {
     const staffContext = await browser.newContext();
     const instructor = await staffContext.newPage();
     await login(instructor, 'instructor');
@@ -148,13 +148,18 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
     await verifyDialog(page, setup, setup.getByRole('button', { name: 'Comenzar examen', exact: true }));
     await page.keyboard.press('Escape');
     await section(page, 'Chat');
-    await page.getByPlaceholder('Escribe un mensaje...').fill('Mensaje para comprobar la confirmación de limpieza.');
+    const message = `Mensaje para comprobar la confirmación de limpieza ${Date.now()}.`;
+    await page.getByPlaceholder('Escribe un mensaje...').fill(message);
     await page.getByRole('button', { name: 'Enviar mensaje', exact: true }).click();
-    await expect(page.getByText('Mensaje para comprobar la confirmación de limpieza.', { exact: true })).toBeVisible();
-    await page.getByTitle('Limpiar conversación', { exact: true }).click();
-    const clear = page.getByRole('dialog', { name: 'Limpiar chat', exact: true });
-    await verifyDialog(page, clear, clear.getByRole('button', { name: 'Cancelar', exact: true }));
-    await page.keyboard.press('Escape');
+    await expect(page.getByText(message, { exact: true })).toBeVisible();
+    await expect(page.getByTitle('Limpiar conversación', { exact: true })).toHaveCount(0);
+    await section(instructor, 'Chat');
+    await instructor.locator('main button').filter({ has: instructor.getByText('E2E Alumno', { exact:true }) }).filter({ visible:true }).click();
+    const conversation = instructor.getByRole('region', { name:'Conversación con E2E Alumno', exact:true });
+    await conversation.getByRole('button', { name:'Limpiar conversación', exact:true }).click();
+    const clear = instructor.getByRole('dialog', { name: 'Limpiar chat', exact: true });
+    await verifyDialog(instructor, clear, clear.getByRole('button', { name: 'Cancelar', exact: true }));
+    await instructor.keyboard.press('Escape');
     await expect(clear).toHaveCount(0);
     } finally {
       expect((await instructor.request.delete(`/api/examenes/${examId}/`, { headers })).status()).toBe(204);

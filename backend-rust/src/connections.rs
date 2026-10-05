@@ -510,16 +510,19 @@ pub async fn delete_messages_many(
     Json(input): Json<DeleteManyRequest>,
 ) -> Result<Json<Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    require_role(&claims, &["admin"])?;
+    require_role(&claims, &["instructor"])?;
     let student = input
         .query
         .alumno_id
         .ok_or_else(|| AppError::Validation("alumno_id es obligatorio.".into()))?;
+    let mut tx = lock_direct_channel(&state, &claims, student).await?;
     let deleted = sqlx::query("DELETE FROM conexiones_mensaje WHERE alumno_id=$1")
         .bind(student)
-        .execute(pool(&state)?)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
+    tx.commit().await?;
+    publish_direct_invalidation(&state, student, "cleared").await?;
     Ok(Json(json!({"deleted":deleted})))
 }
 
@@ -529,14 +532,60 @@ pub async fn list_messages(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Vec<DirectMessage>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
+    require_role(&claims, &["instructor", "alumno"])?;
     if query.alumno_id.is_some() {
         direct_student(&state, &claims, query.alumno_id).await?;
     }
-    let rows = sqlx::query_as::<_, DirectMessage>("SELECT m.id,m.alumno_id,m.instructor_id,m.conexion_id,m.alumno_nombre,m.remitente,m.contenido,m.leido_alumno,m.leido_instructor,m.created_date FROM conexiones_mensaje m JOIN accounts_userprofile p ON p.id=m.alumno_id WHERE ($1='admin' OR ($1='alumno' AND m.alumno_id=$2) OR ($1='instructor' AND p.assigned_instructor_id=$2)) AND ($3::uuid IS NULL OR m.alumno_id=$3) AND ($4::text IS NULL OR m.remitente=$4) AND ($5::boolean IS NULL OR m.leido_alumno=$5) AND ($6::boolean IS NULL OR m.leido_instructor=$6) ORDER BY m.created_date ASC LIMIT $7")
+    let rows = sqlx::query_as::<_, DirectMessage>("SELECT * FROM (SELECT m.id,m.alumno_id,m.instructor_id,m.conexion_id,m.alumno_nombre,m.remitente,m.contenido,m.leido_alumno,m.leido_instructor,m.created_date FROM conexiones_mensaje m JOIN accounts_userprofile p ON p.id=m.alumno_id WHERE (($1='alumno' AND m.alumno_id=$2) OR ($1='instructor' AND p.assigned_instructor_id=$2)) AND ($3::uuid IS NULL OR m.alumno_id=$3) AND ($4::text IS NULL OR m.remitente=$4) AND ($5::boolean IS NULL OR m.leido_alumno=$5) AND ($6::boolean IS NULL OR m.leido_instructor=$6) ORDER BY m.created_date DESC,m.id DESC LIMIT $7) recent ORDER BY created_date ASC,id ASC")
         .bind(&claims.role).bind(claims.profile_id).bind(query.alumno_id).bind(query.remitente)
         .bind(query.leido_alumno).bind(query.leido_instructor).bind(query.limit.unwrap_or(500).clamp(1,1000))
         .fetch_all(pool(&state)?).await?;
     decrypt_direct(rows, &state)
+}
+
+pub async fn message_unread(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<Value>, AppError> {
+    let claims = authenticate(&state, &headers, "access")?;
+    require_role(&claims, &["instructor", "alumno"])?;
+    if query.alumno_id.is_some() {
+        direct_student(&state, &claims, query.alumno_id).await?;
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conexiones_mensaje m JOIN accounts_userprofile p ON p.id=m.alumno_id WHERE (($1='alumno' AND m.alumno_id=$2 AND p.assigned_instructor_id IS NOT NULL AND m.remitente='instructor' AND NOT m.leido_alumno) OR ($1='instructor' AND p.assigned_instructor_id=$2 AND m.remitente='alumno' AND NOT m.leido_instructor)) AND ($3::uuid IS NULL OR m.alumno_id=$3)")
+        .bind(&claims.role).bind(claims.profile_id).bind(query.alumno_id).fetch_one(pool(&state)?).await?;
+    Ok(Json(json!({"count":count})))
+}
+
+pub async fn message_summaries(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<Vec<Value>>, AppError> {
+    let claims = authenticate(&state, &headers, "access")?;
+    require_role(&claims, &["instructor"])?;
+    if let Some(student) = query.alumno_id {
+        direct_student(&state, &claims, Some(student)).await?;
+    }
+    let mut rows = sqlx::query_scalar::<_,Value>(r#"
+      WITH students AS MATERIALIZED (SELECT id,nombre,apellidos FROM accounts_userprofile WHERE assigned_instructor_id=$1 AND status='activo' AND (role='alumno' OR roles ? 'alumno') AND ($2::uuid IS NULL OR id=$2)),
+      messages AS MATERIALIZED (SELECT m.* FROM conexiones_mensaje m JOIN students p ON p.id=m.alumno_id),
+      unread AS (SELECT alumno_id,count(*) FILTER(WHERE remitente='alumno' AND NOT leido_instructor) AS count FROM messages GROUP BY alumno_id),
+      latest AS (SELECT DISTINCT ON(alumno_id) alumno_id,id,contenido,created_date FROM messages ORDER BY alumno_id,created_date DESC,id DESC)
+      SELECT jsonb_build_object('alumno_id',p.id,'nombre',p.nombre,'apellidos',p.apellidos,'last_id',m.id,'contenido',COALESCE(m.contenido,''),'created_date',m.created_date,'unread',COALESCE(u.count,0))
+      FROM students p LEFT JOIN latest m ON m.alumno_id=p.id LEFT JOIN unread u ON u.alumno_id=p.id ORDER BY m.created_date DESC NULLS LAST,p.id
+    "#).bind(claims.profile_id).bind(query.alumno_id).fetch_all(pool(&state)?).await?;
+    for row in &mut rows {
+        for field in ["nombre", "apellidos", "contenido"] {
+            row[field] = json!(
+                state
+                    .cipher
+                    .decrypt(row[field].as_str().ok_or(AppError::Internal)?)?
+            );
+        }
+    }
+    Ok(Json(rows))
 }
 
 pub async fn create_message(
@@ -545,42 +594,10 @@ pub async fn create_message(
     Json(input): Json<DirectWrite>,
 ) -> Result<(StatusCode, Json<DirectMessage>), AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    if claims.role == "admin" {
-        return Err(AppError::Forbidden);
-    }
+    require_role(&claims, &["instructor", "alumno"])?;
     let alumno = direct_student(&state, &claims, input.alumno_id).await?;
     let content = message(&input.contenido)?;
-    let instructor: Option<Uuid> =
-        sqlx::query_scalar("SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$1")
-            .bind(alumno)
-            .fetch_one(pool(&state)?)
-            .await?;
-    if claims.role == "instructor" && instructor != Some(claims.profile_id) {
-        return Err(AppError::Forbidden);
-    }
-    let id = Uuid::new_v4();
-    let row=sqlx::query_as::<_,DirectMessage>("INSERT INTO conexiones_mensaje (id,created_date,updated_date,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor) VALUES ($1,NOW(),NOW(),$2,$3,NULL,'',$4,$5,FALSE,FALSE) RETURNING id,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor,created_date")
-        .bind(id).bind(alumno).bind(instructor).bind(&claims.role).bind(state.cipher.encrypt(content)?).fetch_one(pool(&state)?).await?;
-    let row = decrypt_direct(vec![row], &state)?
-        .0
-        .pop()
-        .ok_or(AppError::Internal)?;
-    state
-        .events
-        .publish(
-            format!("chat:{alumno}"),
-            json!({
-                "type": "message",
-                "room_id": alumno.to_string(),
-                "sender_id": claims.profile_id,
-                "content": &row.contenido,
-            }),
-        )
-        .await;
-    state
-        .events
-        .publish("connections", json!({"type":"mensaje", "action":"created"}))
-        .await;
+    let row = persist_direct(&state, &claims, alumno, content).await?;
     Ok((StatusCode::CREATED, Json(row)))
 }
 
@@ -590,6 +607,7 @@ pub async fn message_detail(
     Path(id): Path<Uuid>,
 ) -> Result<Json<DirectMessage>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
+    require_role(&claims, &["instructor", "alumno"])?;
     let row=sqlx::query_as::<_,DirectMessage>("SELECT id,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor,created_date FROM conexiones_mensaje WHERE id=$1").bind(id).fetch_optional(pool(&state)?).await?.ok_or(AppError::NotFound)?;
     direct_student(&state, &claims, Some(row.alumno_id)).await?;
     let row = decrypt_direct(vec![row], &state)?
@@ -606,14 +624,15 @@ pub async fn update_message(
     Json(input): Json<DirectPatch>,
 ) -> Result<Json<DirectMessage>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
+    require_role(&claims, &["instructor", "alumno"])?;
     let current: Option<(Uuid, String)> =
         sqlx::query_as("SELECT alumno_id,remitente FROM conexiones_mensaje WHERE id=$1")
             .bind(id)
             .fetch_optional(pool(&state)?)
             .await?;
     let (student, sender) = current.ok_or(AppError::NotFound)?;
-    direct_student(&state, &claims, Some(student)).await?;
-    if claims.role != "admin" && input.contenido.is_some() && sender != claims.role {
+    let mut tx = lock_direct_channel(&state, &claims, student).await?;
+    if input.contenido.is_some() && sender != claims.role {
         return Err(AppError::Forbidden);
     }
     if (claims.role == "alumno" && input.leido_instructor.is_some())
@@ -628,11 +647,13 @@ pub async fn update_message(
         .transpose()?
         .map(|v| state.cipher.encrypt(v))
         .transpose()?;
-    let row=sqlx::query_as::<_,DirectMessage>("UPDATE conexiones_mensaje SET contenido=COALESCE($2,contenido),leido_alumno=COALESCE($3,leido_alumno),leido_instructor=COALESCE($4,leido_instructor),updated_date=NOW() WHERE id=$1 RETURNING id,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor,created_date").bind(id).bind(content).bind(input.leido_alumno).bind(input.leido_instructor).fetch_one(pool(&state)?).await?;
+    let row=sqlx::query_as::<_,DirectMessage>("UPDATE conexiones_mensaje SET contenido=COALESCE($2,contenido),leido_alumno=COALESCE($3,leido_alumno),leido_instructor=COALESCE($4,leido_instructor),updated_date=NOW() WHERE id=$1 RETURNING id,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor,created_date").bind(id).bind(content).bind(input.leido_alumno).bind(input.leido_instructor).fetch_optional(&mut *tx).await?.ok_or(AppError::NotFound)?;
     let row = decrypt_direct(vec![row], &state)?
         .0
         .pop()
         .ok_or(AppError::Internal)?;
+    tx.commit().await?;
+    publish_direct_message(&state, &row, claims.profile_id).await?;
     Ok(Json(row))
 }
 
@@ -642,20 +663,30 @@ pub async fn delete_message(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
+    require_role(&claims, &["instructor", "alumno"])?;
     let current: Option<(Uuid, String)> =
         sqlx::query_as("SELECT alumno_id,remitente FROM conexiones_mensaje WHERE id=$1")
             .bind(id)
             .fetch_optional(pool(&state)?)
             .await?;
     let (student, sender) = current.ok_or(AppError::NotFound)?;
-    direct_student(&state, &claims, Some(student)).await?;
-    if claims.role != "admin" && sender != claims.role {
+    let mut tx = lock_direct_channel(&state, &claims, student).await?;
+    if claims.role == "alumno" && sender != "alumno" {
         return Err(AppError::Forbidden);
     }
     sqlx::query("DELETE FROM conexiones_mensaje WHERE id=$1")
         .bind(id)
-        .execute(pool(&state)?)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
+    state
+        .events
+        .publish(
+            format!("chat:{student}"),
+            json!({"type":"deleted","room_id":student,"id":id}),
+        )
+        .await;
+    publish_direct_invalidation(&state, student, "deleted").await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -672,10 +703,14 @@ pub async fn direct_broadcast(
         ));
     }
     let content = message(&input.contenido)?;
-    let mut created = Vec::with_capacity(input.recipient_ids.len());
-    for student in input.recipient_ids {
-        direct_student(&state, &claims, Some(student)).await?;
-        let row=sqlx::query_as::<_,DirectMessage>("INSERT INTO conexiones_mensaje (id,created_date,updated_date,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor) VALUES ($1,NOW(),NOW(),$2,$3,NULL,'','instructor',$4,FALSE,FALSE) RETURNING id,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor,created_date").bind(Uuid::new_v4()).bind(student).bind(claims.profile_id).bind(state.cipher.encrypt(content)?).fetch_one(pool(&state)?).await?;
+    let mut recipients = input.recipient_ids;
+    recipients.sort_unstable();
+    recipients.dedup();
+    let mut created = Vec::with_capacity(recipients.len());
+    let mut tx = pool(&state)?.begin().await?;
+    for student in recipients {
+        authorize_direct_write(&mut tx, &claims, student).await?;
+        let row=sqlx::query_as::<_,DirectMessage>("INSERT INTO conexiones_mensaje (id,created_date,updated_date,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor) VALUES ($1,NOW(),NOW(),$2,$3,NULL,'','instructor',$4,FALSE,FALSE) RETURNING id,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor,created_date").bind(Uuid::new_v4()).bind(student).bind(claims.profile_id).bind(state.cipher.encrypt(content)?).fetch_one(&mut *tx).await?;
         created.push(
             decrypt_direct(vec![row], &state)?
                 .0
@@ -683,10 +718,10 @@ pub async fn direct_broadcast(
                 .ok_or(AppError::Internal)?,
         );
     }
-    state
-        .events
-        .publish("connections", json!({"type":"mensaje", "action":"created"}))
-        .await;
+    tx.commit().await?;
+    for row in &created {
+        publish_direct_message(&state, row, claims.profile_id).await?;
+    }
     Ok((StatusCode::CREATED, Json(created)))
 }
 
@@ -696,7 +731,9 @@ pub async fn mark_read(
     Json(input): Json<StudentAction>,
 ) -> Result<Json<Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
+    require_role(&claims, &["instructor", "alumno"])?;
     let alumno = direct_student(&state, &claims, input.alumno_id).await?;
+    let mut tx = lock_direct_channel(&state, &claims, alumno).await?;
     let sql = if claims.role == "alumno" {
         "UPDATE conexiones_mensaje SET leido_alumno=TRUE,updated_date=NOW() WHERE alumno_id=$1 AND remitente='instructor' AND NOT leido_alumno"
     } else {
@@ -704,14 +741,19 @@ pub async fn mark_read(
     };
     let updated = sqlx::query(sql)
         .bind(alumno)
-        .execute(pool(&state)?)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
+    tx.commit().await?;
     if updated > 0 {
         state
             .events
-            .publish("connections", json!({"type":"mensaje", "action":"read"}))
+            .publish(
+                format!("chat:{alumno}"),
+                json!({"type":"read","room_id":alumno,"reader":claims.role}),
+            )
             .await;
+        publish_direct_invalidation(&state, alumno, "read").await?;
     }
     Ok(Json(json!({"updated":updated})))
 }
@@ -721,18 +763,25 @@ pub async fn clear_chat(
     Json(input): Json<StudentAction>,
 ) -> Result<Json<Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
+    require_role(&claims, &["instructor"])?;
     let alumno = direct_student(&state, &claims, input.alumno_id).await?;
+    let mut tx = lock_direct_channel(&state, &claims, alumno).await?;
     let deleted = sqlx::query("DELETE FROM conexiones_mensaje WHERE alumno_id=$1")
         .bind(alumno)
-        .execute(pool(&state)?)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
-    sqlx::query("UPDATE conexiones_conexion SET ultimo_mensaje='',ultima_fecha=NULL,updated_date=NOW() WHERE alumno_id=$1").bind(alumno).execute(pool(&state)?).await?;
+    sqlx::query("UPDATE conexiones_conexion SET ultimo_mensaje='',ultima_fecha=NULL,updated_date=NOW() WHERE alumno_id=$1").bind(alumno).execute(&mut *tx).await?;
+    tx.commit().await?;
     if deleted > 0 {
         state
             .events
-            .publish("connections", json!({"type":"mensaje", "action":"cleared"}))
+            .publish(
+                format!("chat:{alumno}"),
+                json!({"type":"cleared","room_id":alumno}),
+            )
             .await;
+        publish_direct_invalidation(&state, alumno, "cleared").await?;
     }
     Ok(Json(
         json!({"detail":"Conversación limpiada correctamente.","deleted":deleted}),
@@ -908,10 +957,11 @@ async fn run_connections_socket(socket: WebSocket, state: Arc<AppState>, claims:
             event = events.recv() => match event {
                 Ok(event) if event.topic == "connections" => {
                     if !session_is_active(&state, &claims).await.unwrap_or(false) { break; }
+                    if event.payload.get("audience").and_then(Value::as_array).is_some_and(|ids| !ids.iter().any(|id| id.as_str() == Some(&claims.profile_id.to_string()))) { continue; }
                     // Personal data and access logs are only visible to administrators.
                     // Other roles receive an invalidation notice and re-fetch their scoped API.
                     let payload = if claims.role == "admin" { event.payload } else {
-                        json!({"type":event.payload.get("type"), "action":event.payload.get("action")})
+                        json!({"type":event.payload.get("type"), "action":event.payload.get("action"), "room_id":event.payload.get("room_id")})
                     };
                     if output.send(Message::Text(payload.to_string().into())).await.is_err() { break; }
                 },
@@ -931,6 +981,98 @@ async fn run_connections_socket(socket: WebSocket, state: Arc<AppState>, claims:
             },
         }
     }
+}
+
+async fn authorize_direct_write(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    claims: &Claims,
+    student: Uuid,
+) -> Result<Uuid, AppError> {
+    require_role(claims, &["instructor", "alumno"])?;
+    sqlx::query("SELECT id FROM accounts_userprofile WHERE id=$1 FOR UPDATE")
+        .bind(student)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::Forbidden)?;
+    let instructor: Option<Uuid> = sqlx::query_scalar("SELECT p.assigned_instructor_id FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id JOIN accounts_userprofile i ON i.id=p.assigned_instructor_id JOIN auth_user iu ON iu.id=i.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role='alumno' OR p.roles ? 'alumno') AND i.status='activo' AND iu.is_active AND (i.role='instructor' OR i.roles ? 'instructor')")
+        .bind(student).fetch_optional(&mut **tx).await?;
+    let instructor = instructor.ok_or(AppError::Forbidden)?;
+    if (claims.role == "alumno" && student != claims.profile_id)
+        || (claims.role == "instructor" && instructor != claims.profile_id)
+    {
+        return Err(AppError::Forbidden);
+    }
+    Ok(instructor)
+}
+
+async fn lock_direct_channel(
+    state: &AppState,
+    claims: &Claims,
+    student: Uuid,
+) -> Result<sqlx::Transaction<'static, Postgres>, AppError> {
+    let mut tx = pool(state)?.begin().await?;
+    authorize_direct_write(&mut tx, claims, student).await?;
+    Ok(tx)
+}
+
+async fn persist_direct(
+    state: &AppState,
+    claims: &Claims,
+    student: Uuid,
+    content: &str,
+) -> Result<DirectMessage, AppError> {
+    let mut tx = pool(state)?.begin().await?;
+    let instructor = authorize_direct_write(&mut tx, claims, student).await?;
+    let row = sqlx::query_as::<_,DirectMessage>("INSERT INTO conexiones_mensaje(id,created_date,updated_date,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor) VALUES($1,NOW(),NOW(),$2,$3,NULL,'',$4,$5,FALSE,FALSE) RETURNING id,alumno_id,instructor_id,conexion_id,alumno_nombre,remitente,contenido,leido_alumno,leido_instructor,created_date")
+        .bind(Uuid::new_v4()).bind(student).bind(instructor).bind(&claims.role).bind(state.cipher.encrypt(content)?).fetch_one(&mut *tx).await?;
+    let row = decrypt_direct(vec![row], state)?
+        .0
+        .pop()
+        .ok_or(AppError::Internal)?;
+    tx.commit().await?;
+    publish_direct_message(state, &row, claims.profile_id).await?;
+    Ok(row)
+}
+
+async fn publish_direct_message(
+    state: &AppState,
+    row: &DirectMessage,
+    sender: Uuid,
+) -> Result<(), AppError> {
+    state.events.publish(format!("chat:{}",row.alumno_id), json!({"type":"message","room_id":row.alumno_id,"sender_id":sender,"content":row.contenido,"data":row})).await;
+    publish_direct_invalidation(state, row.alumno_id, "changed").await
+}
+
+async fn publish_direct_invalidation(
+    state: &AppState,
+    student: Uuid,
+    action: &str,
+) -> Result<(), AppError> {
+    let instructor: Option<Uuid> =
+        sqlx::query_scalar("SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$1")
+            .bind(student)
+            .fetch_optional(pool(state)?)
+            .await?
+            .flatten();
+    state.events.publish("connections", json!({"type":"mensaje","action":action,"room_id":student,"audience":[Some(student),instructor]})).await;
+    Ok(())
+}
+
+pub(crate) async fn persist_socket_message(
+    state: &AppState,
+    claims: &Claims,
+    room: &str,
+    content: &str,
+) -> Result<(), AppError> {
+    let content = message(content)?;
+    if let Some(peer) = crate::chat::staff_peer(room, claims.profile_id) {
+        authorize_staff_pair(state, claims, peer).await?;
+        insert_staff(state, claims, peer, content).await?;
+    } else {
+        let student = room.parse::<Uuid>().map_err(|_| AppError::Forbidden)?;
+        persist_direct(state, claims, student, content).await?;
+    }
+    Ok(())
 }
 
 async fn insert_staff(
@@ -986,17 +1128,15 @@ async fn authorize_staff_pair(
     claims: &Claims,
     peer: Uuid,
 ) -> Result<(), AppError> {
-    let peer_role: Option<String> =
-        sqlx::query_scalar("SELECT role FROM accounts_userprofile WHERE id=$1 AND status='activo'")
-            .bind(peer)
-            .fetch_optional(pool(state)?)
-            .await?;
-    matches!(
-        (claims.role.as_str(), peer_role.as_deref()),
-        ("admin", Some("instructor")) | ("instructor", Some("admin"))
-    )
-    .then_some(())
-    .ok_or(AppError::Forbidden)
+    require_role(claims, &["admin", "instructor"])?;
+    let expected = if claims.role == "admin" {
+        "instructor"
+    } else {
+        "admin"
+    };
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role=$2 OR p.roles ? $2))")
+        .bind(peer).bind(expected).fetch_one(pool(state)?).await?;
+    allowed.then_some(()).ok_or(AppError::Forbidden)
 }
 fn decrypt_direct(
     mut rows: Vec<DirectMessage>,
