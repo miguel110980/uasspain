@@ -31,7 +31,11 @@ it('shares presence, messages and call notifications without exceeding connectio
   expect(TestSocket.instances).toHaveLength(1);
   const socket = TestSocket.instances[0]; socket.open();
   socket.onmessage?.({ data: JSON.stringify({ type: 'mensaje', action: 'created' }) });
-  for (const callback of callbacks) expect(callback).toHaveBeenLastCalledWith({ type: 'ws', data: { type: 'mensaje', action: 'created' } });
+  for (const callback of callbacks.slice(0, 2)) expect(callback).toHaveBeenLastCalledWith({ type: 'ws', data: { type: 'mensaje', action: 'created' } });
+  expect(callbacks[2]).toHaveBeenLastCalledWith({ type: 'poll' });
+  socket.onmessage?.({ data: JSON.stringify({ type: 'video_changed' }) });
+  expect(callbacks[0]).toHaveBeenLastCalledWith({ type: 'ws', data: { type: 'mensaje', action: 'created' } });
+  expect(callbacks[2]).toHaveBeenLastCalledWith({ type: 'ws', data: { type: 'video_changed' } });
   cleanups.shift()!(); expect(socket.readyState).toBe(1);
   socket.onmessage?.({ data: JSON.stringify({ type: 'resync_required' }) });
   expect(callbacks[1]).toHaveBeenLastCalledWith({ type: 'poll' });

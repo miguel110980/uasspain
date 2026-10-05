@@ -8,6 +8,7 @@ pub mod cache;
 pub mod chat;
 pub mod connections;
 pub mod content;
+pub mod dashboard;
 pub mod db;
 pub mod email;
 pub mod error;

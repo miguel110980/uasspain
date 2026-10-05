@@ -17,10 +17,8 @@ const BLUE = '#60A5FA';
 const EMERALD = '#34D399';
 const RED = '#F87171';
 
-export default function InstructorDashboard({ profiles, resultados, examenes, material, mensajes, conexiones, loading }) {
+export default function InstructorDashboard({ profiles, resultados, loading, counts }) {
   const alumnos = profiles.filter((p) => hasRole(p, 'alumno'));
-  const pendientes = alumnos.filter((p) => p.status === 'pendiente');
-  const activos = alumnos.filter((p) => p.status === 'activo');
   const realizados = resultados;
   const aprobados = realizados.filter((r) => r.aprobado);
 
@@ -78,16 +76,17 @@ export default function InstructorDashboard({ profiles, resultados, examenes, ma
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-        <KpiCard icon={Users} label="Alumnos" value={alumnos.length} delta={pendientes.length ? `${pendientes.length} pend.` : null} trend="up" loading={loading} />
-        <KpiCard icon={CheckCircle2} label="Alumnos activos" value={activos.length} trend="up" accent="blue" loading={loading} />
-        <KpiCard icon={ClipboardList} label="Exámenes realizados" value={realizados.length} trend="up" accent="orange" loading={loading} />
-        <KpiCard icon={Award} label="Exámenes aprobados" value={aprobados.length} trend="up" loading={loading} />
-        <KpiCard icon={BookOpen} label="Material formativo" value={material.length} accent="blue" loading={loading} />
-        <KpiCard icon={ClipboardList} label="Exámenes config." value={examenes.length} accent="orange" loading={loading} />
-        <KpiCard icon={MessageCircle} label="Mensajes" value={mensajes.length} accent="blue" loading={loading} />
-        <KpiCard icon={Wifi} label="Conexiones" value={conexiones.length} loading={loading} />
+        <KpiCard icon={Users} label="Alumnos" value={counts?.students ?? '—'} delta={counts?.pending_students ? `${counts.pending_students} pend.` : null} trend="up" loading={loading} />
+        <KpiCard icon={CheckCircle2} label="Alumnos activos" value={counts?.active_students ?? '—'} trend="up" accent="blue" loading={loading} />
+        <KpiCard icon={ClipboardList} label="Exámenes realizados" value={counts?.results ?? '—'} trend="up" accent="orange" loading={loading} />
+        <KpiCard icon={Award} label="Exámenes aprobados" value={counts?.passed ?? '—'} trend="up" loading={loading} />
+        <KpiCard icon={BookOpen} label="Material formativo" value={counts?.materials ?? '—'} accent="blue" loading={loading} />
+        <KpiCard icon={ClipboardList} label="Exámenes config." value={counts?.exams ?? '—'} accent="orange" loading={loading} />
+        <KpiCard icon={MessageCircle} label="Mensajes" value={counts?.messages ?? '—'} accent="blue" loading={loading} />
+        <KpiCard icon={Wifi} label="Conexiones" value={counts?.connections ?? '—'} loading={loading} />
       </div>
 
+      <p className="text-xs text-muted-foreground">Las gráficas muestran los últimos {resultados.length} resultados y {alumnos.length} alumnos cargados.</p>
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="glass-card p-5 lg:col-span-2">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Actividad (7 días)</h3>

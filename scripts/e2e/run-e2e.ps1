@@ -2,7 +2,7 @@
 param(
     [switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser, [switch]$FrontendOnly, [switch]$SecureBrowser,
     [switch]$PreserveVolumes,
-    [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'sessions', 'realtime')]
+    [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'sessions', 'realtime', 'concurrent')]
     [string[]]$BrowserScope = @('all')
 )
 
@@ -249,6 +249,13 @@ try {
     Invoke-Operations 'deadline-verify'
     Invoke-Operations 'profile-lifecycle'
     Invoke-Operations 'load'
+    Write-Host '==> Validando 100 sesiones HTTP/WebSocket y carreras de autenticacion'
+    & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a concurrencia E2E fallo' }
+    & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'readiness previa a concurrencia E2E fallo' }
+    & node (Join-Path $Root 'scripts/e2e/e2e-concurrent-sessions.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de sesiones concurrentes E2E fallo' }
     Write-Host '==> Probando caída y recuperación de dependencias aisladas'
     foreach ($Dependency in @('redis-e2e', 'postgres-e2e')) {
         try {
@@ -267,14 +274,15 @@ try {
         # Each group uses the unchanged production login limit. A backend restart
         # between groups isolates test traffic instead of weakening that limit.
         $BrowserGroups = @(
-            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@session-regression|@realtime-regression|staff-presence-video.spec|student-assignment.spec') },
+            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@session-regression|@realtime-regression|@concurrent-regression|staff-presence-video.spec|student-assignment.spec') },
             @{ Key = 'chat'; Label = 'chat bidireccional'; Arguments = @('panels.spec.ts', '--grep', 'chat messages appear bidirectionally') },
             @{ Key = 'presence'; Label = 'presencia y videollamada'; Arguments = @('staff-presence-video.spec.ts') },
             @{ Key = 'assignments'; Label = 'asignación de alumnos'; Arguments = @('student-assignment.spec.ts') },
             @{ Key = 'modals'; Label = 'modales y datos'; Arguments = @('--grep', '@panel-modals') },
             @{ Key = 'courses'; Label = 'cursos'; Arguments = @('--grep', '@course-module') },
             @{ Key = 'sessions'; Label = 'persistencia y recuperación de sesión'; Arguments = @('--grep', '@session-regression') },
-            @{ Key = 'realtime'; Label = 'chat y medios en tiempo real'; Arguments = @('--grep', '@realtime-regression') }
+            @{ Key = 'realtime'; Label = 'chat y medios en tiempo real'; Arguments = @('--grep', '@realtime-regression') },
+            @{ Key = 'concurrent'; Label = 'paneles simultaneos y 50 ventanas'; Arguments = @('--grep', '@concurrent-regression') }
         )
         # Invoke Node directly so Windows cmd does not interpret regex pipes.
         $PlaywrightCli = Join-Path $Root 'frontend/node_modules/@playwright/test/cli.js'
@@ -291,6 +299,15 @@ try {
                 $ExitCode = $LASTEXITCODE
                 if ($ExitCode -ne 0) { throw 'La suite de navegador E2E fallo' }
             } finally { Pop-Location }
+        }
+        if ($BrowserScope -contains 'all') {
+            Write-Host '==> Auditando layout y accesibilidad con autenticacion y API reales'
+            & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'reinicio previo al audit UI fallo' }
+            & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'readiness previa al audit UI fallo' }
+            & node (Join-Path $Root 'scripts/e2e/e2e-ui-audit.mjs')
+            if ($LASTEXITCODE -ne 0) { throw 'La auditoria UI contra backend real fallo' }
         }
     }
 }

@@ -16,7 +16,9 @@ const apiClient = axios.create({
   paramsSerializer: urlEncodedParamsSerializer,
 });
 
+let refreshGeneration = 0;
 apiClient.interceptors.request.use(async (config) => {
+  (config as typeof config & { _authGeneration?: number })._authGeneration = refreshGeneration;
   config.headers['X-UASSpain-Window-Id'] = await ensureWindowSession();
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type'];
@@ -52,6 +54,12 @@ apiClient.interceptors.response.use(
     }
 
     if (error.response?.data?.code === 'session_window_mismatch') return Promise.reject(error);
+    // A response issued before a successful renewal may arrive after the shared
+    // promise has settled. Retry it using the new cookie instead of rotating again.
+    if (originalRequest._authGeneration < refreshGeneration) {
+      originalRequest._retry = true;
+      return apiClient(originalRequest);
+    }
     if (!refreshPromise) {
       // Assign the shared promise before yielding. Concurrent 401 responses
       // must not rotate the same refresh cookie more than once.
@@ -66,6 +74,7 @@ apiClient.interceptors.response.use(
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-UASSpain-Window-Id': windowId },
           },
         );
+        ++refreshGeneration;
         return response.data;
       })()
         .finally(() => {

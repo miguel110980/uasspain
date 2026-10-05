@@ -136,6 +136,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/contact/", post(api::contact))
         .route("/api/system/status/", get(crate::system_status::status))
+        .route("/api/dashboard/counts/", get(crate::dashboard::counts))
         .route(
             "/api/system/smtp/",
             get(crate::runtime_config::smtp_get).put(crate::runtime_config::smtp_put),

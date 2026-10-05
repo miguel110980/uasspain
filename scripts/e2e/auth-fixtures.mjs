@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 export const root = fileURLToPath(new URL('../../', import.meta.url));
 const compose = resolve(root, 'docker-compose.e2e.yml');
 const docker = args => execFileSync('docker', args, { cwd: root, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-const backend = docker(['compose', '-f', compose, 'ps', '-q', 'backend-e2e']);
-const postgres = docker(['compose', '-f', compose, 'ps', '-q', 'postgres-e2e']);
+export const backend = docker(['compose', '-f', compose, 'ps', '-q', 'backend-e2e']);
+export const postgres = docker(['compose', '-f', compose, 'ps', '-q', 'postgres-e2e']);
 for (const container of [backend, postgres]) {
   if (!container || docker(['inspect', '--format', '{{index .Config.Labels "com.docker.compose.project"}}', container]) !== 'uasspain-e2e') {
     throw new Error('Authentication fixtures require the isolated uasspain-e2e project');

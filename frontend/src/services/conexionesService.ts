@@ -226,7 +226,10 @@ export const conexionesService = {
   parseWsPayload,
 
   subscribeMensajes(onEvent) {
-    return createWsSubscription(endpoints.ws.conexiones, onEvent, 5000);
+    return createWsSubscription(endpoints.ws.conexiones, event => {
+      const type = parseWsPayload(event)?.type;
+      if (event.type === 'poll' || ['mensaje', 'mensaje_staff', 'asignacion'].includes(type)) onEvent(event);
+    }, 5000);
   },
 
   subscribeConexiones(onEvent) {
@@ -239,7 +242,10 @@ export const conexionesService = {
   },
 
   subscribeVideollamadas(onEvent) {
-    return createWsSubscription(endpoints.ws.conexiones, onEvent, 10000);
+    return createWsSubscription(endpoints.ws.conexiones, event => {
+      const type = parseWsPayload(event)?.type;
+      if (event.type === 'poll' || ['video_changed', 'asignacion'].includes(type)) onEvent(event);
+    }, 10000);
   },
 };
 

@@ -6,8 +6,8 @@ import {
 import authService from '@/services/authService';
 import { usePanelAuthContext } from '@/context/PanelAuthContext';
 import examenesService from '@/services/examenesService';
-import materialesService from '@/services/materialesService';
 import conexionesService from '@/services/conexionesService';
+import { loadResources } from '@/lib/loadResources';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 import AdminTopbar from '@/components/admin/AdminTopbar';
 import InstructorDashboard from '@/pages/instructor/InstructorDashboard';
@@ -68,11 +68,9 @@ export default function InstructorPanel() {
   const [examenes, setExamenes] = useState([]);
   const [bloqueos, setBloqueos] = useState([]);
   const [resultados, setResultados] = useState([]);
-  const [material, setMaterial] = useState([]);
-  const [mensajes, setMensajes] = useState([]);
-  const [conexiones, setConexiones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dataError, setDataError] = useState('');
+  const [counts, setCounts] = useState(null);
   const [actionLoading, setActionLoading] = useState({});
   const { user, profile: authProfile } = usePanelAuthContext();
   const [accountProfile, setAccountProfile] = useState(null);
@@ -94,7 +92,11 @@ export default function InstructorPanel() {
       if (payload?.type === 'conexion' || payload?.type === 'asignacion' || event.type === 'poll') {
         clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = setTimeout(() => {
-          loadAll(true).catch(() => {});
+          if (payload?.type === 'conexion') {
+            authService.dashboardCounts().then(setCounts).catch(() => {
+              setDataError('No se pudieron actualizar las conexiones. Vuelve a intentarlo.');
+            });
+          } else loadAll(true).catch(() => {});
         }, 1000);
       }
     });
@@ -142,23 +144,19 @@ export default function InstructorPanel() {
   const loadAll = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [profilesData, examenesData, bloqueosData, resultadosData, materialData, mensajesData, registrosData] = await Promise.all([
-        authService.listProfiles('-created_date', 200),
-        examenesService.examenes.list(),
-        examenesService.bloqueos.list(),
-        examenesService.resultados.list('-created_date', 500),
-        materialesService.materiales.list(),
-        conexionesService.mensajes.list('-created_date', 100),
-        conexionesService.registros.list('-fecha_hora', 500),
-      ]);
-      setProfiles(profilesData);
-      setExamenes(examenesData.sort((a, b) => CURSOS.indexOf(a.categoria) - CURSOS.indexOf(b.categoria)));
-      setBloqueos(bloqueosData);
-      setResultados(resultadosData);
-      setMaterial(materialData);
-      setMensajes(mensajesData);
-      setConexiones(registrosData);
-      setDataError('');
+      const { values, failed } = await loadResources({
+        Alumnos: () => authService.listProfiles('-created_date', 200),
+        Exámenes: () => examenesService.examenes.list(),
+        Bloqueos: () => examenesService.bloqueos.list(),
+        Resultados: () => examenesService.resultados.list('-created_date', 500),
+        Totales: () => authService.dashboardCounts(),
+      });
+      if (values.Alumnos) setProfiles(values.Alumnos);
+      if (values.Exámenes) setExamenes([...values.Exámenes].sort((a, b) => CURSOS.indexOf(a.categoria) - CURSOS.indexOf(b.categoria)));
+      if (values.Bloqueos) setBloqueos(values.Bloqueos);
+      if (values.Resultados) setResultados(values.Resultados);
+      if (values.Totales) setCounts(values.Totales);
+      setDataError(failed.length ? `No se pudieron actualizar: ${failed.join(', ')}. Se conservan los últimos datos disponibles.` : '');
     } catch {
       setDataError('No se pudieron actualizar los datos del panel. Vuelve a intentarlo.');
     } finally {
@@ -207,7 +205,7 @@ export default function InstructorPanel() {
 
   const chatSinLeer = chatSinLeerAlumno + chatSinLeerStaff;
 
-  const pendientesCount = profiles.filter((p) => (p.role || 'alumno') === 'alumno' && p.status === 'pendiente').length;
+  const pendientesCount = counts?.pending_students ?? 0;
 
   const topbarNotifications = [];
   if (pendientesCount > 0) {
@@ -280,11 +278,8 @@ export default function InstructorPanel() {
         <InstructorDashboard
           profiles={profiles}
           resultados={resultados}
-          examenes={examenes}
-          material={material}
-          mensajes={mensajes}
-          conexiones={conexiones}
           loading={loading}
+          counts={counts}
         />
       </div>
       {visitedTabs.has('usuarios') && <div className={section === 'usuarios' ? '' : 'hidden'}>{usuariosView}</div>}

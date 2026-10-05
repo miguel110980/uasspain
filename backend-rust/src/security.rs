@@ -12,6 +12,33 @@ use crate::error::AppError;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Password verification is CPU/memory intensive. Keep it off async workers
+/// and bound simultaneously running hashes rather than spawning unbounded work.
+pub async fn verify_password_hash_async(
+    password: String,
+    encoded: String,
+) -> Result<bool, AppError> {
+    static HASH_SLOTS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    let slots = HASH_SLOTS.get_or_init(|| {
+        std::sync::Arc::new(tokio::sync::Semaphore::new(
+            std::thread::available_parallelism()
+                .map_or(1, std::num::NonZeroUsize::get)
+                .clamp(1, 4),
+        ))
+    });
+    let permit = std::sync::Arc::clone(slots)
+        .acquire_owned()
+        .await
+        .map_err(|_| AppError::Internal)?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        verify_password_hash(&password, &encoded)
+    })
+    .await
+    .map_err(|_| AppError::Internal)
+}
+
 #[derive(Clone)]
 pub struct FieldCipher {
     current: Option<[u8; 32]>,

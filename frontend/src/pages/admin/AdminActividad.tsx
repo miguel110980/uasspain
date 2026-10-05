@@ -119,7 +119,7 @@ export default function AdminActividad() {
         </div>
       </div>
 
-      <div className="glass-card p-4 space-y-2 max-h-[70vh] overflow-y-auto">
+      <div tabIndex={0} role="region" aria-label="Eventos de actividad" className="glass-card p-4 space-y-2 max-h-[70vh] overflow-y-auto">
         {loading && !data ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="w-6 h-6 text-primary animate-spin" />

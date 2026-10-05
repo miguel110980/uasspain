@@ -219,7 +219,14 @@ export const authService = {
 
   async setSessionRole(role: string) {
     const res = await apiClient.post(endpoints.auth.sessionRole, { role });
+    const me = await authService.fetchMe();
+    if (me?.session_role !== role) throw new Error('No se pudo confirmar el rol de sesión.');
+    queryClientInstance.setQueryData(SESSION_QUERY_KEY, me);
     return res.data;
+  },
+
+  async dashboardCounts() {
+    return (await apiClient.get('/api/dashboard/counts/')).data;
   },
 
   async logout(redirectUrl?: string) {

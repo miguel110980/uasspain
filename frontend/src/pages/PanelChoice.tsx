@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Loader2, Shield, GraduationCap, LogOut } from 'lucide-react';
 import authService from '@/services/authService';
 import { useSession } from '@/hooks/useSession';
@@ -7,6 +7,8 @@ import { isBlockedStatus, needsPanelChoice, panelRouteForUser } from '@/lib/role
 /** Pantalla para usuarios con rol admin e instructor: eligen panel tras login. */
 export default function PanelChoice() {
   const { data: me, isLoading, isError } = useSession();
+  const [selectionError, setSelectionError] = useState('');
+  const [selecting, setSelecting] = useState(false);
 
   useEffect(() => {
     if (isError || (!isLoading && me === null)) authService.redirectToLogin('/elegir-panel');
@@ -30,12 +32,16 @@ export default function PanelChoice() {
   }, [me]);
 
   const goTo = async (path, role) => {
+    if (selecting) return;
+    setSelecting(true);
+    setSelectionError('');
     try {
       await authService.setSessionRole(role);
+      window.location.href = path;
     } catch {
-      // continuar aunque falle
+      setSelectionError('No se pudo cambiar el rol de sesión. Vuelve a intentarlo.');
+      setSelecting(false);
     }
-    window.location.href = path;
   };
 
   if (isLoading || !me || !needsPanelChoice({ ...me, profile: me.profile })) {
@@ -66,6 +72,7 @@ export default function PanelChoice() {
         <div className="grid gap-4 sm:grid-cols-2">
           <button
             type="button"
+            disabled={selecting}
             onClick={() => goTo('/admin', 'admin')}
             className="group flex flex-col items-center gap-3 rounded-xl border border-border-strong bg-card/40 p-6 text-left transition-colors hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
@@ -78,6 +85,7 @@ export default function PanelChoice() {
 
           <button
             type="button"
+            disabled={selecting}
             onClick={() => goTo('/instructor', 'instructor')}
             className="group flex flex-col items-center gap-3 rounded-xl border border-border-strong bg-card/40 p-6 text-left transition-colors hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
@@ -88,6 +96,7 @@ export default function PanelChoice() {
             </span>
           </button>
         </div>
+        {selectionError && <p role="alert" className="text-danger text-sm mt-4">{selectionError}</p>}
 
         <button
           type="button"

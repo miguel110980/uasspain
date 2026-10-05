@@ -23,7 +23,7 @@ export default function InstructorConexiones() {
     <h2 className="font-heading text-xl mb-4">Conexiones activas ({records.length})</h2>
     {error && <p role="alert" className="text-danger">{error}</p>}
     <p className="text-sm text-muted-foreground mb-4">Administradores, instructores y alumnos conectados.</p>
-    <div className="overflow-x-auto"><table className="w-full text-sm">
+    <div tabIndex={0} role="region" aria-label="Tabla de sesiones activas" className="overflow-x-auto"><table className="w-full text-sm">
       <thead><tr className="text-left border-b border-border-subtle"><th className="p-3">Nombre</th><th>Rol</th><th>Conectado desde</th><th>Estado</th></tr></thead>
       <tbody>{records.map(record => <tr key={record.id} className="border-b border-border-subtle">
         <td className="p-3">{record.nombre_completo}</td><td>{ROLE_LABELS[record.rol] || record.rol}</td>

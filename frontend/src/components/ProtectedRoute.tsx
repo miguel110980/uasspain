@@ -20,7 +20,7 @@ export default function ProtectedRoute({ role, children }) {
 
   const contextValue = useMemo(
     () => auth,
-    [auth.loading, auth.user?.id, auth.profile?.id, auth.unauthorized, auth.blockedMessage],
+    [auth],
   );
 
   if (auth.loading) {

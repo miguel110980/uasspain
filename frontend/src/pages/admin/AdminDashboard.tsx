@@ -8,6 +8,7 @@ import authService from '@/services/authService';
 import examenesService from '@/services/examenesService';
 import materialesService from '@/services/materialesService';
 import conexionesService from '@/services/conexionesService';
+import { loadResources } from '@/lib/loadResources';
 import KpiCard from '@/components/admin/KpiCard';
 import { buildActivityFeed, formatActivityTimestamp, rolBadgeClass } from '@/lib/adminActivity';
 import { getActivityIcon } from '@/lib/adminActivityIcons';
@@ -41,17 +42,18 @@ export default function AdminDashboard() {
 
   const load = async () => {
     try {
-      const [profiles, resultados, examenes, material, conexiones, registroConexion, systemStatus] = await Promise.all([
-        authService.listProfiles('-created_date', 500),
-        examenesService.resultados.list('-created_date', 500),
-        examenesService.examenes.list(),
-        materialesService.materiales.list(),
-        conexionesService.conexiones.list('-created_date', 100),
-        conexionesService.registros.list('-created_date', 500),
-        authService.getSystemStatus(),
-      ]);
-      setData({ profiles, resultados, examenes, material, conexiones, registroConexion, systemStatus });
-      setError('');
+      const { values, failed } = await loadResources({
+        profiles: () => authService.listProfiles('-created_date', 500),
+        resultados: () => examenesService.resultados.list('-created_date', 500),
+        examenes: () => examenesService.examenes.list(),
+        material: () => materialesService.materiales.list(),
+        conexiones: () => conexionesService.conexiones.list('-created_date', 100),
+        registroConexion: () => conexionesService.registros.list('-created_date', 500),
+        systemStatus: () => authService.getSystemStatus(),
+        counts: () => authService.dashboardCounts(),
+      });
+      setData(previous => ({ profiles: [], resultados: [], examenes: [], material: [], conexiones: [], registroConexion: [], ...previous, ...values }));
+      setError(failed.length ? 'Algunos datos no se pudieron actualizar. Se conservan los últimos datos disponibles.' : '');
       setLastUpdate(new Date());
     } catch {
       setError('No se pudieron actualizar los datos del panel. Vuelve a intentarlo.');
@@ -68,14 +70,11 @@ export default function AdminDashboard() {
     };
   }, []);
 
-  const registro = data?.registroConexion || [];
-
   const systemStatus = data?.systemStatus;
   const users = systemStatus?.users;
   const academic = systemStatus?.academic;
   const totalUsuarios = users?.total ?? '—';
-  const conectados = registro.filter((r) => r.estado_sesion === 'activa');
-  const conectadosUnicos = new Set(conectados.map((r) => r.usuario || r.email).filter(Boolean)).size;
+  const conectadosUnicos = data?.counts?.active_sessions ?? '—';
   const cursos = academic?.published_courses ?? '—';
   const examenesDisp = academic?.available_exams ?? '—';
   const aprobados = academic?.passed_exams ?? '—';

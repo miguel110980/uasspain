@@ -184,8 +184,10 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
         await expect(page.getByText(String(label), { exact: true }).locator('..').getByText(String(value), { exact: true })).toBeVisible();
       }
       await page.route('**/api/system/status/', route => route.fulfill({ status: 503, json: { detail: 'fixture unavailable' } }));
-      await page.reload();
-      await expect(page.getByRole('alert')).toContainText('No se pudieron actualizar');
+      // The dashboard refreshes every 30 seconds; preserve the mounted data
+      // while exercising that real refresh instead of reloading the document.
+      await expect(page.getByRole('alert')).toContainText(/no se pudieron actualizar/i, { timeout: 40000 });
+      await expect(page.getByText('Cursos publicados', { exact:true }).locator('..').getByText(String(status.academic.published_courses), { exact:true })).toBeVisible();
       await page.unroute('**/api/system/status/');
       await page.getByRole('button', { name: 'Reintentar', exact: true }).click();
       await expect(page.getByRole('alert')).toHaveCount(0);

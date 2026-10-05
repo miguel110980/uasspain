@@ -12,12 +12,15 @@ const folder = path.resolve(process.env.UI_AUDIT_REPORT || path.join(root, '..',
 const engine = process.env.UI_AUDIT_BROWSER || 'chromium';
 const widths = (process.env.UI_AUDIT_WIDTHS || '320,390,768,1280,1440,2560').split(',').map(Number);
 const roles = (process.env.UI_AUDIT_ROLES || 'public,admin,instructor,alumno').split(',');
-const report = { origin, engine, widths, screens: [], errors: [], warnings: [], failures: [], writesIntercepted: 0 };
+const live = process.env.UI_AUDIT_LIVE === 'true';
+const seed = live ? await (await import('../../scripts/e2e/concurrent-fixtures.mjs')).concurrentFixtures(8) : null;
+const report = { origin, engine, widths, liveBackend: live, screens: [], errors: [], warnings: [], failures: [], writesIntercepted: 0 };
 await mkdir(folder, { recursive: true });
 const app = await readFile(path.join(root, 'src', 'App.tsx'), 'utf8');
 const publicRoutes = [...app.matchAll(/<Route path="([^"]+)"/g)].map(m => m[1])
   .filter(route => !route.includes('*') && !['/admin', '/instructor', '/alumno', '/elegir-panel'].includes(route));
-publicRoutes.push(...fixture.courses.map(course => '/formacion/' + course.slug), '/ruta-inexistente-' + 'x'.repeat(120));
+const courses = live ? (await seed.admin.call('/api/courses')).body : fixture.courses;
+publicRoutes.push(...courses.map(course => '/formacion/' + course.slug), '/ruta-inexistente-' + 'x'.repeat(120));
 const browser = await ({ chromium, firefox, webkit })[engine].launch();
 
 async function setup(role) {
@@ -25,6 +28,7 @@ async function setup(role) {
   const page = await context.newPage();
   page.on('pageerror', error => report.errors.push({ role, message: error.message }));
   page.on('console', message => { if (message.type() === 'warning') report.warnings.push({ role, message: message.text() }); });
+  if (live) return { context, page };
   await page.routeWebSocket('**/ws/**', ws => ws.onMessage(() => {}));
   await page.route('https://www.google.com/maps**', route => route.fulfill({ contentType: 'text/html', body: '<p>Mapa de prueba</p>' }));
   // A pathname predicate also works on Vite: never intercept /src/api modules.
@@ -128,6 +132,14 @@ try {
       await page.keyboard.press('Escape');
       assert.equal(await page.getByRole('dialog').count(), 0, 'Escape cierra el diálogo de recuperación');
     } else {
+      if (live) {
+        const account = seed.fixtures[{ admin:0, instructor:1, alumno:3 }[role]];
+        await page.goto(origin + '/?auth=login');
+        await page.getByLabel('Correo electrónico *', { exact:true }).fill(account.email);
+        await page.getByLabel('Contraseña *', { exact:true }).fill(account.password);
+        await page.getByRole('button', { name:'Iniciar sesión', exact:true }).click();
+        await page.waitForURL(new RegExp('/' + role + '$'));
+      }
       await page.goto(origin + '/' + role);
       await page.locator('header h1').waitFor();
       const sections = await page.locator('aside:visible nav button').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')));
@@ -165,6 +177,7 @@ try {
   }
 } finally {
   await browser.close();
+  await seed?.cleanup();
   await writeFile(path.join(folder, 'report.json'), JSON.stringify(report, null, 2));
 }
 console.log(JSON.stringify({ screens: report.screens.length, failures: report.failures.length, errors: report.errors, warnings: report.warnings, writesIntercepted: report.writesIntercepted }, null, 2));

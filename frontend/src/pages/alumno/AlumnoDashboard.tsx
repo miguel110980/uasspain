@@ -3,6 +3,8 @@ import { motion } from 'framer-motion';
 import { ClipboardList, CheckCircle2, Award, TrendingUp, BookOpen, Clock, Activity, Target, RefreshCw, UserCheck } from 'lucide-react';
 import examenesService from '@/services/examenesService';
 import materialesService from '@/services/materialesService';
+import authService from '@/services/authService';
+import { loadResources } from '@/lib/loadResources';
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, ReferenceLine,
@@ -42,7 +44,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [hasData, setHasData] = useState(false);
+  const [counts, setCounts] = useState(null);
 
   useEffect(() => {
     if (!alumnoId) return;
@@ -52,18 +54,19 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
   const loadData = async (manual = false) => {
     if (manual) setRefreshing(true); else setLoading(true);
     try {
-      const [res, mat, comp, exa] = await Promise.all([
-        examenesService.resultados.filter({ alumno_id: alumnoId }, '-fecha', 200),
-        materialesService.materiales.list(),
-        materialesService.completados.filter({ alumno_id: alumnoId }),
-        examenesService.examenes.list(),
-      ]);
-      setResultados(res);
-      setMaterial(mat);
-      setCompletados(comp);
-      setExamenes(exa);
-      setHasData(true);
-      setError('');
+      const { values, failed } = await loadResources({
+        Resultados: () => examenesService.resultados.filter({ alumno_id: alumnoId }, '-fecha', 200),
+        Material: () => materialesService.materiales.list(),
+        Completados: () => materialesService.completados.filter({ alumno_id: alumnoId }),
+        Exámenes: () => examenesService.examenes.list(),
+        Totales: () => authService.dashboardCounts(),
+      });
+      if (values.Resultados) setResultados(values.Resultados);
+      if (values.Material) setMaterial(values.Material);
+      if (values.Completados) setCompletados(values.Completados);
+      if (values.Exámenes) setExamenes(values.Exámenes);
+      if (values.Totales) setCounts(values.Totales);
+      setError(failed.length ? `No se pudieron actualizar: ${failed.join(', ')}. Se conservan los últimos datos disponibles.` : '');
     } catch {
       setError('No se pudieron actualizar tus datos. Vuelve a intentarlo.');
     } finally {
@@ -75,12 +78,6 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
   const realizados = resultados;
   const aprobados = realizados.filter((r) => r.aprobado);
   const suspendidos = realizados.filter((r) => !r.aprobado);
-  const notaMedia = realizados.length
-    ? parseFloat((realizados.reduce((s, r) => s + (r.nota ?? 0), 0) / realizados.length).toFixed(1))
-    : 0;
-  const tasaAprobacion = realizados.length
-    ? Math.round((aprobados.length / realizados.length) * 100)
-    : 0;
 
   // Mejor categoría
   const porCategoria = CATS.map((cat) => {
@@ -132,8 +129,6 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
       ok: r.aprobado,
     }));
 
-  if (error && !hasData) return <div role="alert" className="p-3 border border-danger-border bg-danger-soft text-danger text-sm">{error} <button onClick={() => loadData(true)} className="underline">Reintentar</button></div>;
-
   return (
     <div className="space-y-6">
       {error && <p role="alert" className="text-danger text-sm">{error}</p>}
@@ -155,14 +150,14 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-        <KpiCard icon={ClipboardList} label="Exámenes realizados" value={realizados.length} trend="up" loading={loading} />
-        <KpiCard icon={CheckCircle2} label="Aprobados" value={aprobados.length} trend="up" accent="blue" loading={loading} />
-        <KpiCard icon={Award} label="Nota media" value={notaMedia} delta={`/10`} trend={notaMedia >= 5 ? 'up' : 'down'} accent="orange" loading={loading} />
-        <KpiCard icon={Target} label="Tasa aprobación" value={`${tasaAprobacion}%`} trend={tasaAprobacion >= 50 ? 'up' : 'down'} loading={loading} />
-        <KpiCard icon={BookOpen} label="Material disponible" value={material.length} accent="blue" loading={loading} />
-        <KpiCard icon={CheckCircle2} label="Material completado" value={completados.filter((c) => c.completado).length} accent="blue" loading={loading} />
-        <KpiCard icon={ClipboardList} label="Exámenes disponibles" value={examenes.filter((e) => !e.bloqueado).length} accent="orange" loading={loading} />
-        <KpiCard icon={TrendingUp} label="Intentos totales" value={realizados.length} loading={loading} />
+        <KpiCard icon={ClipboardList} label="Exámenes realizados" value={counts?.results ?? '—'} trend="up" loading={loading} />
+        <KpiCard icon={CheckCircle2} label="Aprobados" value={counts?.passed ?? '—'} trend="up" accent="blue" loading={loading} />
+        <KpiCard icon={Award} label="Nota media" value={counts?.average_grade ?? '—'} delta={`/10`} trend={counts?.average_grade >= 5 ? 'up' : 'down'} accent="orange" loading={loading} />
+        <KpiCard icon={Target} label="Tasa aprobación" value={counts ? `${counts.results ? Math.round(counts.passed * 100 / counts.results) : 0}%` : '—'} trend={counts && counts.results && counts.passed * 100 / counts.results >= 50 ? 'up' : 'down'} loading={loading} />
+        <KpiCard icon={BookOpen} label="Material disponible" value={counts?.materials ?? '—'} accent="blue" loading={loading} />
+        <KpiCard icon={CheckCircle2} label="Material completado" value={counts?.completed_materials ?? '—'} accent="blue" loading={loading} />
+        <KpiCard icon={ClipboardList} label="Exámenes disponibles" value={counts?.exams ?? '—'} accent="orange" loading={loading} />
+        <KpiCard icon={TrendingUp} label="Intentos totales" value={counts?.results ?? '—'} loading={loading} />
       </div>
 
       {/* Instructor asignado */}
@@ -177,6 +172,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
       )}
 
       {/* Charts fila 1 */}
+      <p className="text-xs text-muted-foreground">Las gráficas muestran tus últimos {resultados.length} resultados cargados.</p>
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="glass-card p-5 lg:col-span-2">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Evolución de notas</h3>

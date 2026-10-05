@@ -23,7 +23,6 @@ use uuid::Uuid;
 use crate::{
     AppState,
     error::AppError,
-    security::verify_password_hash,
     users::{ProfileRow, ProfileView},
 };
 
@@ -103,10 +102,13 @@ pub async fn login(
         if dummy.is_empty() {
             return Err(AppError::Internal);
         }
-        let _ = verify_password_hash(&input.password, dummy);
+        let _ = crate::security::verify_password_hash_async(input.password.clone(), dummy.clone())
+            .await?;
         return Err(AppError::Unauthorized);
     };
-    let password_correct = verify_password_hash(&input.password, &row.password);
+    let password_correct =
+        crate::security::verify_password_hash_async(input.password.clone(), row.password.clone())
+            .await?;
     if !row.is_active || row.status != "activo" || !row.otp_verified || !password_correct {
         return Err(AppError::Unauthorized);
     }
@@ -395,7 +397,14 @@ async fn finish_login(
     )?;
     let refresh_jti = state.tokens.decode(&refresh, "refresh")?.jti.to_string();
     let mut tx = pool.begin().await?;
-    let eligible: Option<bool> = sqlx::query_scalar("SELECT u.password=$2 AND u.is_active AND p.status='activo' AND p.otp_verified AND (p.role=$3 OR p.roles ? $3) FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 FOR UPDATE OF p")
+    // Take the profile lock in its own statement: a joined auth_user row read
+    // before waiting could otherwise retain a credential invalidated meanwhile.
+    sqlx::query("SELECT id FROM accounts_userprofile WHERE id=$1 FOR UPDATE")
+        .bind(row.id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    let eligible: Option<bool> = sqlx::query_scalar("SELECT u.password=$2 AND u.is_active AND p.status='activo' AND p.otp_verified AND (p.role=$3 OR p.roles ? $3) FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1")
         .bind(row.id).bind(&row.password).bind(role).fetch_optional(&mut *tx).await?;
     if eligible != Some(true) {
         return Err(AppError::Unauthorized);
@@ -574,9 +583,15 @@ pub async fn refresh(
 ) -> Result<Response, AppError> {
     let claims = authenticate(&state, &headers, "refresh")?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT id FROM accounts_userprofile WHERE id=$1 FOR UPDATE")
+        .bind(claims.profile_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
     let current: Option<(String, String, String)> = sqlx::query_as(
         "SELECT p.active_session_key,p.active_refresh_jti,COALESCE(NULLIF(p.session_role,''),p.role) FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active",
-    ).bind(claims.profile_id).fetch_optional(pool).await?;
+    ).bind(claims.profile_id).fetch_optional(&mut *tx).await?;
     let (session, refresh_jti, role) = current.ok_or(AppError::Unauthorized)?;
     if claims.session_key.is_empty()
         || session != claims.session_key
@@ -602,10 +617,11 @@ pub async fn refresh(
     )?;
     let next_jti = state.tokens.decode(&rotated, "refresh")?.jti.to_string();
     let rotated_once = sqlx::query("UPDATE accounts_userprofile SET active_refresh_jti=$1 WHERE id=$2 AND active_session_key=$3 AND active_refresh_jti=$4")
-        .bind(next_jti).bind(claims.profile_id).bind(&claims.session_key).bind(refresh_jti).execute(pool).await?;
+        .bind(next_jti).bind(claims.profile_id).bind(&claims.session_key).bind(refresh_jti).execute(&mut *tx).await?;
     if rotated_once.rows_affected() != 1 {
         return Err(AppError::Unauthorized);
     }
+    tx.commit().await?;
     let secure = if state.tokens.secure_cookie {
         "; Secure"
     } else {
@@ -652,12 +668,21 @@ pub async fn session_role(
         return Err(AppError::Validation(format!("Rol no válido: {role}")));
     }
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let roles: serde_json::Value =
-        sqlx::query_scalar("SELECT roles FROM accounts_userprofile WHERE id = $1")
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT id FROM accounts_userprofile WHERE id=$1 FOR UPDATE")
+        .bind(claims.profile_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    let current: Option<(String, serde_json::Value)> =
+        sqlx::query_as("SELECT p.active_session_key,p.roles FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active")
             .bind(claims.profile_id)
-            .fetch_optional(pool)
-            .await?
-            .ok_or(AppError::NotFound)?;
+            .fetch_optional(&mut *tx)
+            .await?;
+    let (session, roles) = current.ok_or(AppError::Unauthorized)?;
+    if session != claims.session_key {
+        return Err(AppError::Unauthorized);
+    }
     if !roles
         .as_array()
         .is_some_and(|values| values.iter().any(|value| value.as_str() == Some(role)))
@@ -669,7 +694,7 @@ pub async fn session_role(
     )
     .bind(role)
     .bind(claims.profile_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     let access = state.tokens.issue(
         claims.user_id,
@@ -679,6 +704,7 @@ pub async fn session_role(
         state.tokens.access_minutes,
         &claims.session_key,
     )?;
+    tx.commit().await?;
     let secure = if state.tokens.secure_cookie {
         "; Secure"
     } else {
@@ -899,15 +925,18 @@ pub async fn validate_active_session(
     let lookup = state
         .cipher
         .blind_index(&format!("window:{}", window_id(request.headers())?))?;
-    let expected: Option<String> =
-        sqlx::query_scalar("SELECT active_window_lookup FROM accounts_userprofile WHERE id=$1")
+    let current: Option<(String, Option<String>, String, serde_json::Value)> =
+        sqlx::query_as("SELECT p.active_window_lookup,p.active_session_key,p.role,p.roles FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active")
             .bind(claims.profile_id)
             .fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?)
             .await?;
-    if expected.as_deref() != Some(lookup.as_str()) {
+    let (expected, session, role, roles) = current.ok_or(AppError::Unauthorized)?;
+    if expected != lookup {
         return Err(AppError::SessionWindowMismatch);
     }
-    if !session_is_active(&state, &claims).await? {
+    if session.as_deref() != Some(&claims.session_key)
+        || !roles_from_json(&roles, &role).contains(&claims.role)
+    {
         return Err(AppError::Unauthorized);
     }
     sqlx::query("UPDATE conexiones_registroconexion SET ultima_actividad=NOW(),updated_date=NOW() WHERE profile_id=$1 AND session_id=$2 AND estado_sesion='activa' AND (ultima_actividad IS NULL OR ultima_actividad < NOW()-INTERVAL '60 seconds')")
