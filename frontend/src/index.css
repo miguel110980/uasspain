@@ -395,10 +395,14 @@
 .hero-radar-nodes { fill: currentColor; }
 .dark .hero-radar-nodes { fill: #d8ffff; }
 .hero-radar-mask-mobile { display: none; }
-.hero-radar-sweep { animation: hero-radar-highlight 12s ease-in-out infinite; }
-@keyframes hero-radar-highlight {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.75; }
+.hero-radar-sweep {
+  transform-box: view-box;
+  transform-origin: 680px 542px;
+  animation: hero-radar-scan 12s linear infinite;
+}
+@keyframes hero-radar-scan {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 .hero-title {
   font-size: clamp(1.875rem, 8.35vw, 2.25rem);

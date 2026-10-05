@@ -31,7 +31,7 @@ export default function HeroSection() {
               <stop stopColor="currentColor" stopOpacity="0.5" />
               <stop offset="1" stopColor="currentColor" stopOpacity="0" />
             </linearGradient>
-            <linearGradient id="hero-radar-ray" x1="684" y1="541" x2="886" y2="137" gradientUnits="userSpaceOnUse">
+            <linearGradient id="hero-radar-ray" x1="680" y1="542" x2="886" y2="137" gradientUnits="userSpaceOnUse">
               <stop stopColor="currentColor" stopOpacity="0" />
               <stop offset="0.65" stopColor="currentColor" stopOpacity="0.85" />
               <stop offset="1" stopColor="currentColor" stopOpacity="0.45" />
@@ -75,7 +75,7 @@ export default function HeroSection() {
                 <circle cx="830" cy="231" r="42" fill="url(#hero-radar-flare)" />
                 <path d="M816 285L886 137A480 457 0 0 1 960 178L860 313A284 278 0 0 0 816 285Z" fill="url(#hero-radar-sector)" />
                 <path d="M806 282L857 194" stroke="currentColor" strokeWidth="6" opacity="0.8" filter="url(#hero-radar-glow)" />
-                <path d="M684 541L886 137" stroke="url(#hero-radar-ray)" strokeWidth="2" />
+                <path d="M680 542L886 137" stroke="url(#hero-radar-ray)" strokeWidth="2" />
               </g>
               <g stroke="currentColor" strokeWidth="2" opacity="0.85">
                 <path d="M200 616Q187 542 203 466M208 616Q196 542 211 467M1155 468Q1166 542 1154 616M1148 468Q1158 542 1147 615M383 170Q442 135 500 120M918 144Q953 161 979 184M1087 822l-41 50" />
