@@ -61,6 +61,12 @@ temporales y logs, incluidos los nombres de archivo.
 
 ## Validacion
 
+Todas las reparaciones deben seguir la [regla obligatoria de Docker y GitHub](docs/REPAIR_WORKFLOW.md),
+persistida para los agentes en [AGENTS.md](AGENTS.md): tests, rebuild con
+`scripts/start-encrypted-stack.ps1 -Build`, cinco servicios saludables, E2E y
+funcion real sobre Docker, seguridad, commit y push. Una imagen antigua deja el
+cambio incompleto. Despues del push, verificar SHA remoto y salud local.
+
 Las imágenes base usan versiones explícitas y digest: Node 22.23.2 LTS,
 Nginx 1.30.5/Alpine 3.24, PostgreSQL 18.6, Redis 8.2.10 (rama Extended),
 Rust 1.99.0 y Ubuntu 26.04. El auxiliar `gosu` se compila con Go 1.27.1.

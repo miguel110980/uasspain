@@ -2,6 +2,11 @@
 
 ## Despliegue soportado
 
+Toda reparación se rige por [REPAIR_WORKFLOW.md](REPAIR_WORKFLOW.md) y
+[AGENTS.md](../AGENTS.md). No hacer commit/push hasta reconstruir con el script
+oficial, comprobar cinco servicios saludables y validar la función modificada
+en Docker. Una suite aislada no acredita el despliegue de la instancia principal.
+
 UASSpain se despliega combinando `docker-compose.yml` y
 `docker-compose.encrypted.yml` mediante el script de arranque. Este overlay
 mantiene obligatorio el cifrado de PostgreSQL, independientemente de BitLocker.

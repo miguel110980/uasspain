@@ -24,8 +24,25 @@ $Images = @()
 foreach ($Service in @('nginx', 'frontend', 'backend', 'postgres', 'redis')) {
     $Info = @( & docker inspect "uasspain-$Service" | ConvertFrom-Json )[0]
     if ($LASTEXITCODE -ne 0) { throw "Cannot inspect running $Service" }
-    $Images += @{ service = $Service; image = $Info.Image; configuredImage = $Info.Config.Image }
-    & docker @Common -v /var/run/docker.sock:/var/run/docker.sock:ro -v uasspain-trivy-cache:/cache $Trivy image --cache-dir /cache --timeout 10m --skip-version-check --scanners vuln --severity HIGH,CRITICAL --format json --output "/out/image-$Service.json" $Info.Image
+    $BuiltImage = @(& docker image inspect $Info.Config.Image | ConvertFrom-Json)[0]
+    if ($LASTEXITCODE -ne 0) { throw "Cannot inspect rebuilt image for $Service" }
+    $ScanImage = $BuiltImage.Id
+    # The containerd image store can retain a container's config digest in Image,
+    # while image inspect resolves the tag to an OCI index. Inspect its actual
+    # platform and verify the running manifest before scanning the immutable index.
+    if ($Info.ImageManifestDescriptor -and $Info.ImageManifestDescriptor.platform) {
+        $PlatformInfo = $Info.ImageManifestDescriptor.platform
+        $Platform = (@($PlatformInfo.os, $PlatformInfo.architecture, $PlatformInfo.variant) | Where-Object { $_ }) -join '/'
+        $PlatformImage = @(& docker image inspect --platform $Platform $Info.Config.Image | ConvertFrom-Json)[0]
+        if ($LASTEXITCODE -ne 0) { throw "Cannot resolve running platform for $Service" }
+        if ($PlatformImage.Descriptor.digest -ne $Info.ImageManifestDescriptor.digest) {
+            throw "Running $Service does not match the rebuilt image tag"
+        }
+    } elseif ($BuiltImage.Id -ne $Info.Image) {
+        throw "Running $Service does not match the rebuilt image tag"
+    }
+    $Images += @{ service = $Service; image = $Info.Image; scannedImage = $ScanImage; configuredImage = $Info.Config.Image }
+    & docker @Common -v /var/run/docker.sock:/var/run/docker.sock:ro -v uasspain-trivy-cache:/cache $Trivy image --cache-dir /cache --timeout 10m --skip-version-check --scanners vuln --severity HIGH,CRITICAL --format json --output "/out/image-$Service.json" $ScanImage
     if ($LASTEXITCODE -ne 0) { throw "Trivy $Service scan could not complete" }
 }
 $SourceMounts = @()
