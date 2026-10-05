@@ -372,11 +372,56 @@
 [class*="text-copy-tertiary/"] { color: hsl(var(--text-tertiary)); }
 .light [class*="placeholder:text-muted-foreground/"]::placeholder,
 .dark [class*="placeholder:text-muted-foreground/"]::placeholder { color: hsl(var(--muted-foreground)); }
-.hero-copy { background: transparent; }
+.hero-copy {
+  background: transparent;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.hero-radar, .hero-radar-outer {
+  --radar-line: hsl(var(--brand-cyan-text) / 0.38);
+  --radar-soft: hsl(var(--brand-cyan-text) / 0.16);
+  --radar-dot: hsl(var(--brand-cyan-text) / 0.92);
+  --radar-glow: hsl(var(--brand-cyan) / 0.10);
+  pointer-events: none;
+  user-select: none;
+}
+.dark .hero-radar, .dark .hero-radar-outer {
+  --radar-line: hsl(var(--brand-cyan) / 0.32);
+  --radar-soft: hsl(var(--brand-cyan) / 0.14);
+  --radar-dot: hsl(var(--brand-cyan) / 0.90);
+  --radar-glow: hsl(var(--brand-cyan) / 0.16);
+}
+.hero-radar {
+  box-shadow: 0 0 28px var(--radar-glow), inset 0 0 24px var(--radar-glow);
+}
+.hero-radar-outer { border-color: var(--radar-soft); }
+.hero-radar-sweep {
+  position: absolute;
+  inset: 1px;
+  border-radius: 50%;
+  background: conic-gradient(
+    transparent 315deg,
+    var(--radar-soft) 345deg,
+    var(--radar-line) 359deg,
+    transparent 360deg
+  );
+  animation: hero-radar-sweep 12s linear infinite;
+}
+@keyframes hero-radar-sweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-radar-sweep { animation: none; }
+}
+
 .light .hero-image { opacity: 1; }
 .light .hero-shade { background: linear-gradient(to bottom, transparent 65%, hsl(var(--background))); }
 .light .hero-side-shade { display: none; }
-.light .hero-copy { padding: 1.5rem; border-radius: var(--radius); }
+.light .hero-copy { padding: 1.5rem; }
 .light .text-glow-cyan { text-shadow: none; color: hsl(var(--brand-cyan-text)); background: none; }
 .light [class*="backdrop-blur"] { backdrop-filter: none; -webkit-backdrop-filter: none; }
 

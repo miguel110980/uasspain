@@ -24,9 +24,25 @@ export default function HeroSection() {
         <div className="hero-side-shade absolute inset-0 bg-gradient-to-r from-background/40 via-transparent to-background/40" />
       </div>
 
-      <div className="absolute inset-0 pointer-events-none overflow-hidden flex items-center justify-center">
-        <div className="absolute w-[500px] h-[500px] border border-primary/8 rounded-full animate-pulse-glow" />
-        <div className="absolute w-[800px] h-[800px] border border-primary/4 rounded-full" />
+      <div className="absolute inset-0 pointer-events-none select-none overflow-hidden flex items-center justify-center" aria-hidden="true">
+        <div className="hero-radar absolute w-[500px] h-[500px] rounded-full">
+          <div className="hero-radar-sweep" />
+          <svg className="absolute inset-0 w-full h-full" viewBox="0 0 500 500" fill="none">
+            <g stroke="var(--radar-line)" strokeWidth="1">
+              <circle cx="250" cy="250" r="249" />
+              <circle cx="250" cy="250" r="180" />
+              <circle cx="250" cy="250" r="100" />
+              <path d="M250 4v12M250 484v12M4 250h12M484 250h12M75 75l8 8M425 75l-8 8M425 425l-8-8M75 425l8-8" />
+            </g>
+            <path d="M250 20v460M20 250h460" stroke="var(--radar-soft)" strokeWidth="1" />
+            <g fill="var(--radar-dot)">
+              <circle cx="130" cy="450" r="3" />
+              <circle cx="385" cy="445" r="3" />
+              <circle cx="250" cy="480" r="2.5" />
+            </g>
+          </svg>
+        </div>
+        <div className="hero-radar-outer absolute w-[800px] h-[800px] border rounded-full" />
         <div className="absolute top-0 left-1/4 w-px h-full bg-gradient-to-b from-transparent via-primary/8 to-transparent" />
         <div className="absolute inset-0 scanline opacity-20" />
       </div>
