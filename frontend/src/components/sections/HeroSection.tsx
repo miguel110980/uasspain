@@ -118,11 +118,6 @@ export default function HeroSection() {
             <span className="hero-title-line hero-title-second">INTELIGENTES</span>
           </h1>
 
-          <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto mb-10 font-light leading-relaxed">
-            Tecnología aeronáutica de vanguardia aplicada a seguridad, emergencias,
-            inspección técnica y producción audiovisual profesional.
-          </p>
-
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
             <Link
               to="/contacto"

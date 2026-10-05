@@ -103,7 +103,11 @@ try {
       else await r.continue();
     });
     await recoveryPage.goto(origin + '/');
-    if (chunk === 'Tecnologia') await recoveryPage.getByRole('link', { name: 'Tecnología', exact: true }).first().click();
+    if (chunk === 'Tecnologia') {
+      // Count SPA recovery reloads after hydration; prerendered links can navigate natively before it.
+      await recoveryPage.waitForFunction(() => document.documentElement.dataset.hydrated === 'true');
+      await recoveryPage.getByRole('link', { name: 'Tecnología', exact: true }).first().click();
+    }
     await recoveryPage.waitForFunction(() => performance.getEntriesByType('navigation')[0]?.type === 'reload');
     if (persistent) {
       await recoveryPage.getByText('No se pudo cargar la aplicación', { exact: true }).waitFor();
