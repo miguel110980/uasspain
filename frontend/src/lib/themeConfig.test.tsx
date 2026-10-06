@@ -53,7 +53,8 @@ describe('canonical hero background', () => {
   it('uses the identical image and responsive variants in both themes', () => {
     expect(picture('light')).toBe(picture('dark'));
     expect(picture('light')).toContain(`src="${IMAGES.hero}"`);
-    expect(picture('light')).toContain('/images/hero-claro-portrait-320.webp');
+    expect(picture('light')).toContain('/images/hero-claro-640.webp');
+    expect(picture('light')).not.toContain('-portrait-');
     expect(picture('light')).not.toMatch(/\/images\/hero[_-](?!claro)/);
     expect(picture('light')).not.toContain('prefers-color-scheme');
   });
