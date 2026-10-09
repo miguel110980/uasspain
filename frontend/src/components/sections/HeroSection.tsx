@@ -83,13 +83,17 @@ const radarNodes = [
 export default function HeroSection() {
   return (
     <section id="inicio" className="hero-shell relative w-full overflow-hidden bg-background">
-      <div className="hero-stage">
+      <div className="hero-stage" style={{ '--hero-photo': `url("${IMAGES.hero}")` } as React.CSSProperties}>
+        <div className="hero-photo-extension hero-photo-extension-left" aria-hidden="true" />
+        <div className="hero-photo-extension hero-photo-extension-right" aria-hidden="true" />
+        <div className="hero-photo-extension hero-photo-extension-top-left" aria-hidden="true" />
+        <div className="hero-photo-extension hero-photo-extension-top-right" aria-hidden="true" />
+        <div className="hero-photo-extension hero-photo-extension-top" aria-hidden="true" />
         <div className="hero-art absolute">
           <picture>
             <img src={IMAGES.hero} srcSet={`${heroImage}-640.webp 640w, ${heroImage}-1280.webp 1280w, ${heroImage}-1672.webp 1672w`} sizes="(max-width: 767px) min(201vw, 976px), min(143.6vw, 2004px)" width={1672} height={941} alt="Drone aéreo profesional" fetchPriority="high" className="hero-image w-full h-full object-contain opacity-55 dark:opacity-65" />
           </picture>
           <div className="hero-shade absolute inset-0 bg-gradient-to-b from-background/45 via-background/15 to-background" />
-          <div className="hero-side-shade absolute inset-0 bg-gradient-to-r from-background/40 via-transparent to-background/40" />
         </div>
 
         <div className="hero-radar-layer absolute pointer-events-none select-none" aria-hidden="true">

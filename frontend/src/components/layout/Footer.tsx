@@ -41,7 +41,6 @@ export default function Footer() {
   const formacionLinks = [{ label: 'Todos los cursos', href: '/formacion' }, ...courses.map(course => ({ label: course.name, href: coursePath(course) }))];
   return (
     <footer className="relative bg-card overflow-hidden">
-      <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
 
       {/* Perspective grid background */}
       <div className="absolute bottom-0 left-0 w-full h-40 opacity-[0.04] pointer-events-none"

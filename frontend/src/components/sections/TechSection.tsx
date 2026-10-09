@@ -18,9 +18,6 @@ export default function TechSection({ techImage }) {
 
   return (
     <section id="tecnologia" className="relative py-24 md:py-32 bg-card overflow-hidden">
-      {/* Decorative line */}
-      <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
-      <div className="absolute bottom-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
 
       <div ref={ref} className={`max-w-7xl mx-auto px-6 home-reveal ${isVisible ? 'is-visible' : ''}`}>
         <div className="grid lg:grid-cols-5 gap-12 items-start">

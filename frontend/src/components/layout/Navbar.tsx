@@ -112,13 +112,10 @@ export default function Navbar() {
 
         const alpha = p * 0.96;
         const blur = p * 16;
-        const borderAlpha = 0.08 * Math.min(p * 2, 1);
 
         // Theme tokens change the colors immediately; scroll controls the same
         // opacity, blur and shadow in both themes without restarting this effect.
         nav.style.backgroundColor = `hsl(var(--background) / ${alpha})`;
-        nav.style.borderColor = `hsl(var(--foreground) / ${borderAlpha})`;
-        nav.style.boxShadow = p > 0 ? `0 1px 3px hsl(var(--shadow-color) / ${p * 0.15})` : 'none';
         nav.style.backdropFilter = p > 0 ? `blur(${blur}px)` : 'none';
         nav.style.webkitBackdropFilter = nav.style.backdropFilter;
 
@@ -315,7 +312,7 @@ export default function Navbar() {
     <nav
       ref={navRef}
       aria-label="Navegación principal"
-      className="fixed top-0 left-0 w-full z-50 border-b border-transparent transition-[background-color,border-color,box-shadow,backdrop-filter] duration-300"
+      className="fixed top-0 left-0 w-full z-50 transition-[background-color,backdrop-filter] duration-300"
     >
       <div className={styles.header} data-header-blocks="3">
         <div className={styles.identity} data-header-block="identity">
@@ -396,10 +393,9 @@ export default function Navbar() {
             id="main-mobile-menu"
             role="dialog"
             aria-label="Menú de navegación"
-            className={`${styles.mobileMenu} border-t`}
+            className={styles.mobileMenu}
             style={{
               backgroundColor: isDark ? '#02070a' : '#F5F7FA',
-              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
             }}
           >
             <div className="px-6 py-5 space-y-1">

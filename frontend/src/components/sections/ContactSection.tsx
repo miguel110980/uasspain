@@ -103,7 +103,6 @@ export default function ContactSection({ skipReveal = false }) {
 
   return (
     <section id="contacto" className="relative py-24 md:py-32 bg-background overflow-hidden">
-      <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
 
       <div ref={ref} className="max-w-7xl mx-auto px-6">
         {/* Header */}

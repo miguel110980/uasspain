@@ -376,6 +376,7 @@
 .hero-stage {
   --hero-canvas-width: min(1395px, 100vw, 123.78svh);
   --hero-canvas-height: calc(var(--hero-canvas-width) * 0.807885);
+  --hero-photo-width: calc(var(--hero-canvas-width) * 1.435659);
   --hero-title-size: clamp(1.65rem, calc(var(--hero-canvas-width) * 0.0630824), 5.5rem);
   --hero-copy-tail: 156px;
   --hero-cue-clear: 80px;
@@ -396,13 +397,74 @@
   transform: translateX(-50%);
 }
 .hero-art {
-  width: calc(var(--hero-canvas-width) * 1.435659);
-  /* Blend only the photograph's exposed edges when its bounded canvas is smaller than the screen. */
-  --hero-photo-top-fade: clamp(0px, calc(var(--hero-canvas-top) * 3), calc(var(--hero-canvas-height) * 0.14));
-  mask-image: linear-gradient(to bottom, transparent, #000 var(--hero-photo-top-fade)),
-    linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
-  mask-composite: intersect;
+  width: var(--hero-photo-width);
+  background-color: hsl(var(--background));
 }
+/* Extend only the photograph's outside edges. The aircraft, photo canvas and HUD
+   keep their original dimensions and positions, including on short viewports. */
+.hero-photo-extension {
+  position: absolute;
+  top: var(--hero-canvas-top);
+  width: max(0px, calc((100% - var(--hero-photo-width)) / 2 + 1px));
+  height: var(--hero-canvas-height);
+  overflow: hidden;
+  pointer-events: none;
+}
+.hero-photo-extension::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--hero-photo);
+  /* At most the outer 300 of the source photo's 1672 pixels. Wider extensions
+     stretch this landscape strip, so they never repeat any part of the drone. */
+  background-size: max(var(--hero-photo-width), calc(100% * 5.573334)) 100%;
+  background-repeat: no-repeat;
+  transform: scaleX(-1);
+  opacity: 0.55;
+}
+.dark .hero-photo-extension::before { opacity: 0.65; }
+.light .hero-photo-extension::before { opacity: 1; }
+.hero-photo-extension::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, hsl(var(--background) / 0.45), hsl(var(--background) / 0.15), hsl(var(--background)));
+}
+.light .hero-photo-extension::after { background: linear-gradient(to bottom, transparent 65%, hsl(var(--background))); }
+.hero-photo-extension-left { left: 0; }
+.hero-photo-extension-right { right: 0; }
+.hero-photo-extension-left::before { background-position: left top; }
+.hero-photo-extension-right::before { background-position: right top; }
+.hero-photo-extension-top,
+.hero-photo-extension-top-left,
+.hero-photo-extension-top-right { top: 0; height: var(--hero-canvas-top); }
+.hero-photo-extension-top {
+  width: var(--hero-photo-width);
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: hsl(var(--background));
+}
+.hero-photo-extension-top-left { left: 0; }
+.hero-photo-extension-top-right { right: 0; }
+.hero-photo-extension-top-left::before,
+.hero-photo-extension-top-right::before {
+  background-size: max(var(--hero-photo-width), calc(100% * 5.573334)) max(var(--hero-canvas-height), calc(100% * 9.41));
+  transform: scale(-1, -1);
+}
+.hero-photo-extension-top-left::before { background-position: left top; }
+.hero-photo-extension-top-right::before { background-position: right top; }
+.hero-photo-extension-top::before {
+  /* Use only the first 100 of 941 source pixels above the photo: sky only. */
+  background-size: var(--hero-photo-width) max(var(--hero-canvas-height), calc(100% * 9.41));
+  background-position: center top;
+  transform: scaleY(-1);
+}
+.hero-photo-extension-top::after,
+.hero-photo-extension-top-left::after,
+.hero-photo-extension-top-right::after { background: hsl(var(--background) / 0.45); }
+.light .hero-photo-extension-top::after,
+.light .hero-photo-extension-top-left::after,
+.light .hero-photo-extension-top-right::after { background: none; }
 .hero-radar-layer { top: 0; bottom: 0; left: 50%; width: var(--hero-canvas-width); transform: translateX(-50%); }
 /* Keep the photo's occlusion mask in its original position while centering the HUD. */
 .hero-radar-mask-desktop { transform: translateY(var(--hero-canvas-top)); }
@@ -519,7 +581,6 @@
 
 .light .hero-image { opacity: 1; }
 .light .hero-shade { background: linear-gradient(to bottom, transparent 65%, hsl(var(--background))); }
-.light .hero-side-shade { display: none; }
 .light .text-glow-cyan { text-shadow: none; color: hsl(var(--brand-cyan-text)); background: none; }
 .light [class*="backdrop-blur"] { backdrop-filter: none; -webkit-backdrop-filter: none; }
 
