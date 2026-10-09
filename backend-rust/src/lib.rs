@@ -3,6 +3,7 @@
 pub mod api;
 pub mod app;
 pub mod auth;
+mod backup_delta;
 pub mod backups;
 pub mod cache;
 pub mod chat;

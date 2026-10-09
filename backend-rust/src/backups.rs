@@ -507,7 +507,14 @@ async fn create_locked(
         insert_backup_job(connection, id, initiated_by, &chain).await?;
     }
     let started = Instant::now();
-    match dump_to_disk(state, &chain.effective_kind, encrypt).await {
+    match dump_to_disk(
+        state,
+        &chain.effective_kind,
+        encrypt,
+        chain.parent_backup_id,
+    )
+    .await
+    {
         Ok((path, checksum, size, media)) => {
             let elapsed = i32::try_from(started.elapsed().as_secs()).unwrap_or(i32::MAX);
             let manifest = create_manifest(
@@ -697,6 +704,7 @@ async fn create_manifest(
             "name": path.file_name().and_then(|name| name.to_str()).unwrap_or("media"),
             "size_bytes": size,
             "checksum": checksum,
+            "encoding": if chain.parent_backup_id.is_some() { "delta-v1" } else { "snapshot" },
         })
     });
     let value = json!({
@@ -717,7 +725,8 @@ async fn create_manifest(
             "chain_index": chain.chain_index,
         },
         "files": {
-            "database": {"name": database_name, "size_bytes": database_size, "checksum": database_checksum},
+            "database": {"name": database_name, "size_bytes": database_size, "checksum": database_checksum,
+                "encoding": if chain.parent_backup_id.is_some() { "delta-v1" } else { "snapshot" }},
             "media": media_entry,
         },
         "encryption": {
@@ -1014,10 +1023,15 @@ async fn dump_to_disk(
     state: &AppState,
     kind: &str,
     encrypt: bool,
+    parent_id: Option<Uuid>,
 ) -> Result<(PathBuf, String, u64, Option<(PathBuf, String, u64)>), String> {
     let root = backup_root().await?;
     check_local_capacity(state, &root).await?;
-    let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+    let timestamp = format!(
+        "{}_{}",
+        Utc::now().format("%Y%m%d_%H%M%S"),
+        Uuid::new_v4().simple()
+    );
     let plain = std::env::temp_dir().join(format!(".tmp_{kind}_{timestamp}.dump"));
     let final_path = root.join(format!(
         "uasspain_{kind}_{timestamp}.sql.gz{}",
@@ -1052,6 +1066,19 @@ async fn dump_to_disk(
     }
     let _ = fs::remove_file(&plain).await;
     validate_dump_bytes(&bytes).await?;
+    let bytes = if let Some(parent_id) = parent_id {
+        let parent = fetch_job(
+            pool(state).map_err(|_| "Base de datos no disponible.")?,
+            Some(parent_id),
+        )
+        .await
+        .map_err(|_| "No se pudo leer la base incremental.")?
+        .ok_or("Base incremental no encontrada.")?;
+        let base = load_job_artifact(state, &parent, false).await?;
+        crate::backup_delta::encode(&base, &bytes)?
+    } else {
+        bytes
+    };
     let final_bytes = if encrypt {
         state
             .cipher
@@ -1063,7 +1090,8 @@ async fn dump_to_disk(
     atomic_write(&final_path, &final_bytes).await?;
     let _ = fs::remove_file(&plain).await;
     let checksum = sha256(&final_bytes);
-    let media = create_media_archive(state, &root, &timestamp.to_string(), encrypt).await?;
+    let media =
+        create_media_archive(state, &root, &timestamp.to_string(), encrypt, parent_id).await?;
     Ok((final_path, checksum, final_bytes.len() as u64, media))
 }
 
@@ -1093,11 +1121,131 @@ async fn validate_dump_bytes(bytes: &[u8]) -> Result<(), String> {
     }
 }
 
+// Follow metadata, validate every encrypted artifact, then apply oldest first.
+// Legacy incrementals without an encoding are independent snapshots.
+async fn load_job_artifact(
+    state: &AppState,
+    job: &BackupJob,
+    media: bool,
+) -> Result<Vec<u8>, String> {
+    let mut current = job.clone();
+    let mut deltas: Vec<Vec<u8>> = Vec::new();
+    let mut delta_bytes = 0_usize;
+    let mut seen = std::collections::HashSet::new();
+    let field = if media { "media" } else { "database" };
+    loop {
+        if !seen.insert(current.id) || seen.len() > 256 {
+            return Err("Cadena incremental corrupta o demasiado larga; crea un FULL.".into());
+        }
+        let manifest_path = safe_job_path(&current.manifest_path)
+            .await
+            .ok_or("Manifest no encontrado.")?;
+        let manifest_bytes = fs::read(manifest_path)
+            .await
+            .map_err(|_| "Manifest no accesible.")?;
+        if sha256(&manifest_bytes) != current.manifest_checksum
+            || serde_json::from_slice::<Value>(&manifest_bytes)
+                .ok()
+                .as_ref()
+                != Some(&current.manifest)
+            || current.manifest.get("backup_id").and_then(Value::as_str)
+                != Some(current.id.to_string().as_str())
+        {
+            return Err("Manifest corrupto o incompatible.".into());
+        }
+        let (raw, checksum) = if media {
+            (&current.media_path, &current.media_checksum)
+        } else {
+            (&current.storage_path, &current.checksum)
+        };
+        let mut bytes = if media && raw.is_empty() {
+            Vec::new()
+        } else {
+            let path = safe_job_path(raw)
+                .await
+                .ok_or("Archivo de backup no encontrado.")?;
+            let stored = fs::read(path)
+                .await
+                .map_err(|_| "Archivo de backup no accesible.")?;
+            if !checksum_matches(&stored, checksum)
+                || current
+                    .manifest
+                    .pointer(&format!("/files/{field}/checksum"))
+                    .and_then(Value::as_str)
+                    != Some(checksum.as_str())
+            {
+                return Err("Checksum de la cadena incremental no válido.".into());
+            }
+            if current.encrypted {
+                state
+                    .cipher
+                    .decrypt_backup(&stored)
+                    .map_err(|_| "No se pudo descifrar la cadena incremental.")?
+            } else {
+                stored
+            }
+        };
+        match current
+            .manifest
+            .pointer(&format!("/files/{field}/encoding"))
+            .and_then(Value::as_str)
+        {
+            None | Some("snapshot") => {
+                for delta in deltas.iter().rev() {
+                    bytes = crate::backup_delta::apply(&bytes, delta)?;
+                }
+                return Ok(bytes);
+            }
+            Some("delta-v1") => {}
+            _ => return Err("Encoding de backup incompatible.".into()),
+        }
+        if current.job_type != "incremental" || current.chain_index <= 0 {
+            return Err("Cadena incremental corrupta.".into());
+        }
+        let parent_id = current
+            .parent_backup_id
+            .ok_or("Cadena incremental sin parent.")?;
+        let parent = fetch_job(
+            pool(state).map_err(|_| "Base de datos no disponible.")?,
+            Some(parent_id),
+        )
+        .await
+        .map_err(|_| "No se pudo leer la cadena incremental.")?
+        .ok_or("Cadena incremental incompleta.")?;
+        let base = if parent.job_type == "full" {
+            Some(parent.id)
+        } else {
+            parent.base_full_id
+        };
+        if !parent.verified
+            || !matches!(parent.status.as_str(), "completed" | "partial")
+            || current.chain_index
+                != parent
+                    .chain_index
+                    .checked_add(1)
+                    .ok_or("Cadena incremental corrupta.")?
+            || current.base_full_id.is_none()
+            || current.base_full_id != base
+        {
+            return Err("Cadena incremental corrupta o no verificada.".into());
+        }
+        delta_bytes = delta_bytes
+            .checked_add(bytes.len())
+            .ok_or("Cadena incremental demasiado grande.")?;
+        if delta_bytes > 128 * 1024 * 1024 {
+            return Err("Cadena incremental demasiado grande; crea un FULL.".into());
+        }
+        deltas.push(bytes);
+        current = parent;
+    }
+}
+
 async fn create_media_archive(
     state: &AppState,
     backup_root: &Path,
     timestamp: &str,
     encrypt: bool,
+    parent_id: Option<Uuid>,
 ) -> Result<Option<(PathBuf, String, u64)>, String> {
     let media_root =
         PathBuf::from(std::env::var("MEDIA_ROOT").unwrap_or_else(|_| "./media".to_owned()));
@@ -1119,10 +1267,24 @@ async fn create_media_archive(
     let plain = fs::read(&temporary)
         .await
         .map_err(|error| format!("No se pudo leer el backup de media: {error}"))?;
+    let _ = fs::remove_file(&temporary).await;
     if plain.is_empty() {
         let _ = fs::remove_file(&temporary).await;
         return Ok(None);
     }
+    let plain = if let Some(parent_id) = parent_id {
+        let parent = fetch_job(
+            pool(state).map_err(|_| "Base de datos no disponible.")?,
+            Some(parent_id),
+        )
+        .await
+        .map_err(|_| "No se pudo leer la base incremental.")?
+        .ok_or("Base incremental no encontrada.")?;
+        let base = load_job_artifact(state, &parent, true).await?;
+        crate::backup_delta::encode(&base, &plain)?
+    } else {
+        plain
+    };
     let payload = if encrypt {
         state
             .cipher
@@ -1600,11 +1762,7 @@ pub async fn verify(
             errors.push("incremental_chain_broken");
         }
     }
-    let dump = if job.encrypted {
-        state.cipher.decrypt_backup(&stored).ok()
-    } else {
-        Some(stored)
-    };
+    let dump = load_job_artifact(&state, &job, false).await.ok();
     if let Some(dump) = dump {
         if validate_dump_bytes(&dump).await.is_err() {
             errors.push("database_archive_invalid");
@@ -1613,18 +1771,7 @@ pub async fn verify(
         errors.push("decryption_failed");
     }
     if !job.media_path.is_empty() {
-        let media = fs::read(
-            safe_job_path(&job.media_path)
-                .await
-                .ok_or(AppError::NotFound)?,
-        )
-        .await
-        .map_err(|_| AppError::NotFound)?;
-        let bytes = if job.encrypted {
-            state.cipher.decrypt_backup(&media).ok()
-        } else {
-            Some(media)
-        };
+        let bytes = load_job_artifact(&state, &job, true).await.ok();
         if bytes.is_none_or(|bytes| zip::ZipArchive::new(Cursor::new(bytes)).is_err()) {
             errors.push("media_archive_invalid");
         }
@@ -2407,26 +2554,19 @@ async fn production_restore(
     state: &AppState,
     job: &BackupJob,
 ) -> Result<(i64, SafetySnapshot), (String, bool, Option<Uuid>)> {
-    let source = safe_job_path(&job.storage_path)
+    let dump = load_job_artifact(state, job, false)
         .await
-        .ok_or_else(|| ("Archivo de backup no encontrado.".into(), false, None))?;
-    let stored = fs::read(&source)
-        .await
-        .map_err(|error| (format!("No se pudo leer el backup: {error}"), false, None))?;
-    if !checksum_matches(&stored, &job.checksum) {
-        return Err((
-            "Checksum inválido; restauración cancelada.".into(),
-            false,
-            None,
-        ));
-    }
-    let dump = if job.encrypted {
-        state
-            .cipher
-            .decrypt_backup(&stored)
-            .map_err(|_| ("No se pudo descifrar el backup.".into(), false, None))?
+        .map_err(|error| (safe_error(&error).into(), false, None))?;
+    // Validate media before replacing the database; it must use the original
+    // recovery catalog because the selected dump predates its own completion.
+    let media = if job.media_path.is_empty() {
+        None
     } else {
-        stored
+        Some(
+            load_job_artifact(state, job, true)
+                .await
+                .map_err(|error| (safe_error(&error).into(), false, None))?,
+        )
     };
     validate_dump_bytes(&dump)
         .await
@@ -2463,7 +2603,7 @@ async fn production_restore(
     };
     let _ = fs::remove_file(&temporary).await;
     match restored {
-        Ok(tables) => match restore_media_for_job(state, job).await {
+        Ok(tables) => match restore_media_archive(media).await {
             Ok(_) => Ok((tables, safety)),
             Err(error) => {
                 let rolled_back = rollback_database(state, &safety, &root).await;
@@ -2496,26 +2636,9 @@ async fn rollback_database(state: &AppState, safety: &SafetySnapshot, _root: &Pa
     result
 }
 
-async fn restore_media_for_job(state: &AppState, job: &BackupJob) -> Result<usize, String> {
-    if job.media_path.is_empty() {
+async fn restore_media_archive(archive: Option<Vec<u8>>) -> Result<usize, String> {
+    let Some(archive) = archive else {
         return Ok(0);
-    }
-    let path = safe_job_path(&job.media_path)
-        .await
-        .ok_or_else(|| "Archivo de media no encontrado.".to_owned())?;
-    let stored = fs::read(path)
-        .await
-        .map_err(|error| format!("No se pudo leer media: {error}"))?;
-    if !checksum_matches(&stored, &job.media_checksum) {
-        return Err("Checksum de media inválido; restore cancelado.".into());
-    }
-    let archive = if job.encrypted {
-        state
-            .cipher
-            .decrypt_backup(&stored)
-            .map_err(|_| "No se pudo descifrar media.".to_owned())?
-    } else {
-        stored
     };
     let media_root =
         PathBuf::from(std::env::var("MEDIA_ROOT").unwrap_or_else(|_| "./media".to_owned()));
@@ -2875,20 +2998,9 @@ pub async fn restore_test(
         .await?
         .ok_or(AppError::NotFound)?;
     validate_restore_metadata(&state, &job).await?;
-    let source = safe_job_path(&job.storage_path)
+    let dump = load_job_artifact(&state, &job, false)
         .await
-        .ok_or_else(|| AppError::Validation("Archivo de backup no encontrado.".into()))?;
-    let stored = fs::read(&source).await.map_err(|_| AppError::NotFound)?;
-    if sha256(&stored) != job.checksum {
-        return Err(AppError::Validation(
-            "Checksum inválido; restauración cancelada.".into(),
-        ));
-    }
-    let dump = if job.encrypted {
-        state.cipher.decrypt_backup(&stored)?
-    } else {
-        stored
-    };
+        .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
     let suffix = Uuid::new_v4().simple().to_string();
     let database = format!("uasspain_restore_test_{}", &suffix[..12]);
     let temporary = std::env::temp_dir().join(format!(".tmp_restore_{suffix}.dump"));
@@ -2950,20 +3062,9 @@ async fn drill_media_restore(state: &AppState, job: &BackupJob) -> Result<usize,
     if job.media_path.is_empty() {
         return Ok(0);
     }
-    let source = safe_job_path(&job.media_path)
+    let archive = load_job_artifact(state, job, true)
         .await
-        .ok_or_else(|| AppError::Validation("Archivo de media no encontrado.".into()))?;
-    let stored = fs::read(source).await.map_err(|_| AppError::NotFound)?;
-    if !checksum_matches(&stored, &job.media_checksum) {
-        return Err(AppError::Validation(
-            "Checksum de media inválido; drill cancelado.".into(),
-        ));
-    }
-    let archive = if job.encrypted {
-        state.cipher.decrypt_backup(&stored)?
-    } else {
-        stored
-    };
+        .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
     let drill = std::env::temp_dir().join(format!(".media-restore-drill-{}", Uuid::new_v4()));
     fs::create_dir(&drill)
         .await
@@ -3760,7 +3861,7 @@ fn database_url_for_role(role: &str) -> Result<String, String> {
     if let Ok(url) = std::env::var(format!("{role}_DATABASE_URL"))
         && !url.trim().is_empty()
     {
-        return Ok(url);
+        return database_url_with_ca(&url, std::env::var("DB_SSLROOTCERT").ok().as_deref());
     }
     let role_user = std::env::var(format!("DB_{role}_USER")).ok();
     let role_password = read_database_secret(
@@ -3771,7 +3872,7 @@ fn database_url_for_role(role: &str) -> Result<String, String> {
         && role_password.is_none()
         && let Ok(url) = std::env::var("DATABASE_URL")
     {
-        return Ok(url);
+        return database_url_with_ca(&url, std::env::var("DB_SSLROOTCERT").ok().as_deref());
     }
     let host = std::env::var("DB_HOST").unwrap_or_else(|_| "postgres".into());
     let port = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".into());
@@ -3788,10 +3889,31 @@ fn database_url_for_role(role: &str) -> Result<String, String> {
         format!("{user}:{}", url_component(&password))
     };
     let sslmode = std::env::var("DB_SSLMODE").unwrap_or_else(|_| "require".into());
-    Ok(format!(
-        "postgresql://{auth}@{host}:{port}/{}?sslmode={sslmode}",
-        url_component(&name)
-    ))
+    database_url_with_ca(
+        &format!(
+            "postgresql://{auth}@{host}:{port}/{}?sslmode={sslmode}",
+            url_component(&name)
+        ),
+        std::env::var("DB_SSLROOTCERT").ok().as_deref(),
+    )
+}
+
+fn database_url_with_ca(raw: &str, root: Option<&str>) -> Result<String, String> {
+    let mut url = url::Url::parse(raw).map_err(|_| "DATABASE_URL no válida.".to_owned())?;
+    if !url.query_pairs().any(|(name, _)| name == "sslrootcert")
+        && let Some(root) = root.filter(|value| !value.trim().is_empty())
+    {
+        // libpq consumes RFC 3986 URI parameters, not HTML form encoding:
+        // a space in a certificate filename must be %20, not '+'.
+        let query = format!(
+            "{}{}sslrootcert={}",
+            url.query().unwrap_or(""),
+            if url.query().is_some() { "&" } else { "" },
+            url_component(root)
+        );
+        url.set_query(Some(&query));
+    }
+    Ok(url.into())
 }
 
 fn read_database_secret(value_name: &str, file_name: &str) -> Option<String> {
@@ -4043,6 +4165,34 @@ fn validate_server(input: &ServerWrite, create: bool) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn postgres_tools_keep_verified_tls_and_explicit_ca() {
+        let raw = "postgresql://fixture@postgres/db?sslmode=verify-full";
+        let url =
+            url::Url::parse(&database_url_with_ca(raw, Some("/run/pki/internal ca.crt")).unwrap())
+                .unwrap();
+        assert!(url.as_str().contains("internal%20ca.crt"));
+        assert!(
+            url.query_pairs()
+                .any(|(k, v)| k == "sslmode" && v == "verify-full")
+        );
+        assert!(
+            url.query_pairs()
+                .any(|(k, v)| k == "sslrootcert" && v == "/run/pki/internal ca.crt")
+        );
+        let explicit =
+            "postgresql://fixture@postgres/db?sslmode=verify-full&sslrootcert=%2Fcustom.crt";
+        let url = url::Url::parse(&database_url_with_ca(explicit, Some("/ignored.crt")).unwrap())
+            .unwrap();
+        assert_eq!(
+            url.query_pairs()
+                .filter(|(k, _)| k == "sslrootcert")
+                .collect::<Vec<_>>(),
+            vec![("sslrootcert".into(), "/custom.crt".into())]
+        );
+        assert!(database_url_with_ca("invalid URL", None).is_err());
+    }
+
+    #[test]
     fn destination_catalog_reads_old_and_new_manifests_without_crossing_servers() {
         let id = uuid::Uuid::new_v4().to_string();
         let old = serde_json::json!({id.clone(): {"status":"success"}});
@@ -4052,8 +4202,8 @@ mod tests {
         assert!(super::destination_for_origin(&new, &uuid::Uuid::new_v4().to_string()).is_none());
     }
     use super::{
-        ServerWrite, checksum_matches, parse_time, replace_media_contents, safe_backup_filename,
-        sha256, validate_config, validate_server,
+        ServerWrite, checksum_matches, database_url_with_ca, parse_time, replace_media_contents,
+        safe_backup_filename, sha256, validate_config, validate_server,
     };
     use serde_json::json;
     use std::io::{Cursor, Write};

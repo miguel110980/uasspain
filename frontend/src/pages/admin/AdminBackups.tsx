@@ -27,6 +27,8 @@ export default function AdminBackups() {
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState(false);
+  const [createKind, setCreateKind] = useState('automatic');
+  const [pendingJob, setPendingJob] = useState<string | null>(null);
   const [restore, setRestore] = useState<any>(null);
   const [confirmationText, setConfirmationText] = useState('');
   const [restoreAck, setRestoreAck] = useState(false);
@@ -55,6 +57,18 @@ export default function AdminBackups() {
     void load(); const timer = setInterval(() => { void load(); }, 5000);
     return () => { clearInterval(timer); loadVersion.current++; };
   }, [load]);
+  useEffect(() => {
+    const job = history.find(item => item.id === pendingJob);
+    if (!job || job.status === 'creating') return;
+    setPendingJob(null);
+    if (job.status === 'completed' && job.verified) {
+      setNotice('Copia creada e integridad verificada. Comprueba su recuperación antes de considerarla utilizable.');
+    } else if (job.status === 'partial' && job.verified) {
+      setNotice('La copia local se conserva, pero no se completaron todos los destinos.');
+    } else {
+      setNotice(''); setError(job.error || 'No se pudo crear la copia.');
+    }
+  }, [history, pendingJob]);
   useEffect(() => {
     if (!restore?.restoreId || restore.step !== 'running') return;
     let stopped = false; let polling = false;
@@ -88,7 +102,8 @@ export default function AdminBackups() {
   };
   const create = () => run(async () => {
     setConfirmation(false);
-    await apiClient.post(endpoints.backups.create, { type: config?.job_type || 'automatic', background: true, encrypt: true });
+    const { data } = await apiClient.post(endpoints.backups.create, { type: createKind, background: true, encrypt: true });
+    setPendingJob(data.job_id);
     setNotice('Copia en curso. Puedes seguir consultando esta pantalla.'); setPage(0);
   });
   const verify = (job) => run(async () => {
@@ -132,7 +147,7 @@ export default function AdminBackups() {
     <section id="backup-state" aria-label="Estado de las copias" className="space-y-4 scroll-mt-4">
       <h3 className="font-heading font-semibold">Estado de las copias</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">{[['Última copia correcta', date(status?.last_successful_backup)], ['Próxima copia programada', status?.next_backup ? date(status.next_backup) : 'Sin programación activa'], ['Estado general', STATES[status?.system_status] || 'No configurado'], ['Espacio utilizado', bytes(status?.storage_used_bytes)], ['Destinos activos', String(active.length)]].map(([label, value]) => <div key={label} className="glass-card p-4 min-w-0"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-2 font-semibold break-words ${label === 'Estado general' && status?.system_status === 'error' ? 'text-danger' : label === 'Estado general' && status?.system_status === 'attention' ? 'text-warning' : 'text-foreground'}`}>{value}</p></div>)}</div>
-      <button className={`${button} bg-primary/10 text-primary`} disabled={loading || operationBusy || !active.length} onClick={() => setConfirmation(true)}>Crear copia ahora</button>
+      <button className={`${button} bg-primary/10 text-primary`} disabled={loading || operationBusy || !active.length} onClick={() => { setCreateKind(config?.job_type || 'automatic'); setConfirmation(true); }}>Crear copia ahora</button>
       {!active.length && !loading && <p className="text-sm text-muted-foreground">Configura, prueba y activa un destino para crear copias.</p>}
       {status?.operation && <div role="status" className="rounded-md bg-primary/10 p-3 text-sm space-y-1"><p>En curso</p><p>Inicio: {date(status.operation.started_at)}</p><p>Tipo: {KINDS[status.operation.job_type]}</p><p>Destinos: {active.map(server => server.name).join(', ')}</p></div>}
       {status?.restore_in_progress && <p role="status" className="text-sm text-warning">Restauración en curso.</p>}
@@ -166,7 +181,7 @@ export default function AdminBackups() {
       <div className="flex flex-wrap items-center justify-between gap-2"><button className={button} disabled={page === 0} onClick={() => setPage(page - 1)}>Anterior</button><span className="text-sm">Página {page + 1} · {status?.history_total || 0} copias</span><button className={button} disabled={(page + 1) * PAGE_SIZE >= (status?.history_total || 0)} onClick={() => setPage(page + 1)}>Siguiente</button></div>
       {!status?.restore_enabled && <p className="text-sm text-muted-foreground">La restauración requiere habilitación del sistema.</p>}
     </section>
-    {confirmation && <PanelModal label="Crear copia ahora" onClose={() => setConfirmation(false)}><h3 className="font-heading text-lg">Crear copia ahora</h3><p className="my-4 text-sm">Se creará una copia cifrada de los datos y archivos en {active.map(server => server.name).join(', ')}. Tipo: {KINDS[config?.job_type || 'automatic']}.</p><div className="flex flex-wrap justify-end gap-2"><button className={button} onClick={() => setConfirmation(false)}>Cancelar</button><button className={`${button} text-primary`} disabled={operationBusy} onClick={() => void create()}>Confirmar creación</button></div></PanelModal>}
+    {confirmation && <PanelModal label="Crear copia ahora" onClose={() => setConfirmation(false)}><h3 className="font-heading text-lg">Crear copia ahora</h3><p className="my-4 text-sm">Se creará una copia cifrada de los datos y archivos en {active.map(server => server.name).join(', ')}.</p><label className="block space-y-1 mb-4"><span className="text-sm">Tipo de esta copia</span><select className={control} value={createKind} onChange={event => setCreateKind(event.target.value)}>{Object.entries(KINDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{createKind === 'incremental' && <p className="mb-4 text-sm text-muted-foreground">Guarda los cambios respecto a la copia anterior. Si falta una base válida, se creará primero una completa.</p>}<div className="flex flex-wrap justify-end gap-2"><button className={button} onClick={() => setConfirmation(false)}>Cancelar</button><button className={`${button} text-primary`} disabled={operationBusy} onClick={() => void create()}>Confirmar creación</button></div></PanelModal>}
     {restore && <PanelModal label="Restaurar copia de seguridad" onClose={() => restore.step !== 'running' && setRestore(null)}><div className="flex items-start justify-between gap-3"><h3 className="font-heading text-lg">Restaurar copia de seguridad</h3><button aria-label="Cerrar" className={button} disabled={restore.step === 'running'} onClick={() => setRestore(null)}><X className="w-4 h-4" /></button></div>
       {restore.step === 'confirm' && <div className="space-y-4 mt-4"><p className="text-sm">Copia: {date(restore.job.created_date)} · {KINDS[restore.job.job_type]}</p><label className="block space-y-1"><span className="text-sm">Recuperar desde</span><select className={control} value={restore.origin} onChange={event => void changeOrigin(event.target.value)}><option value="local">Almacenamiento de recuperación local</option>{servers.filter(server => server.is_active && Object.values(restore.job.destinations || {}).some((dest: any) => dest.server_id === server.id && dest.status === 'success')).map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</select></label><p className="text-sm text-warning">Se sustituirán los datos actuales. El sistema comprobará la copia, creará una copia de seguridad previa y verificará la recuperación.</p><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={restoreAck} onChange={event => setRestoreAck(event.target.checked)} />Entiendo que se sustituirán los datos actuales.</label><label className="block space-y-1"><span className="text-sm">Escribe RESTAURAR para confirmar</span><input className={control} autoComplete="off" value={confirmationText} onChange={event => setConfirmationText(event.target.value)} /></label>{restore.error && <p role="alert" className="text-sm text-danger">{restore.error}</p>}<button className={`${button} text-danger`} disabled={operationBusy || restore.loading || Boolean(restore.error) || !restoreAck || confirmationText !== 'RESTAURAR' || (restore.origin !== 'local' && !restore.filename)} onClick={() => void restoreNow()}>Restaurar definitivamente</button></div>}
       {restore.step === 'running' && <p role="status" className="my-4 text-sm">Restauración en curso. Se comprobará la recuperación antes de finalizar.</p>}

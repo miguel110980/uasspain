@@ -16,7 +16,8 @@ una mejora pendiente.
 - Un FULL contiene un `pg_dump` lógico consistente y un ZIP de media.
 - Una solicitud INCREMENTAL necesita un FULL válido; si no existe, el backend crea automáticamente ese FULL base.
 - Cada punto tiene `parent_backup_id`, `base_full_id`, `chain_index` y un manifiesto JSON con versión, checksums y versiones de aplicación/PostgreSQL/esquema.
-- La implementación actual conserva un snapshot lógico completo en cada punto incremental. Esto da una cadena verificable y restaurable, pero no reduce el volumen como un incremental físico PostgreSQL/WAL. No debe declararse el gate `INCREMENTAL_*` de producción hasta desplegar y validar `pg_basebackup --incremental`/WAL o una solución equivalente sobre la infraestructura real.
+- Los nuevos puntos INCREMENTAL guardan deltas binarios de `pg_dump` y del ZIP de media respecto al punto anterior, cifrados con AES-256-GCM. El manifiesto identifica cada archivo como `delta-v1`; los snapshots anteriores siguen siendo legibles. Antes del restore se validan los manifiestos y checksums de toda la cadena y se recompone el snapshot exacto, con SHA-256 de la base y del resultado. Esto reduce almacenamiento y transferencia cuando los cambios son pequeños, pero no es un incremental físico PostgreSQL ni WAL/PITR: sigue ejecutándose un dump consistente completo para calcular el delta.
+- El delta admite hasta 64 MiB por archivo reconstruido, 256 puntos por cadena y 128 MiB acumulados de deltas por archivo. Si se supera el límite, falla cerrado y se debe crear un FULL nuevo; los FULL no tienen este límite del codec. No se eliminan ancestros necesarios. Una restauración desde un destino remoto requiere también los ancestros locales actuales; no constituye por sí sola un drill de pérdida total del equipo.
 - Retención y eliminación rechazan cualquier FULL/parent con descendientes, además del último punto bueno.
 
 ## Destinos remotos y VPN
@@ -73,7 +74,7 @@ La ultima validacion aislada cubrio 79 escenarios funcionales, incluidos full lo
 
 Limitaciones conocidas:
 
-- Cada nodo incremental conserva actualmente un `pg_dump` completo; no es un delta fisico ni WAL/PITR.
+- Los deltas son de archivos lógicos; no ofrecen WAL/PITR ni reducen el coste de generar `pg_dump`.
 - Los dos destinos remotos y sus VPN reales deben provisionarse y probarse fuera del laboratorio Docker.
 - Falta alerting externo y una comprobacion de capacidad libre en cada peer.
 - La subclave de backup esta separada por dominio, pero la raiz operacional debe independizarse y someterse a un drill de rotacion.

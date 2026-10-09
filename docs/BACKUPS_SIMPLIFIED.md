@@ -22,8 +22,10 @@ restauración. Las operaciones y su autorización se comprueban en Rust.
    **Restaurar** requiere aceptar la sustitución de los datos y escribir RESTAURAR.
 
 La estrategia automática crea una completa cuando no hay una base reciente y
-conserva el mecanismo incremental y los manifiestos existentes. No convierte el
-formato de recuperación en otro sistema. La retención protege la última copia
+conserva la lectura de manifiestos existentes. Las copias incrementales nuevas
+usan deltas de base de datos y media; el selector de la copia inmediata es
+independiente de la programación. Conserva los snapshots anteriores y el
+formato de cifrado. La retención protege la última copia
 válida, el último punto utilizable desde el panel y los antecesores necesarios
 por las cadenas; registra sus eliminaciones.
 Se mantiene el alcance existente de la limpieza del almacenamiento local; las

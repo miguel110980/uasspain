@@ -222,6 +222,10 @@ try {
     & node (Join-Path $Root 'scripts/e2e/e2e-backups.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de backups E2E fallo' }
 
+    Write-Host '==> Validando deltas de datos/media y restauracion full e incremental'
+    & node (Join-Path $Root 'scripts/e2e/e2e-backup-deltas.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La restauracion de deltas de backups E2E fallo' }
+
     Write-Host '==> Validando cursos, temario transaccional y permisos contra PostgreSQL'
     & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a cursos E2E fallo' }
