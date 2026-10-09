@@ -127,7 +127,9 @@ test('@private-channel-regression ten open rooms retain drafts, private delivery
     await expect(bubble(learners[0],'redis recovery fixture')).toHaveCount(1,{timeout:15000});
     report.redisRecovery=true;
     expect((await seed.admin.call(`/api/profiles/${seed.fixtures[2].id}/assign-alumnos/`,'POST',{student_ids:[students[0].id]})).status).toBe(200);
-    await expect(learners[0].getByText('Concurrent 2',{exact:true})).toBeVisible();
+    // The dashboard section stays mounted (hidden) and repeats the instructor
+    // name, so the chat contact is matched by its own paragraph classes.
+    await expect(learners[0].locator('p.text-foreground.truncate:text-is("Concurrent 2")')).toBeVisible();
     await expect(room(0)).toHaveCount(0);
     expect((await call(teacher,`/api/mensajes/?alumno_id=${students[0].id}`)).status()).toBe(403);
     const replacement=await loginFixture(seed.fixtures[2]);

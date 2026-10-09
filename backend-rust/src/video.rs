@@ -39,6 +39,7 @@ pub struct VideoWrite {
     alumno_id: Option<Uuid>,
     instructor_id: Option<Uuid>,
     administrador_id: Option<Uuid>,
+    instructor_peer_id: Option<Uuid>,
     #[serde(default = "classroom")]
     canal: String,
     #[serde(default = "pending")]
@@ -64,7 +65,7 @@ pub async fn list(
     Query(q): Query<VideoQuery>,
 ) -> Result<Json<Vec<Value>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    let rows = sqlx::query_scalar::<_, Value>("SELECT to_jsonb(v) FROM conexiones_videollamada v WHERE (($1='admin' AND v.administrador_id=$2) OR ($1='alumno' AND v.canal='alumnos' AND v.alumno_id=$2) OR ($1='instructor' AND v.instructor_id=$2)) AND ($3::uuid IS NULL OR v.alumno_id = $3) AND ($4::uuid IS NULL OR v.instructor_id = $4) AND ($5::text IS NULL OR v.estado = $5) AND ($6::text IS NULL OR v.iniciada_por = $6) AND ($8::text IS NULL OR v.canal=$8) ORDER BY v.created_date DESC LIMIT $7")
+    let rows = sqlx::query_scalar::<_, Value>("SELECT to_jsonb(v) FROM conexiones_videollamada v WHERE (($1='admin' AND v.administrador_id=$2) OR ($1='alumno' AND v.canal='alumnos' AND v.alumno_id=$2) OR ($1='instructor' AND (v.instructor_id=$2 OR (v.canal='instructores' AND v.instructor_peer_id=$2)))) AND ($3::uuid IS NULL OR v.alumno_id = $3) AND ($4::uuid IS NULL OR v.instructor_id = $4) AND ($5::text IS NULL OR v.estado = $5) AND ($6::text IS NULL OR v.iniciada_por = $6) AND ($8::text IS NULL OR v.canal=$8) ORDER BY v.created_date DESC LIMIT $7")
         .bind(&claims.role).bind(claims.profile_id).bind(q.alumno_id).bind(q.instructor_id)
         .bind(q.estado.as_deref()).bind(q.iniciada_por.as_deref()).bind(q.limit.unwrap_or(100).clamp(1, 500))
         .bind(q.canal).fetch_all(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
@@ -82,14 +83,38 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    if !matches!(input.canal.as_str(), "alumnos" | "administracion")
-        || !matches!(input.estado.as_str(), "activa" | "pendiente")
+    if !matches!(
+        input.canal.as_str(),
+        "alumnos" | "administracion" | "instructores"
+    ) || !matches!(input.estado.as_str(), "activa" | "pendiente")
     {
         return Err(AppError::Validation(
             "Canal o estado de llamada no valido.".into(),
         ));
     }
-    let (student, instructor, admin) = if input.canal == "administracion" {
+    if input.canal != "instructores" && input.instructor_peer_id.is_some() {
+        return Err(AppError::Validation(
+            "Participante incompatible con el canal.".into(),
+        ));
+    }
+    let (student, instructor, admin, peer) = if input.canal == "instructores" {
+        if claims.role != "instructor"
+            || input.alumno_id.is_some()
+            || input.administrador_id.is_some()
+        {
+            return Err(AppError::Forbidden);
+        }
+        let other = input.instructor_peer_id.ok_or(AppError::Forbidden)?;
+        if other == claims.profile_id || input.instructor_id.is_some() {
+            return Err(AppError::Forbidden);
+        }
+        let (first, second) = if claims.profile_id < other {
+            (claims.profile_id, other)
+        } else {
+            (other, claims.profile_id)
+        };
+        (None, first, None, Some(second))
+    } else if input.canal == "administracion" {
         if input.alumno_id.is_some() {
             return Err(AppError::Validation(
                 "Las llamadas de administracion no admiten alumnos.".into(),
@@ -100,11 +125,13 @@ pub async fn create(
                 None,
                 input.instructor_id.ok_or(AppError::Forbidden)?,
                 Some(claims.profile_id),
+                None,
             ),
             "instructor" => (
                 None,
                 claims.profile_id,
                 Some(input.administrador_id.ok_or(AppError::Forbidden)?),
+                None,
             ),
             _ => return Err(AppError::Forbidden),
         }
@@ -135,6 +162,7 @@ pub async fn create(
             Some(student),
             instructor,
             (claims.role == "admin").then_some(claims.profile_id),
+            None,
         )
     };
     if student == Some(instructor)
@@ -154,6 +182,7 @@ pub async fn create(
         (Some(instructor), "instructor"),
         (student, "alumno"),
         (admin, "admin"),
+        (peer, "instructor"),
     ] {
         if let Some(id) = id {
             let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND (p.role=$2 OR p.roles ? $2) AND p.status='activo' AND p.otp_verified AND u.is_active)")
@@ -169,8 +198,8 @@ pub async fn create(
             return Err(AppError::Forbidden);
         }
     }
-    let existing: Option<Value> = sqlx::query_scalar("SELECT to_jsonb(v) FROM conexiones_videollamada v WHERE alumno_id IS NOT DISTINCT FROM $1 AND instructor_id=$2 AND administrador_id IS NOT DISTINCT FROM $3 AND canal=$4 AND estado IN ('activa','pendiente') ORDER BY created_date DESC LIMIT 1")
-            .bind(student).bind(instructor).bind(admin).bind(&input.canal).fetch_optional(&mut *transaction).await?;
+    let existing: Option<Value> = sqlx::query_scalar("SELECT to_jsonb(v) FROM conexiones_videollamada v WHERE alumno_id IS NOT DISTINCT FROM $1 AND instructor_id=$2 AND administrador_id IS NOT DISTINCT FROM $3 AND canal=$4 AND instructor_peer_id IS NOT DISTINCT FROM $5 AND estado IN ('activa','pendiente') ORDER BY created_date DESC LIMIT 1")
+            .bind(student).bind(instructor).bind(admin).bind(&input.canal).bind(peer).fetch_optional(&mut *transaction).await?;
     if let Some(row) = existing {
         transaction.commit().await?;
         return Ok((StatusCode::CREATED, Json(decode_call(&state, row)?)));
@@ -208,9 +237,9 @@ pub async fn create(
         };
         names.push(state.cipher.encrypt(&name)?);
     }
-    let row = sqlx::query_scalar::<_, Value>("INSERT INTO conexiones_videollamada (id, created_date, updated_date, alumno_id, instructor_id, alumno_nombre, instructor_nombre, estado, iniciada_por, room_id, fecha_inicio, canal, administrador_id, iniciador_id, moderador_id) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,$8,NOW(),$9,$10,$11,$12) RETURNING to_jsonb(conexiones_videollamada)")
+    let row = sqlx::query_scalar::<_, Value>("INSERT INTO conexiones_videollamada (id, created_date, updated_date, alumno_id, instructor_id, alumno_nombre, instructor_nombre, estado, iniciada_por, room_id, fecha_inicio, canal, administrador_id, iniciador_id, moderador_id, instructor_peer_id) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,$8,NOW(),$9,$10,$11,$12,$13) RETURNING to_jsonb(conexiones_videollamada)")
         .bind(Uuid::new_v4()).bind(student).bind(instructor).bind(&names[0]).bind(&names[1])
-        .bind(input.estado).bind(&claims.role).bind(room).bind(input.canal).bind(admin).bind(claims.profile_id).bind(moderator)
+        .bind(input.estado).bind(&claims.role).bind(room).bind(input.canal).bind(admin).bind(claims.profile_id).bind(moderator).bind(peer)
         .fetch_one(&mut *transaction).await?;
     transaction.commit().await?;
     state
@@ -323,7 +352,7 @@ pub async fn socket(
 }
 
 async fn authorize(state: &AppState, id: Uuid, profile: Uuid, role: &str) -> Result<(), AppError> {
-    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conexiones_videollamada v WHERE v.id=$1 AND (($2='admin' AND v.administrador_id=$3) OR ($2='alumno' AND v.canal='alumnos' AND v.alumno_id=$3) OR ($2='instructor' AND v.instructor_id=$3)))")
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conexiones_videollamada v WHERE v.id=$1 AND (($2='admin' AND v.administrador_id=$3) OR ($2='alumno' AND v.canal='alumnos' AND v.alumno_id=$3) OR ($2='instructor' AND (v.instructor_id=$3 OR (v.canal='instructores' AND v.instructor_peer_id=$3)))))")
         .bind(id).bind(role).bind(profile).fetch_one(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
     allowed.then_some(()).ok_or(AppError::Forbidden)
 }
@@ -335,7 +364,7 @@ async fn authorize_active(
     role: &str,
 ) -> Result<(), AppError> {
     authorize(state, id, profile, role).await?;
-    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conexiones_videollamada v WHERE v.id=$1 AND (v.canal='administracion' OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=v.alumno_id AND p.assigned_instructor_id=v.instructor_id)) AND (v.estado IN ('pendiente','activa') OR (v.moderador_id=$3 AND EXISTS (SELECT 1 FROM conexiones_videollamada live WHERE live.room_id=v.room_id AND live.moderador_id=$3 AND live.estado IN ('pendiente','activa')))) AND $2 IN ('admin','instructor','alumno'))")
+    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conexiones_videollamada v WHERE v.id=$1 AND (v.canal IN ('administracion','instructores') OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=v.alumno_id AND p.assigned_instructor_id=v.instructor_id)) AND (v.estado IN ('pendiente','activa') OR (v.moderador_id=$3 AND EXISTS (SELECT 1 FROM conexiones_videollamada live WHERE live.room_id=v.room_id AND live.moderador_id=$3 AND live.estado IN ('pendiente','activa')))) AND $2 IN ('admin','instructor','alumno'))")
         .bind(id).bind(role).bind(profile).fetch_one(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
     active.then_some(()).ok_or(AppError::Forbidden)
 }

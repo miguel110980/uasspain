@@ -1,0 +1,282 @@
+{
+    "phase":  "03",
+    "origin":  "https://localhost",
+    "authorization":  "Explicit one-use exception for exactly four temporary profiles",
+    "backup":  {
+                   "createdAt":  "2026-10-09T20:20:40.482Z",
+                   "file":  "pre-test-snapshot.enc",
+                   "encrypted":  true,
+                   "sha256":  "b8256708262cab2b5fb842daae5bd5118de5ff7184689abf520868d83a6b1269",
+                   "plainSha256":  "51c31cee1fd1efe547d7ffa88454e3f427a1925559d186c4de5dd4aa676ecbe3",
+                   "restoreVerified":  true,
+                   "tables":  42,
+                   "rows":  377
+               },
+    "profiles":  [
+                     {
+                         "id":  "a42b2dc7-841b-4382-933a-c5036186c529",
+                         "email":  "temp_phase03_f2ea8bac9bdf498783e6220063b2ecc1-0@example.invalid",
+                         "name":  "TEMP_PHASE03_f2ea8bac9bdf498783e6220063b2ecc1 0",
+                         "role":  "instructor",
+                         "userId":  9
+                     },
+                     {
+                         "id":  "3bc9ae5c-9a04-49f8-8a36-aee1d018a17f",
+                         "email":  "temp_phase03_f2ea8bac9bdf498783e6220063b2ecc1-1@example.invalid",
+                         "name":  "TEMP_PHASE03_f2ea8bac9bdf498783e6220063b2ecc1 1",
+                         "role":  "instructor",
+                         "userId":  10
+                     },
+                     {
+                         "id":  "70acf97e-71f2-49c3-8ec1-a31860855f01",
+                         "email":  "temp_phase03_f2ea8bac9bdf498783e6220063b2ecc1-2@example.invalid",
+                         "name":  "TEMP_PHASE03_f2ea8bac9bdf498783e6220063b2ecc1 2",
+                         "role":  "alumno",
+                         "userId":  11
+                     },
+                     {
+                         "id":  "4acd7e5b-6ead-4b15-a929-fd792688c291",
+                         "email":  "temp_phase03_f2ea8bac9bdf498783e6220063b2ecc1-3@example.invalid",
+                         "name":  "TEMP_PHASE03_f2ea8bac9bdf498783e6220063b2ecc1 3",
+                         "role":  "alumno",
+                         "userId":  12
+                     }
+                 ],
+    "createdAt":  "2026-10-09T20:20:41.892Z",
+    "deletedRecords":  [
+                           {
+                               "table":  "accounts_userprofile",
+                               "id":  "3bc9ae5c-9a04-49f8-8a36-aee1d018a17f",
+                               "ownership":  {
+                                                 "id":  "3bc9ae5c-9a04-49f8-8a36-aee1d018a17f",
+                                                 "user_id":  10,
+                                                 "assigned_instructor_id":  null
+                                             }
+                           },
+                           {
+                               "table":  "accounts_userprofile",
+                               "id":  "4acd7e5b-6ead-4b15-a929-fd792688c291",
+                               "ownership":  {
+                                                 "id":  "4acd7e5b-6ead-4b15-a929-fd792688c291",
+                                                 "user_id":  12,
+                                                 "assigned_instructor_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           },
+                           {
+                               "table":  "accounts_userprofile",
+                               "id":  "70acf97e-71f2-49c3-8ec1-a31860855f01",
+                               "ownership":  {
+                                                 "id":  "70acf97e-71f2-49c3-8ec1-a31860855f01",
+                                                 "user_id":  11,
+                                                 "assigned_instructor_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           },
+                           {
+                               "table":  "accounts_userprofile",
+                               "id":  "a42b2dc7-841b-4382-933a-c5036186c529",
+                               "ownership":  {
+                                                 "id":  "a42b2dc7-841b-4382-933a-c5036186c529",
+                                                 "user_id":  9,
+                                                 "assigned_instructor_id":  null
+                                             }
+                           },
+                           {
+                               "table":  "auth_user",
+                               "id":  9,
+                               "ownership":  {
+                                                 "id":  9
+                                             }
+                           },
+                           {
+                               "table":  "auth_user",
+                               "id":  10,
+                               "ownership":  {
+                                                 "id":  10
+                                             }
+                           },
+                           {
+                               "table":  "auth_user",
+                               "id":  11,
+                               "ownership":  {
+                                                 "id":  11
+                                             }
+                           },
+                           {
+                               "table":  "auth_user",
+                               "id":  12,
+                               "ownership":  {
+                                                 "id":  12
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_conexion",
+                               "id":  "b979c710-b68a-4c01-9b65-a08740f1590a",
+                               "ownership":  {
+                                                 "id":  "b979c710-b68a-4c01-9b65-a08740f1590a",
+                                                 "alumno_id":  "70acf97e-71f2-49c3-8ec1-a31860855f01",
+                                                 "instructor_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_conexion",
+                               "id":  "d370b361-6b74-47e7-85aa-4a9d6b521f8e",
+                               "ownership":  {
+                                                 "id":  "d370b361-6b74-47e7-85aa-4a9d6b521f8e",
+                                                 "alumno_id":  "4acd7e5b-6ead-4b15-a929-fd792688c291",
+                                                 "instructor_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_mensaje",
+                               "id":  "0f22f94f-8a16-4547-8f22-43a0f86ca585",
+                               "ownership":  {
+                                                 "id":  "0f22f94f-8a16-4547-8f22-43a0f86ca585",
+                                                 "alumno_id":  "70acf97e-71f2-49c3-8ec1-a31860855f01",
+                                                 "instructor_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_mensaje",
+                               "id":  "57b6df48-bee2-4a07-8745-1238713f67c3",
+                               "ownership":  {
+                                                 "id":  "57b6df48-bee2-4a07-8745-1238713f67c3",
+                                                 "alumno_id":  "70acf97e-71f2-49c3-8ec1-a31860855f01",
+                                                 "instructor_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_mensaje",
+                               "id":  "f7ac793f-9f90-4b6d-ab77-271d4ea36632",
+                               "ownership":  {
+                                                 "id":  "f7ac793f-9f90-4b6d-ab77-271d4ea36632",
+                                                 "alumno_id":  "70acf97e-71f2-49c3-8ec1-a31860855f01",
+                                                 "instructor_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_mensajestaff",
+                               "id":  "552695b2-6cd3-4163-bb34-7a8d028e65eb",
+                               "ownership":  {
+                                                 "id":  "552695b2-6cd3-4163-bb34-7a8d028e65eb",
+                                                 "remitente_id":  "a42b2dc7-841b-4382-933a-c5036186c529",
+                                                 "destinatario_id":  "3bc9ae5c-9a04-49f8-8a36-aee1d018a17f"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_registroconexion",
+                               "id":  "4c311a1e-ba08-4b58-ace4-3ef233ff9284",
+                               "ownership":  {
+                                                 "id":  "4c311a1e-ba08-4b58-ace4-3ef233ff9284",
+                                                 "profile_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_registroconexion",
+                               "id":  "642507e4-b0c9-41b3-b511-87c68885c3dc",
+                               "ownership":  {
+                                                 "id":  "642507e4-b0c9-41b3-b511-87c68885c3dc",
+                                                 "profile_id":  "3bc9ae5c-9a04-49f8-8a36-aee1d018a17f"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_registroconexion",
+                               "id":  "8630206f-b7df-4317-9bff-e8ab1cea2384",
+                               "ownership":  {
+                                                 "id":  "8630206f-b7df-4317-9bff-e8ab1cea2384",
+                                                 "profile_id":  "70acf97e-71f2-49c3-8ec1-a31860855f01"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_registroconexion",
+                               "id":  "ca8b18f9-63fc-41ce-af00-8ba7a05cafb2",
+                               "ownership":  {
+                                                 "id":  "ca8b18f9-63fc-41ce-af00-8ba7a05cafb2",
+                                                 "profile_id":  "4acd7e5b-6ead-4b15-a929-fd792688c291"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_videollamada",
+                               "id":  "a004e7ef-cbe6-4926-b347-c7680cfd2726",
+                               "ownership":  {
+                                                 "id":  "a004e7ef-cbe6-4926-b347-c7680cfd2726",
+                                                 "alumno_id":  "70acf97e-71f2-49c3-8ec1-a31860855f01",
+                                                 "iniciador_id":  "70acf97e-71f2-49c3-8ec1-a31860855f01",
+                                                 "moderador_id":  "a42b2dc7-841b-4382-933a-c5036186c529",
+                                                 "instructor_id":  "a42b2dc7-841b-4382-933a-c5036186c529",
+                                                 "administrador_id":  null,
+                                                 "instructor_peer_id":  null
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_videollamada",
+                               "id":  "ab5460a0-b42d-4e54-90ba-1c583df339c6",
+                               "ownership":  {
+                                                 "id":  "ab5460a0-b42d-4e54-90ba-1c583df339c6",
+                                                 "alumno_id":  null,
+                                                 "iniciador_id":  "a42b2dc7-841b-4382-933a-c5036186c529",
+                                                 "moderador_id":  "a42b2dc7-841b-4382-933a-c5036186c529",
+                                                 "instructor_id":  "3bc9ae5c-9a04-49f8-8a36-aee1d018a17f",
+                                                 "administrador_id":  null,
+                                                 "instructor_peer_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           },
+                           {
+                               "table":  "conexiones_videollamada",
+                               "id":  "c67e1fa8-416f-4bca-80be-1ebe4e179ba3",
+                               "ownership":  {
+                                                 "id":  "c67e1fa8-416f-4bca-80be-1ebe4e179ba3",
+                                                 "alumno_id":  null,
+                                                 "iniciador_id":  "3bc9ae5c-9a04-49f8-8a36-aee1d018a17f",
+                                                 "moderador_id":  "3bc9ae5c-9a04-49f8-8a36-aee1d018a17f",
+                                                 "instructor_id":  "3bc9ae5c-9a04-49f8-8a36-aee1d018a17f",
+                                                 "administrador_id":  null,
+                                                 "instructor_peer_id":  "a42b2dc7-841b-4382-933a-c5036186c529"
+                                             }
+                           }
+                       ],
+    "cleanedAt":  "2026-10-09T20:20:58.365Z",
+    "MAIN_INSTANCE_TEST_PROFILES":  4,
+    "REAL_USER_DATA_MODIFIED":  0,
+    "REAL_USER_DATA_DELETED":  0,
+    "TEMP_DATA_RESIDUE":  0,
+    "MESSAGE_VALIDATION":  "PASS",
+    "MODERATION_VALIDATION":  "PASS",
+    "PERMISSION_VALIDATION":  "PASS",
+    "gates":  [
+                  "authenticated_profile_matches_real_api",
+                  "assigned_students_real_data",
+                  "instructor_to_student_without_refresh_and_B_isolated",
+                  "student_to_instructor_without_refresh",
+                  "refresh_persists_history_without_duplicates",
+                  "offline_reconnection_catches_up",
+                  "student_A_history_denied_to_B",
+                  "unassigned_instructor_send_denied",
+                  "instructor_peer_contact_and_real_delivery",
+                  "first_initiator_backend_moderator_0",
+                  "WSS_moderation_authoritative",
+                  "moderator_survives_refresh",
+                  "moderator_survives_reconnection",
+                  "student_peer_call_denied",
+                  "first_initiator_backend_moderator_1",
+                  "WSS_moderation_authoritative",
+                  "moderator_survives_refresh",
+                  "moderator_survives_reconnection",
+                  "student_peer_call_denied",
+                  "student_initiation_keeps_instructor_moderator",
+                  "student_never_moderates",
+                  "new_instructor_video_tab_real_contacts"
+              ],
+    "buildId":  "38e9591f-c3fc-4ee5-9a37-00530e4a6b6f",
+    "POST_CLEANUP_REGRESSION":  "PASS",
+    "postCleanupRegression":  {
+                                  "api":  "PASS",
+                                  "browserCases":  124,
+                                  "uiStates":  876,
+                                  "uiFailures":  0,
+                                  "uiErrors":  0,
+                                  "uiWarnings":  0,
+                                  "mainOriginalTables":  42,
+                                  "mainOriginalRows":  377,
+                                  "report":  ".run/order-20261009/03/post-cleanup-regression.log"
+                              }
+}

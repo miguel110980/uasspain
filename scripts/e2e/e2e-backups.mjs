@@ -4,6 +4,9 @@ import { adminClient, apiClient, check, sleep, sql, uuid } from './auth-fixtures
 let passed = 0;
 const gate = (condition, name) => { check(condition, name); passed++; console.log(`PASS | backup_${name}`); };
 const admin = await adminClient();
+const migrationFingerprintSql = "SELECT jsonb_agg(jsonb_build_object('version',version,'description',description,'checksum',encode(checksum,'hex'),'success',success) ORDER BY version) FROM _sqlx_migrations";
+const migrationFingerprint = sql(migrationFingerprintSql);
+check(migrationFingerprint !== 'null' && JSON.parse(migrationFingerprint).every(row => row.success), 'Applied migration baseline');
 const backend = execFileSync('docker', ['compose', '-f', 'docker-compose.e2e.yml', 'ps', '-q', 'backend-e2e'], { encoding: 'utf8' }).trim();
 const remote = execFileSync('docker', ['compose', '-f', 'docker-compose.e2e.yml', 'ps', '-q', 'sftp-ext1-e2e'], { encoding: 'utf8' }).trim();
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
@@ -100,7 +103,7 @@ for (let attempt = 0; attempt < 180; attempt++) {
 }
 if (restored?.state !== 'done') console.error('Restore E2E result:', JSON.stringify(restored));
 gate(restored?.state === 'done' && restored.checksum_verified === true, 'real_restore_validates_and_recovers_postgres');
-gate(sql('SELECT count(*) FROM _sqlx_migrations WHERE success') === '16', 'restored_database_matches_migrations');
+gate(sql(migrationFingerprintSql) === migrationFingerprint, 'restored_database_matches_migrations');
 gate(Number(sql("SELECT count(*) FROM core_auditlog WHERE action LIKE 'backup_%'")) >= 5, 'operations_are_audited');
 // An internal safety dump has no recovery manifest. It must not replace the
 // final recovery point usable from the panel in the retention protection.

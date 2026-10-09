@@ -53,7 +53,7 @@ export default function InstructorChat({
           myProfileId: profile.id,
           profiles: staffContacts,
           staffMsgs,
-          roleFilter: (p) => profileHasAdmin(p),
+          roleFilter: (p) => profileHasAdmin(p) || profileHasInstructor(p),
           fallbackRole: 'admin',
           fallbackLabel: 'Contacto',
         }));

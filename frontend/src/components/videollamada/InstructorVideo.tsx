@@ -124,11 +124,13 @@ export default function InstructorVideo({ profiles }) {
   const llamadasEntrantes = llamadas.filter((l) => l.iniciada_por === 'alumno');
   const llamadasIniciadas = llamadas.filter((l) => l.iniciada_por === 'instructor');
 
-  const tabs = <div role="tablist" aria-label="Tipo de videollamada" className="flex gap-3 mb-6">
+  const tabs = <div role="tablist" aria-label="Tipo de videollamada" className="flex flex-wrap gap-3 mb-6">
     <button role="tab" aria-selected={section === 'alumnos'} onClick={() => setSection('alumnos')} className="px-4 py-2 border border-primary/30">Alumnos</button>
     <button role="tab" aria-selected={section === 'administracion'} onClick={() => setSection('administracion')} className="px-4 py-2 border border-primary/30">Administradores</button>
+    <button role="tab" aria-selected={section === 'instructores'} onClick={() => setSection('instructores')} className="px-4 py-2 border border-primary/30">Instructores</button>
   </div>;
   if (section === 'administracion') return <>{tabs}<StaffVideo role="instructor" /></>;
+  if (section === 'instructores') return <>{tabs}<StaffVideo role="instructor" peerRole="instructor" /></>;
   return (
     <motion.div role="region" aria-label="Videollamadas con alumnos" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="max-w-4xl">
       {tabs}

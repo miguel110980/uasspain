@@ -1129,13 +1129,11 @@ async fn authorize_staff_pair(
     peer: Uuid,
 ) -> Result<(), AppError> {
     require_role(claims, &["admin", "instructor"])?;
-    let expected = if claims.role == "admin" {
-        "instructor"
-    } else {
-        "admin"
-    };
-    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role=$2 OR p.roles ? $2))")
-        .bind(peer).bind(expected).fetch_one(pool(state)?).await?;
+    if peer == claims.profile_id {
+        return Err(AppError::Forbidden);
+    }
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role IN ('admin','instructor') OR p.roles ?| ARRAY['admin','instructor']))")
+        .bind(peer).fetch_one(pool(state)?).await?;
     allowed.then_some(()).ok_or(AppError::Forbidden)
 }
 fn decrypt_direct(

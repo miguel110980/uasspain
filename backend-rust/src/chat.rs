@@ -110,14 +110,9 @@ async fn authorize_room(
         return Err(AppError::Unavailable);
     };
     let allowed: bool = if let Some(peer) = staff_peer(room_id, profile_id) {
-        let expected_peer_role = if role == "admin" {
-            "instructor"
-        } else {
-            "admin"
-        };
         matches!(role, "admin" | "instructor")
-            && sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile WHERE id = $1 AND status = 'activo' AND (role = $2 OR roles @> jsonb_build_array($2::text)))")
-                .bind(peer).bind(expected_peer_role).fetch_one(pool).await?
+            && sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role IN ('admin','instructor') OR p.roles ?| ARRAY['admin','instructor']))")
+                .bind(peer).fetch_one(pool).await?
     } else if let Ok(student_id) = room_id.parse::<Uuid>() {
         matches!(role, "alumno" | "instructor")
             && sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id JOIN accounts_userprofile i ON i.id=p.assigned_instructor_id JOIN auth_user iu ON iu.id=i.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role='alumno' OR p.roles ? 'alumno') AND i.status='activo' AND iu.is_active AND (i.role='instructor' OR i.roles ? 'instructor') AND (($3='alumno' AND p.id=$2) OR ($3='instructor' AND p.assigned_instructor_id=$2)))")
