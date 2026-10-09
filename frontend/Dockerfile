@@ -18,6 +18,7 @@ FROM nginx:1.30.5-alpine3.24@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed
 
 # Actualiza paquetes del sistema dentro de la tag inmutable (CVEs de alpine/openssl)
 RUN apk upgrade --no-cache \
+    && apk add --no-cache --upgrade tiff=4.7.2-r0 \
     && apk add --no-cache su-exec=0.3-r0
 
 RUN addgroup -g 1001 -S frontend && \

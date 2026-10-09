@@ -17,6 +17,9 @@ async function checkHtml(folder) {
     if (entry.isDirectory()) await checkHtml(filename);
     else if (entry.name.endsWith('.html')) {
       const html = await readFile(filename, 'utf8');
+      if (!html.includes('data-prerendered="home"') && /<link\b(?=[^>]*\brel="preload")(?=[^>]*\bas="image")(?=[^>]*\bhref="\/images\/hero_claro\.webp")[^>]*>/.test(html)) {
+        throw new Error(`Unused hero image preload outside Home: ${filename}`);
+      }
       const inlineStyles = [...html.matchAll(/<style data-stylesheet="([^"]+)">([\s\S]*?)<\/style>/g)];
       for (const [, href, contents] of inlineStyles) {
         if (!href.startsWith('/assets/') || href.includes('..')) throw new Error(`Invalid inline stylesheet: ${filename}`);

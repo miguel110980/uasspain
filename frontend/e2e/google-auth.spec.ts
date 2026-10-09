@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
 // Provider responses are simulated in the browser only; no real backend session is issued.
-async function googleFixture(page: Page, options: { configured?: boolean; configurationStatus?: number; challengeFails?: boolean; scriptFails?: boolean; loginStatus?: number } = {}) {
+async function googleFixture(page: Page, options: { configured?: boolean; configurationStatus?: number; configurationReady?: Promise<void>; challengeFails?: boolean; scriptFails?: boolean; loginStatus?: number } = {}) {
   const state = { configured: true, configurationStatus: 200, challengeFails: false, scriptFails: false, loginStatus: 200, authenticated: false, challenges: 0, logins: 0, refreshes: 0, scripts: 0, ...options };
   await page.route('https://accounts.google.com/gsi/client**', async route => {
     state.scripts++;
@@ -27,6 +27,7 @@ async function googleFixture(page: Page, options: { configured?: boolean; config
     let status = 200;
     let body: unknown = [];
     if (path === '/api/public/oauth/google/') {
+      await state.configurationReady;
       status = state.configurationStatus;
       body = status === 200
         ? { configured: state.configured, client_id: state.configured ? '123-test.apps.googleusercontent.com' : null }
@@ -55,6 +56,26 @@ async function googleFixture(page: Page, options: { configured?: boolean; config
   });
   return state;
 }
+
+test('late Google configuration keeps the login values and typing focus', async ({ page }) => {
+  let release!: () => void;
+  const configurationReady = new Promise<void>(resolve => { release = resolve; });
+  const state = await googleFixture(page, { configurationReady });
+  await page.goto('/?auth=login');
+  const email = page.getByLabel('Correo electrónico *', { exact: true });
+  const password = page.getByLabel('Contraseña *', { exact: true });
+  await email.fill('typing@test.invalid');
+  await password.fill('FixtureTyping_2026!');
+  await expect(password).toBeFocused();
+  release();
+  await expect(page.getByRole('button', { name: 'Continuar con Google', exact: true })).toBeEnabled();
+  await expect(email).toHaveValue('typing@test.invalid');
+  await expect(password).toHaveValue('FixtureTyping_2026!');
+  await expect(password).toBeFocused();
+  await page.keyboard.type('Continued');
+  await expect(password).toHaveValue('FixtureTyping_2026!Continued');
+  expect(state.logins).toBe(0);
+});
 
 test('Google remains visible without configuration and can recover after configuration', async ({ page }) => {
   const state = await googleFixture(page, { configured: false });

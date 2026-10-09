@@ -2,7 +2,8 @@
 FROM nginx:1.30.5-alpine3.24@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
 
 # Actualiza paquetes del sistema dentro de la tag inmutable (CVEs de alpine/openssl)
-RUN apk upgrade --no-cache
+RUN apk upgrade --no-cache \
+    && apk add --no-cache --upgrade tiff=4.7.2-r0
 
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY proxy_params /etc/nginx/proxy_params

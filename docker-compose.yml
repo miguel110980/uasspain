@@ -66,6 +66,10 @@ services:
       - SETGID
       - FOWNER
       - DAC_OVERRIDE
+      # Docker's root init must forward SIGINT to the postgres UID. Without
+      # KILL, tini exits with EPERM and the database is killed ungracefully.
+      # PostgreSQL itself runs with zero effective capabilities.
+      - KILL
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-uasspain} -d ${DB_NAME:-uasspain}"]
       interval: 5s
@@ -128,6 +132,9 @@ services:
       - SETUID
       - SETGID
       - FOWNER
+      # Root tini must forward SIGTERM after setpriv changes the Redis UID.
+      # Redis itself keeps zero effective capabilities.
+      - KILL
     healthcheck:
       test:
         [
@@ -335,6 +342,9 @@ services:
       - FOWNER
       - SETGID
       - SETUID
+      # Root tini forwards the stop signal after su-exec selects frontend UID.
+      # The nginx master/worker run without effective capabilities.
+      - KILL
     volumes:
       - media_data:/media_data:ro
       - frontend_static:/var/lib/frontend-static

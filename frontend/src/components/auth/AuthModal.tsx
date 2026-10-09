@@ -335,10 +335,11 @@ export default function AuthModal({ isOpen, onClose }) {
               </div>
             </div>
 
+            <GoogleAuthShell clientId={google.clientId} onScriptLoadError={() => setGoogleScriptError(true)}>
             {google.clientId && !googleScriptError ? <GoogleSignInButton
-              disabled={loading}
-              onSuccess={handleGoogleSuccess}
-              onError={handleGoogleError}
+                disabled={loading}
+                onSuccess={handleGoogleSuccess}
+                onError={handleGoogleError}
             /> : <div className="space-y-2 text-center">
               <button type="button" disabled className="w-full inline-flex items-center justify-center gap-3 border border-border-strong px-4 py-3 text-sm text-muted-foreground">
                 <GoogleIcon className="w-5 h-5" /> Continuar con Google
@@ -354,6 +355,7 @@ export default function AuthModal({ isOpen, onClose }) {
               </p>
               {!google.loading && <button type="button" disabled={loading} onClick={() => { setGoogleScriptError(false); setGoogleAttempt(value => value + 1); }} className="text-xs text-primary underline">Comprobar disponibilidad</button>}
             </div>}
+            </GoogleAuthShell>
           </>
         )}
 
@@ -377,5 +379,5 @@ export default function AuthModal({ isOpen, onClose }) {
     </AuthModalShell>
   );
 
-  return <GoogleAuthShell clientId={google.clientId} onScriptLoadError={() => setGoogleScriptError(true)}>{modalBody}</GoogleAuthShell>;
+  return modalBody;
 }

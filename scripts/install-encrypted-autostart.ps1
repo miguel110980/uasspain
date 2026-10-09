@@ -17,8 +17,16 @@ finally { $sha.Dispose(); $identity.Dispose() }
 $scopeName = "UASSpainEncryptedWatcher-$sid-$scopeHash"
 $taskName = "UASSpain-EncryptedAutoUnlock-$sid-$scopeHash"
 $existing = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue
-if ($null -ne $existing -and $existing.Principal.UserId -notin @($sid, $userName)) {
-    throw 'La tarea existente no pertenece al usuario actual; no se modifica.'
+if ($null -ne $existing) {
+    # Task Scheduler normalizes DOMAIN\user to a local short name on some
+    # Windows installations. Compare the resolved identity, not its spelling.
+    try {
+        $owner = $existing.Principal.UserId
+        $ownerSid = if ($owner -match '^S-1-') { $owner } else {
+            ([Security.Principal.NTAccount]::new($owner)).Translate([Security.Principal.SecurityIdentifier]).Value
+        }
+    } catch { throw 'No se pudo verificar el propietario de la tarea existente; no se modifica.' }
+    if ($ownerSid -ne $sid) { throw 'La tarea existente no pertenece al usuario actual; no se modifica.' }
 }
 
 if ($Uninstall) {
@@ -44,10 +52,15 @@ $powershellPath = Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powersh
 # Task Scheduler starts the same user's interactive token with limited privileges.
 # No Windows password is stored; this task cannot unlock before that user logs in.
 $action = New-ScheduledTaskAction -Execute $powershellPath -Argument ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $watcherPath + '"') -WorkingDirectory $workspacePath
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $userName
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $userName
+# A terminated watcher has no next run with an AtLogOn trigger alone. In
+# particular, Task Scheduler may report CTRL+C (0xC000013A) without retrying it.
+# Retry independently of the process exit code; IgnoreNew keeps a live watcher
+# single-instance. This does not start Docker or manually stopped containers.
+$recoveryTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval ([TimeSpan]::FromMinutes(1))
 $principal = New-ScheduledTaskPrincipal -UserId $userName -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval ([TimeSpan]::FromMinutes(1))
-$task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Desbloquea solamente el PostgreSQL cifrado de UASSpain ya iniciado, usando DPAPI del usuario actual. No inicia contenedores ni almacena claves en claro.'
+$task = New-ScheduledTask -Action $action -Trigger @($logonTrigger, $recoveryTrigger) -Principal $principal -Settings $settings -Description 'Desbloquea solamente el PostgreSQL cifrado de UASSpain ya iniciado, usando DPAPI del usuario actual. No inicia contenedores ni almacena claves en claro.'
 Register-ScheduledTask -TaskName $taskName -TaskPath '\' -InputObject $task -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName -TaskPath '\'
 Write-Output 'Recuperacion automatica registrada e iniciada para el usuario actual, con privilegios limitados y sin almacenar una contrasena de Windows.'

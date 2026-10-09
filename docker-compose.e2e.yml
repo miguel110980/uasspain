@@ -24,7 +24,8 @@ services:
   redis-e2e:
     build:
       context: ./infra/redis
-    image: uasspain-redis:8.2.10-alpine
+    # Keep E2E builds from replacing the permanent stack's image tag.
+    image: uasspain-redis:e2e-local
     # Isolated, un-published test network: accept only peers on this Compose
     # network so the backend exercises the same Redis major as production.
     command: ["redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--save", "", "--appendonly", "no"]

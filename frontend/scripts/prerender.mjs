@@ -49,7 +49,11 @@ try {
     if (!key) throw new Error(`No build manifest entry for public page: ${source}`);
     return collect(key);
   }
-  const shell = base.replace(/<title>[\s\S]*?<\/title>/, '')
+  // The photo is used only by Home. Private entry points and other public
+  // routes share this template, but must not download an unused hero image.
+  const heroPreloadPattern = /<link\b(?=[^>]*\brel="preload")(?=[^>]*\bas="image")(?=[^>]*\bhref="\/images\/hero_claro\.webp")[^>]*>/g;
+  const heroPreloads = [...base.matchAll(heroPreloadPattern)].map(match => match[0]).join('');
+  const shell = base.replace(heroPreloadPattern, '').replace(/<title>[\s\S]*?<\/title>/, '')
     .replace(/<meta[^>]+(?:name="(?:description|keywords|robots|twitter:[^"]+)"|property="og:[^"]+")[^>]*>/g, '')
     .replace(/<link[^>]+rel="canonical"[^>]*>/g, '');
   function documentFor(route, body, seo) {
@@ -65,7 +69,7 @@ try {
       <meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${escape(seo.title)}" />
       <meta name="twitter:description" content="${escape(seo.description)}" /><meta name="twitter:image" content="${escape(origin.origin + SITE.ogImage)}" />
       ${seo.noindex ? '' : `<script id="seo-org-jsonld" type="application/ld+json">${json({ '@context': 'https://schema.org', '@graph': [organizationJsonLd(), { '@type': 'WebSite', name: SITE.name, url: origin.origin }] })}</script>`}`;
-    return shell.replace('</head>', `${head}</head>`)
+    return shell.replace('</head>', `${head}${route === '/' && !seo.noindex ? heroPreloads : ''}</head>`)
       .replace(/<div id="root">[\s\S]*?<\/div>\s*<noscript>/, `<div id="root">${body}</div><noscript>`)
       .replace('UASSPAIN necesita JavaScript para funcionar.', 'Activa JavaScript para acceder a tu cuenta y al contenido actualizado.');
   }

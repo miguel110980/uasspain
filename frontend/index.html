@@ -16,6 +16,10 @@
     <meta property="og:locale" content="es_ES" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="preload" href="/fonts/space-grotesk-latin-bold.woff2" as="font" type="font/woff2" crossorigin fetchpriority="high" />
+    <!-- The hero photo paints as soon as React mounts; preloading it from HTML
+         overlaps its download with the JS bundles and shortens the LCP. The
+         srcset/sizes mirror the <img> in HeroSection so both select one file. -->
+    <link rel="preload" as="image" href="/images/hero_claro.webp" fetchpriority="high" imagesrcset="/images/hero-claro-640.webp 640w, /images/hero-claro-1280.webp 1280w, /images/hero-claro-1672.webp 1672w" imagesizes="(max-width: 767px) min(201vw, 976px), min(143.6vw, 2004px)" />
     <script src="/boot-guard.js" defer></script>
     <link rel="icon" type="image/webp" sizes="32x32" href="/images/icon-32.webp" />
     <link rel="manifest" href="/manifest.json" />

@@ -27,10 +27,14 @@ FROM postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5
 
 FROM ubuntu:26.04@sha256:3595d7fc4286a33fad0fd853a4063e654287a9c3787437d7937c94ca3f7a804e AS production
 
+# The base contains a standalone Pebble service manager. This image starts the
+# Rust executable directly and uses Docker init, so the manager is unused.
+# Remove its vulnerable Go runtime instead of shipping an extra supervisor.
 RUN apt-get update \
     && apt-get upgrade --yes \
     && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends --yes ca-certificates tzdata openssh-client libpq5 liblz4-1 libzstd1 libreadline8t64 zlib1g \
     && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/bin/pebble \
     && groupadd --system --gid 10001 uasspain \
     && useradd --system --uid 10001 --gid uasspain --home-dir /nonexistent --shell /usr/sbin/nologin uasspain \
     && mkdir -p /app/media /app/backups /app/backup_keys \

@@ -155,6 +155,11 @@ un proceso oculto. No almacena una contraseña Windows ni una clave en claro.
 Cada diez segundos comprueba el contenedor existente y solo entrega la clave
 si PostgreSQL ya esta iniciado y el volumen cifrado necesita desbloqueo.
 Respeta las paradas manuales y no crea claves, volumenes ni contenedores.
+Se inicia al entrar en Windows y dispone de un disparador periódico de un minuto
+para recuperar el watcher si su proceso termina. `IgnoreNew` evita duplicados
+mientras sigue ejecutándose. El disparador tampoco inicia Docker ni contenedores
+detenidos. Vuelva a ejecutar el instalador para actualizar una tarea anterior
+que solo tuviera el disparador de inicio de sesión.
 Requiere la sesion Windows del propietario y Docker disponible; no desbloquea
 antes de iniciar esa sesion. El log contiene solo estados operativos en
 `.run/uasspain/storage-autounlock.log`. Para desinstalarla, sin detener Docker:
@@ -166,6 +171,11 @@ antes de iniciar esa sesion. El log contiene solo estados operativos en
 El arranque manual sigue disponible. Espera el healthcheck de PostgreSQL tras
 entregar la clave, incluso si el contenedor ya estaba marcado `unhealthy`;
 Compose solo arranca el resto de la pila cuando la base esta preparada.
+Los supervisores `tini` de PostgreSQL, Redis y frontend conservan `CAP_KILL` para reenviar
+las señales de apagado a sus procesos con otro UID. Los servidores mantienen
+cero capacidades efectivas; PostgreSQL tampoco conserva `SYS_ADMIN`. Esto
+permite cerrar la base, persistir el AOF y detener Nginx sin el error fatal
+`EPERM` del supervisor.
 
 Antes de activar deben pasar tambien login, datos personales, panel admin y aislamiento multirrol desde
 la aplicacion real; conserve su evidencia local sin credenciales en
