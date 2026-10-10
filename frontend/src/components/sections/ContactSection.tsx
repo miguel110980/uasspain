@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useTheme } from 'next-themes';
 import useScrollReveal from '@/hooks/useScrollReveal';
@@ -10,11 +10,9 @@ import { Send, MapPin, Phone, Mail, Facebook, Instagram } from 'lucide-react';
 import { sanitizeInput, sanitizePayload, type SanitizeKind } from '@/lib/sanitize';
 import { extractErrorMessage } from '@/lib/errors';
 import { sendContactMessage } from '@/services/contactService';
+import { corporateContactEmail, contactServices, contactField } from '@/lib/contactConfig';
 
-const serviceOptions = [
-  'Emergencias', 'Seguridad', 'Radiofonista',
-  'Audiovisuales', 'Fumigación', 'Inspección', 'Termografía', 'Otro',
-];
+const serviceOptions = contactServices;
 
 const CONTACT_SCHEMA = {
   nombre: 'text',
@@ -22,6 +20,7 @@ const CONTACT_SCHEMA = {
   email: 'email',
   telefono: 'phone',
   servicio: 'text',
+  asunto: 'text',
   mensaje: 'message',
 } satisfies Record<string, SanitizeKind>;
 
@@ -31,6 +30,7 @@ const FIELD_KIND: Record<string, SanitizeKind> = {
   email: 'email',
   telefono: 'phone',
   servicio: 'text',
+  asunto: 'text',
   mensaje: 'message',
 };
 
@@ -38,7 +38,7 @@ const MAP_ADDRESS = 'Patio de Empresas, Calle Cipriano Alhambra 18, 23440 Baeza,
 const MAP_URL = 'https://www.google.com/maps?q=Patio%20de%20Empresas%20Calle%20Cipriano%20Alhambra%2018%2023440%20Baeza%20Ja%C3%A9n%20Spain&hl=es&z=16&output=embed';
 
 const EMPTY_FORM = {
-  nombre: '', empresa: '', email: '', telefono: '', servicio: '', mensaje: '',
+  nombre: '', empresa: '', email: '', telefono: '', servicio: '', asunto: '', mensaje: '', website: '',
 };
 
 export default function ContactSection({ skipReveal = false }) {
@@ -47,8 +47,8 @@ export default function ContactSection({ skipReveal = false }) {
   const { resolvedTheme } = useTheme();
   const [form, setForm] = useState(EMPTY_FORM);
   const [sending, setSending] = useState(false);
+  const submitInFlight = useRef(false);
   const [sent, setSent] = useState(false);
-  const [warning, setWarning] = useState('');
   const [error, setError] = useState('');
   const [mapStatus, setMapStatus] = useState('loading');
 
@@ -60,20 +60,21 @@ export default function ContactSection({ skipReveal = false }) {
 
   const handleChange = (field, value) => {
     const kind = FIELD_KIND[field] ?? 'text';
-    const clean = sanitizeInput(value, kind);
+    const clean = field === 'mensaje' ? contactField(value, field) : field === 'email' ? value : sanitizeInput(value, kind);
     setForm((prev) => ({ ...prev, [field]: clean }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (sending) return;
+    if (submitInFlight.current) return;
     setError('');
-    setWarning('');
     setSent(false);
 
     const payload = /** @type {{ nombre: string; empresa: string; email: string; telefono: string; servicio: string; mensaje: string }} */ (
       sanitizePayload(form, CONTACT_SCHEMA)
     );
+    payload.email = form.email.trim();
+    payload.mensaje = form.mensaje;
 
     if (!payload.servicio || !serviceOptions.includes(payload.servicio)) {
       setError('Selecciona un servicio válido.');
@@ -83,20 +84,29 @@ export default function ContactSection({ skipReveal = false }) {
       setError('Introduce un email válido.');
       return;
     }
-    if (!payload.nombre?.trim() || !payload.telefono?.trim() || !payload.mensaje?.trim()) {
+    if (!payload.nombre?.trim()) {
       setError('Completa todos los campos obligatorios.');
       return;
     }
+    if (payload.asunto.trim().length < 3) {
+      setError('El asunto debe tener entre 3 y 120 caracteres.');
+      return;
+    }
+    if (payload.mensaje.trim().length < 10) {
+      setError('El mensaje debe tener entre 10 y 2000 caracteres.');
+      return;
+    }
 
+    submitInFlight.current = true;
     setSending(true);
     try {
-      const result = await sendContactMessage(payload);
+      await sendContactMessage(payload);
       setSent(true);
-      if (result?.warning) setWarning(result.warning);
       setForm(EMPTY_FORM);
     } catch (err) {
       setError(extractErrorMessage(err, 'Error al enviar. Inténtalo de nuevo más tarde.'));
     } finally {
+      submitInFlight.current = false;
       setSending(false);
     }
   };
@@ -170,9 +180,8 @@ export default function ContactSection({ skipReveal = false }) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="contactsection-field-4" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Teléfono *</Label>
+                  <Label htmlFor="contactsection-field-4" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Teléfono</Label>
                   <Input id="contactsection-field-4"
-                    required
                     type="tel"
                     maxLength={20}
                     placeholder="+34 600 000 000"
@@ -198,6 +207,16 @@ export default function ContactSection({ skipReveal = false }) {
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="contactsection-subject" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Asunto *</Label>
+                <Input id="contactsection-subject" required maxLength={120} placeholder="Asunto de tu consulta" value={form.asunto}
+                  onChange={(e) => handleChange('asunto', e.target.value)}
+                  className="bg-surface-muted border-border-subtle focus:border-transparent text-foreground placeholder:text-muted-foreground/40" />
+              </div>
+              <div className="hidden" aria-hidden="true">
+                <label htmlFor="contactsection-website">Website</label>
+                <input id="contactsection-website" name="website" tabIndex={-1} autoComplete="off" value={form.website} onChange={(e) => handleChange('website', e.target.value)} />
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="contactsection-field-6" className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Mensaje *</Label>
                 <Textarea id="contactsection-field-6"
                   required
@@ -212,9 +231,6 @@ export default function ContactSection({ skipReveal = false }) {
 
               {sent && (
                 <p role="status" className="text-sm text-primary font-mono text-center">✓ Mensaje enviado correctamente. Te contactaremos pronto.</p>
-              )}
-              {warning && (
-                <p role="status" className="text-sm text-warning font-mono text-center">{warning}</p>
               )}
               {error && (
                 <p role="alert" className="text-sm text-destructive font-mono text-center">{error}</p>
@@ -263,7 +279,7 @@ export default function ContactSection({ skipReveal = false }) {
                 </div>
                 <div>
                   <h4 className="font-heading text-sm font-semibold text-foreground mb-1">Email</h4>
-                  <p className="text-sm text-muted-foreground">info@uasspain.com</p>
+                  <a href={`mailto:${corporateContactEmail}`} className="text-sm text-muted-foreground">{corporateContactEmail}</a>
                 </div>
               </div>
             </div>

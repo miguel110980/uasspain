@@ -134,7 +134,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::patch(crate::content::update_section)
                 .delete(crate::content::delete_section),
         )
-        .route("/api/contact/", post(api::contact))
+        .route(
+            "/api/contact/",
+            post(crate::contact::send).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route("/api/contact/config/", get(crate::contact::public_config))
         .route("/api/system/status/", get(crate::system_status::status))
         .route("/api/dashboard/counts/", get(crate::dashboard::counts))
         .route(

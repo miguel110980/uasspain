@@ -1,6 +1,14 @@
 param([switch]$Build, [switch]$InitializeKey)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+# Empty means unconfigured. Never invent provider credentials or overwrite an
+# existing corporate password when rebuilding an encrypted installation.
+if (-not (Test-Path -LiteralPath '.secrets/contact_smtp_password')) {
+    [IO.File]::WriteAllText((Join-Path (Get-Location).Path '.secrets/contact_smtp_password'), '')
+}
+if (-not (Test-Path -LiteralPath '.secrets/postmark_server_token')) {
+    [IO.File]::WriteAllText((Join-Path (Get-Location).Path '.secrets/postmark_server_token'), '')
+}
 $compose = @('compose','-p','uasspain','-f','docker-compose.yml','-f','docker-compose.encrypted.yml')
 & docker @compose config --quiet
 if ($LASTEXITCODE -ne 0) { throw 'Compose cifrado invalido.' }

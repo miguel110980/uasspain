@@ -1,5 +1,6 @@
 import React from 'react';
 import LegalLayout from '@/components/layout/LegalLayout';
+import { corporateContactEmail } from '@/lib/contactConfig';
 
 export default function AvisoLegal() {
   return (
@@ -7,7 +8,7 @@ export default function AvisoLegal() {
       <h2 className="font-heading text-lg font-semibold text-foreground">1. Identificación</h2>
       <p>
         Titular: UASSPAIN. Domicilio: Patio de Empresas, Calle Cipriano Alhambra 18, 23440 Baeza, Jaén, España.
-        Contacto: +34 607 95 17 41 · info@uasspain.com.
+        Contacto: +34 607 95 17 41 · {corporateContactEmail}.
       </p>
 
       <h2 className="font-heading text-lg font-semibold text-foreground">2. Objeto</h2>

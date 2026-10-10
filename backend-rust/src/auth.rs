@@ -866,7 +866,7 @@ pub async fn validate_active_session(
     }
     if matches!(
         path.as_str(),
-        "/" | "/api/health/live/" | "/api/health/ready/" | "/api/contact/"
+        "/" | "/api/health/live/" | "/api/health/ready/" | "/api/contact/" | "/api/contact/config/"
     ) || path.starts_with("/api/public/")
         || (matches!(
             *request.method(),

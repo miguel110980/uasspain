@@ -5,6 +5,7 @@ import Logo from '@/components/layout/Logo';
 import { useQuery } from '@tanstack/react-query';
 import contentService from '@/services/contentService';
 import { coursePath } from '@/lib/courseCategories';
+import { corporateContactEmail } from '@/lib/contactConfig';
 
 const quickLinks = [
   { label: 'Inicio', href: '/' },
@@ -61,7 +62,7 @@ export default function Footer() {
               Servicios aéreos profesionales con drones. Tecnología, seguridad y precisión al servicio de tu operación.
             </p>
             <p className="text-xs text-muted-foreground leading-relaxed mb-6">
-              Patio de Empresas, Calle Cipriano Alhambra 18<br />23440 Baeza, Jaén, España<br />+34 607 95 17 41 · info@uasspain.com
+              Patio de Empresas, Calle Cipriano Alhambra 18<br />23440 Baeza, Jaén, España<br />+34 607 95 17 41 · {corporateContactEmail}
             </p>
             <div className="flex gap-3">
               {socialLinks.map(({ label, href, Icon }) => (

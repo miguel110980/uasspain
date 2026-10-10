@@ -161,59 +161,6 @@ pub async fn public_publications(
     Ok(Json(rows))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ContactWrite {
-    nombre: String,
-    #[serde(default)]
-    empresa: String,
-    email: String,
-    telefono: String,
-    servicio: String,
-    mensaje: String,
-}
-pub async fn contact(
-    State(state): State<Arc<AppState>>,
-    Json(input): Json<ContactWrite>,
-) -> Result<Json<Value>, AppError> {
-    if input.nombre.trim().is_empty()
-        || input.nombre.len() > 120
-        || input.email.len() > 254
-        || !input.email.contains('@')
-        || input.telefono.trim().is_empty()
-        || input.telefono.len() > 50
-        || input.servicio.trim().is_empty()
-        || input.servicio.len() > 120
-        || input.mensaje.trim().is_empty()
-        || input.mensaje.len() > 5000
-        || input.empresa.len() > 120
-    {
-        return Err(AppError::Validation("Datos de contacto no válidos.".into()));
-    }
-    let (config, _) = crate::runtime_config::smtp(&state).await?;
-    let recipient = if config.contact_recipient.is_empty() {
-        config.username
-    } else {
-        config.contact_recipient
-    };
-    if recipient.is_empty() && !env_true("DEV_EMAIL", false) {
-        return Err(AppError::Unavailable);
-    }
-    crate::email::send(
-        &state,
-        &recipient,
-        "Nuevo contacto UASSpain",
-        &format!(
-            "Nombre: {}\nEmpresa: {}\nEmail: {}\nTelefono: {}\nServicio: {}\n\n{}",
-            input.nombre, input.empresa, input.email, input.telefono, input.servicio, input.mensaje
-        ),
-    )
-    .await?;
-    let mut payload = json!({"detail":"Mensaje enviado correctamente."});
-    if env_true("DEV_EMAIL", false) {
-        payload["warning"] = json!("Modo desarrollo: el email no se envió por SMTP.");
-    }
-    Ok(Json(payload))
-}
 fn admin(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
     let claims = authenticate(state, headers, "access")?;
     require_role(&claims, &["admin"])
@@ -221,12 +168,6 @@ fn admin(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
 fn pool(state: &AppState) -> Result<&sqlx::PgPool, AppError> {
     state.pool.as_ref().ok_or(AppError::Unavailable)
 }
-fn env_true(name: &str, fallback: bool) -> bool {
-    std::env::var(name).map_or(fallback, |v| {
-        matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
-    })
-}
-
 pub fn uptime(started: Instant) -> u64 {
     started.elapsed().as_secs()
 }

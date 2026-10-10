@@ -8,6 +8,7 @@ pub mod backups;
 pub mod cache;
 pub mod chat;
 pub mod connections;
+pub mod contact;
 pub mod content;
 pub mod dashboard;
 pub mod db;

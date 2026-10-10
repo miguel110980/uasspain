@@ -9,12 +9,18 @@ const CONTACT_SCHEMA = {
   email: 'email',
   telefono: 'phone',
   servicio: 'text',
+  asunto: 'text',
   mensaje: 'message',
 } satisfies Record<string, SanitizeKind>;
 
 export async function sendContactMessage(form) {
   const payload = sanitizePayload(form, CONTACT_SCHEMA);
+  payload.email = form.email.trim();
+  payload.mensaje = form.mensaje;
   const res = await apiClient.post(endpoints.contact, payload);
+  if (res.data?.delivery_accepted !== true || res.data?.warning) {
+    throw new Error('No se ha podido enviar la consulta. Inténtalo de nuevo más tarde.');
+  }
   return res.data;
 }
 

@@ -9,8 +9,11 @@ RUN --mount=type=cache,target=/root/.npm \
     --fetch-retries=4 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=10000
 
 COPY frontend/ ./
+COPY backend-rust/src/contact-defaults.json /backend-rust/src/contact-defaults.json
 ARG VITE_SITE_URL=https://uas-spain.com
+ARG VITE_CONTACT_EMAIL=
 ENV VITE_SITE_URL=${VITE_SITE_URL}
+ENV VITE_CONTACT_EMAIL=${VITE_CONTACT_EMAIL}
 RUN npm run build
 
 # ─── Stage 2: Production (nginx) ─────────────────────────────────

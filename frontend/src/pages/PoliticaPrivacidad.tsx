@@ -1,12 +1,13 @@
 import React from 'react';
 import LegalLayout from '@/components/layout/LegalLayout';
+import { corporateContactEmail } from '@/lib/contactConfig';
 
 export default function PoliticaPrivacidad() {
   return (
     <LegalLayout title="Política de Privacidad" subtitle="Privacidad">
       <h2 className="font-heading text-lg font-semibold text-foreground">1. Responsable del tratamiento</h2>
       <p>
-        UASSPAIN, con domicilio en Patio de Empresas, Calle Cipriano Alhambra 18, 23440 Baeza, Jaén, España, contacto: +34 607 95 17 41 · info@uasspain.com,
+        UASSPAIN, con domicilio en Patio de Empresas, Calle Cipriano Alhambra 18, 23440 Baeza, Jaén, España, contacto: +34 607 95 17 41 · {corporateContactEmail},
         es responsable del tratamiento de los datos personales recogidos a través de este sitio web.
       </p>
 
@@ -47,7 +48,7 @@ export default function PoliticaPrivacidad() {
       <h2 className="font-heading text-lg font-semibold text-foreground">7. Derechos</h2>
       <p>
         Puedes ejercer tus derechos de acceso, rectificación, supresión, limitación, oposición y portabilidad escribiendo a
-        info@uasspain.com. Asimismo, tienes derecho a presentar una reclamación ante la Agencia Española de Protección de Datos (AEPD).
+        {corporateContactEmail}. Asimismo, tienes derecho a presentar una reclamación ante la Agencia Española de Protección de Datos (AEPD).
       </p>
 
       <h2 className="font-heading text-lg font-semibold text-foreground">8. Seguridad</h2>

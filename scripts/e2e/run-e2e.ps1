@@ -206,6 +206,19 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'No se pudo restaurar el mailbox aislado' }
     }
 
+    if (-not $SkipBrowser) {
+        Write-Host '==> Validando contacto con receptor SMTP autenticado y TLS exclusivamente aislado'
+        $PreviousContactComposeFiles = $env:E2E_CONTACT_COMPOSE_FILES
+        try {
+            $ContactComposeFiles = for ($i = 1; $i -lt $ComposeArgs.Count; $i += 2) { $ComposeArgs[$i] }
+            $env:E2E_CONTACT_COMPOSE_FILES = ConvertTo-Json -InputObject @($ContactComposeFiles) -Compress
+            & node (Join-Path $Root 'scripts/e2e/e2e-contact.mjs')
+            if ($LASTEXITCODE -ne 0) { throw 'La suite de contacto SMTP/TLS aislado fallo' }
+        } finally {
+            $env:E2E_CONTACT_COMPOSE_FILES = $PreviousContactComposeFiles
+        }
+    }
+
     Write-Host '==> Validando alcance de paneles, asignaciones y contadores contra PostgreSQL'
     & node (Join-Path $Root 'scripts/e2e/e2e-panels.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de alcance de paneles E2E fallo' }

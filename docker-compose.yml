@@ -256,7 +256,16 @@ services:
       EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
       EMAIL_HOST_PASSWORD_FILE: /run/secrets/smtp_password
       DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
-      CONTACT_EMAIL: ${CONTACT_RECIPIENT_EMAIL:-info@uasspain.com}
+      CONTACT_EMAIL: ${CONTACT_RECIPIENT_EMAIL:-}
+      CONTACT_SMTP_HOST: ${CONTACT_SMTP_HOST:-}
+      CONTACT_SMTP_PORT: ${CONTACT_SMTP_PORT:-587}
+      CONTACT_SMTP_SECURITY: ${CONTACT_SMTP_SECURITY:-STARTTLS}
+      CONTACT_SMTP_USER: ${CONTACT_SMTP_USER:-}
+      CONTACT_SMTP_FROM: ${CONTACT_SMTP_FROM:-}
+      CONTACT_SMTP_PASSWORD_FILE: /run/secrets/contact_smtp_password
+      CONTACT_SMTP_CA_FILE: ${CONTACT_SMTP_CA_FILE:-}
+      POSTMARK_SERVER_TOKEN_FILE: /run/secrets/postmark_server_token
+      POSTMARK_FROM: ${POSTMARK_FROM:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     networks:
       - edge
@@ -292,6 +301,8 @@ services:
       - db_backup_password
       - db_restore_password
       - smtp_password
+      - contact_smtp_password
+      - postmark_server_token
       - field_encryption_key
       - bootstrap_admin_password
       - redis_password
@@ -317,6 +328,7 @@ services:
       target: production
       args:
         VITE_SITE_URL: ${SITE_URL:-https://uas-spain.com}
+        VITE_CONTACT_EMAIL: ${CONTACT_RECIPIENT_EMAIL:-}
     container_name: uasspain-frontend
     restart: unless-stopped
     init: true
@@ -489,6 +501,10 @@ secrets:
     file: ${DB_MONITOR_PASSWORD_FILE:-.secrets/db_monitor_password}
   smtp_password:
     file: ${SMTP_PASSWORD_FILE:-.secrets/smtp_password}
+  contact_smtp_password:
+    file: ${CONTACT_SMTP_PASSWORD_FILE:-.secrets/contact_smtp_password}
+  postmark_server_token:
+    file: ${POSTMARK_SERVER_TOKEN_FILE:-.secrets/postmark_server_token}
   field_encryption_key:
     file: ${FIELD_ENCRYPTION_KEY_FILE:-.secrets/field_encryption_key}
   # §13 rotación de clave PII (descomenta junto con la variable de entorno):

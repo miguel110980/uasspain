@@ -66,6 +66,7 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
+    fs: { allow: [__dirname, path.resolve(__dirname, '../backend-rust/src/contact-defaults.json')] },
     proxy: {
       '/api': {
         target: apiProxyTarget,
