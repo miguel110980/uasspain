@@ -25,7 +25,7 @@ export default function InstructorVideo({ profiles }) {
         const activas = await conexionesService.videollamadas.filter({ canal: 'alumnos', estado: 'activa' });
         if (mounted) {
           setLlamadas(activas);
-          setEnLlamada(previous => previous && activas.some(call => call.room_id === previous.room_id) ? previous : null);
+          setEnLlamada(previous => previous && activas.some(call => call.id === previous.id || (previous.is_conference && call.is_conference && call.room_id === previous.room_id)) ? previous : null);
           setLoading(false);
         }
       } catch {
@@ -85,6 +85,8 @@ export default function InstructorVideo({ profiles }) {
           alumno_id: profile.id,
           alumno_nombre: `${profile.nombre || ''} ${profile.apellidos || ''}`.trim(),
           estado: 'activa',
+          is_conference: true,
+          ...(invited[0] ? { conference_call_id: invited[0].id } : {}),
         }));
       }
       setLlamadas(invited);
@@ -97,7 +99,7 @@ export default function InstructorVideo({ profiles }) {
   const handleColgar = async () => {
     if (enLlamada) {
       const activa = llamadas.find(
-        (l) => l.alumno_id === enLlamada.alumno_id && l.estado === 'activa',
+        (l) => l.estado === 'activa' && (l.id === enLlamada.id || (enLlamada.is_conference && l.is_conference && l.room_id === enLlamada.room_id)),
       );
       if (activa) {
         try {

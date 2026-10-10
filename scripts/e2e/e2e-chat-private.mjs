@@ -71,7 +71,7 @@ try {
   gate((await teachers[1].call(`/api/mensajes/?alumno_id=${students[0].id}`)).status===403,'foreign_instructor_history_denied');
   gate((await clients[1].call(`/api/mensajes/${persisted[0].body.id}/`)).status===403,'foreign_student_message_denied');
   gate((await seed.admin.call(`/api/mensajes/${persisted[0].body.id}/`)).status===403,'admin_message_detail_denied');
-  gate((await clients[0].call('/api/mensajes/clear-chat/','POST',{alumno_id:students[0].id})).status===403,'student_cannot_clear_moderated_channel');
+  gate((await clients[0].call('/api/mensajes/clear-chat/','POST',{alumno_id:students[1].id})).status===403,'student_cannot_clear_foreign_channel');
   gate((await clients[0].call(`/api/mensajes/${persisted[0].body.id}/`,'DELETE')).status===403,'student_cannot_delete_instructor_message');
   gate((await clients[0].call(`/api/mensajes/${persisted[0].body.id}/`,'PATCH',{contenido:'forbidden edit'})).status===403,'student_cannot_edit_instructor_message');
   gate((await teachers[0].call(`/api/mensajes/${reply.body.id}/`,'DELETE')).status===204,'instructor_can_moderate_incoming_student_message');
@@ -106,6 +106,9 @@ try {
   },0);
   gate(report.crossChannelMessages===0,'private_channels_do_not_mix');
   gate(report.duplicates===0,'private_delivery_has_no_duplicate_ids');
+  const otherBefore=sql(`SELECT count(*) FROM conexiones_mensaje WHERE alumno_id='${students[1].id}'`);
+  gate((await clients[0].call('/api/mensajes/clear-chat/','POST',{alumno_id:students[0].id})).status===200&&count()===0,'student_can_clear_own_channel');
+  gate(sql(`SELECT count(*) FROM conexiones_mensaje WHERE alumno_id='${students[1].id}'`)===otherBefore,'student_clear_preserves_other_channel');
   const logout=await clients[17].call('/api/auth/logout/','POST',{});
   gate([200,204].includes(logout.status),'private_session_logout');
   studentChannels[17].ws.send(JSON.stringify({type:'ping'}));

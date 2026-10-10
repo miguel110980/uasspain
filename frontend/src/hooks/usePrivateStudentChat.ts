@@ -89,7 +89,7 @@ export function usePrivateStudentChat(roomId: string, role: 'instructor' | 'alum
     return () => { mounted.current = false; ++request.current; unsubscribe(); document.removeEventListener('visibilitychange', onVisible); };
   }, [apply, denied, enabled, load, markRead, roomId]);
   const send = async (content: string) => {
-    if (!enabled || denied || sendingNow.current) return;
+    if (!enabled || denied || sendingNow.current || clearing) return;
     sendingNow.current = true; setSending(true); setError('');
     try {
       const created = await conexionesService.mensajes.create({ alumno_id:roomId, contenido:content });
@@ -99,8 +99,8 @@ export function usePrivateStudentChat(roomId: string, role: 'instructor' | 'alum
     finally { sendingNow.current = false; if (mounted.current) setSending(false); }
   };
   const clear = async () => {
-    if (!enabled || denied || role !== 'instructor' || clearing) return;
-    setClearing(true);
+    if (!enabled || denied || !['instructor','alumno'].includes(role) || clearing) return;
+    setClearing(true); setError('');
     try {
       await conexionesService.mensajes.clearChat(roomId);
       if (mounted.current) { ++epoch.current; apply([]); optionRef.current.onChanged?.(undefined, 'cleared'); }

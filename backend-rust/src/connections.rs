@@ -763,7 +763,7 @@ pub async fn clear_chat(
     Json(input): Json<StudentAction>,
 ) -> Result<Json<Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    require_role(&claims, &["instructor"])?;
+    require_role(&claims, &["instructor", "alumno"])?;
     let alumno = direct_student(&state, &claims, input.alumno_id).await?;
     let mut tx = lock_direct_channel(&state, &claims, alumno).await?;
     let deleted = sqlx::query("DELETE FROM conexiones_mensaje WHERE alumno_id=$1")

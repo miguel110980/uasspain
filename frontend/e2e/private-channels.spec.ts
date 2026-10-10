@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { concurrentFixtures, loginFixture } from '../../scripts/e2e/concurrent-fixtures.mjs';
 import { backend, postgres, sql } from '../../scripts/e2e/auth-fixtures.mjs';
 
@@ -8,6 +8,27 @@ type Observed = Window & { auditSockets: WebSocket[] };
 const binding = (page: Page) => page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || '');
 const nav = (page: Page) => page.locator('aside:visible nav');
 const bubble = (page:Page,text:string) => page.locator('p.whitespace-pre-wrap').and(page.getByText(text,{exact:true}));
+
+test('@private-channel-regression student exports and clears only the authorized conversation',async({browser})=>{
+  const seed=await concurrentFixtures(8),contexts=[];
+  try {
+    const teacher=await loginFixture(seed.fixtures[1]);
+    for(const i of [3,4])sql(`UPDATE accounts_userprofile SET assigned_instructor_id='${seed.fixtures[1].id}' WHERE id='${seed.fixtures[i].id}'`);
+    const ownText='OWN-EXPORT-'+seed.fixtures[3].id,foreignText='OTHER-EXPORT-'+seed.fixtures[4].id;
+    for(const [i,text] of [[3,ownText],[4,foreignText]] as const)expect((await teacher.call('/api/mensajes/','POST',{alumno_id:seed.fixtures[i].id,contenido:text})).status).toBe(201);
+    const pages=[];
+    for(const i of [3,4]){
+      const context=await browser.newContext();contexts.push(context);const page=await context.newPage();pages.push(page);
+      await page.goto('/?auth=login');await page.locator('#login-email').fill(seed.fixtures[i].email);await page.locator('#login-password').fill(seed.fixtures[i].password);await page.getByRole('button',{name:'Iniciar sesión',exact:true}).click();await expect(page.locator('header h1')).toHaveText('Dashboard');await nav(page).getByRole('button',{name:'Chat',exact:true}).click();
+    }
+    const [a,b]=pages;await expect(bubble(a,ownText)).toHaveCount(1);await expect(bubble(b,foreignText)).toHaveCount(1);
+    const downloadPromise=a.waitForEvent('download');await a.getByRole('button',{name:'Exportar conversación a PDF',exact:true}).click();const download=await downloadPromise;expect(download.suggestedFilename()).toMatch(/\.pdf$/);const pdf=readFileSync((await download.path())!);expect(pdf.subarray(0,4).toString()).toBe('%PDF');expect(pdf.toString('latin1')).toContain(ownText);expect(pdf.toString('latin1')).not.toContain(foreignText);
+    expect((await a.request.get(`/api/mensajes/?alumno_id=${seed.fixtures[4].id}`,{headers:{Origin:new URL(a.url()).origin,'X-UASSpain-Window-Id':await binding(a)}})).status()).toBe(403);
+    await a.getByRole('button',{name:'Limpiar conversación',exact:true}).click();const confirmation=a.getByRole('dialog',{name:'Limpiar chat',exact:true});await expect(confirmation).toBeVisible();await confirmation.getByRole('button',{name:'Cancelar',exact:true}).click();await expect(bubble(a,ownText)).toHaveCount(1);
+    await a.getByRole('button',{name:'Limpiar conversación',exact:true}).click();await confirmation.getByRole('button',{name:'Limpiar chat',exact:true}).click();await expect(confirmation).toHaveCount(0);await expect(bubble(a,ownText)).toHaveCount(0);await expect(bubble(b,foreignText)).toHaveCount(1);await a.reload();await nav(a).getByRole('button',{name:'Chat',exact:true}).click();await expect(bubble(a,ownText)).toHaveCount(0);
+    expect((await teacher.call(`/api/mensajes/?alumno_id=${seed.fixtures[3].id}`)).body).toEqual([]);expect((await teacher.call(`/api/mensajes/?alumno_id=${seed.fixtures[4].id}`)).body.some(m=>m.contenido===foreignText)).toBe(true);
+  }finally{await Promise.all(contexts.map(c=>c.close()));await seed.cleanup();}
+});
 
 test('@private-channel-regression an unassigned student sees the real state and cannot send',async({page})=>{
   const seed=await concurrentFixtures(8);

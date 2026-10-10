@@ -152,7 +152,14 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
     await page.getByPlaceholder('Escribe un mensaje...').fill(message);
     await page.getByRole('button', { name: 'Enviar mensaje', exact: true }).click();
     await expect(page.getByText(message, { exact: true })).toBeVisible();
-    await expect(page.getByTitle('Limpiar conversación', { exact: true })).toHaveCount(0);
+    const studentClear = page.getByRole('button', { name: 'Limpiar conversación', exact: true });
+    await expect(studentClear).toBeEnabled();
+    await studentClear.click();
+    const studentConfirmation = page.getByRole('dialog', { name: 'Limpiar chat', exact: true });
+    await verifyDialog(page, studentConfirmation, studentConfirmation.getByRole('button', { name: 'Cancelar', exact: true }));
+    await page.keyboard.press('Escape');
+    await expect(studentConfirmation).toHaveCount(0);
+    await expect(page.getByText(message, { exact: true })).toBeVisible();
     await section(instructor, 'Chat');
     await instructor.locator('main button').filter({ has: instructor.getByText('E2E Alumno', { exact:true }) }).filter({ visible:true }).click();
     const conversation = instructor.getByRole('region', { name:'Conversación con E2E Alumno', exact:true });

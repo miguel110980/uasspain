@@ -1006,15 +1006,32 @@ async def main():
     st2, call_two = instr.call("POST", "/api/videollamadas/", {
         "alumno_id": second_me["id"], "estado": "activa"
     })
-    log(st == 201 and st2 == 201 and call_one["room_id"] == call_two["room_id"]
-        and call_one["room_id"] != "forged-public-room", "videollamada_grupal_sala_servidor")
+    log(st == 201 and st2 == 201 and call_one["room_id"] != call_two["room_id"]
+        and call_one["room_id"] != "forged-public-room"
+        and not call_one["is_conference"] and not call_two["is_conference"],
+        "videollamada_privada_salas_independientes")
     st, _ = other_student.call("GET", f"/api/videollamadas/{call_one['id']}/")
     log(st == 403, "videollamada_idor_denegada", str(st))
     st, _ = instr.call("PATCH", f"/api/videollamadas/{call_one['id']}/", {"estado": "finalizada"})
     st2, active_calls = instr.call("GET", "/api/videollamadas/?estado=activa")
-    log(st == 200 and st2 == 200 and active_calls == [], "instructor_cierra_toda_sala")
+    log(st == 200 and st2 == 200 and [c["id"] for c in active_calls] == [call_two["id"]],
+        "instructor_cierra_solo_llamada_privada")
+    st, _ = instr.call("PATCH", f"/api/videollamadas/{call_two['id']}/", {"estado": "finalizada"})
+    log(st == 200, "segunda_sala_privada_cleanup")
     st, _ = alum.call("PATCH", f"/api/videollamadas/{call_one['id']}/", {"estado": "activa"})
     log(st == 400, "alumno_no_reabre_sala_finalizada", str(st))
+    st, group_one = instr.call("POST", "/api/videollamadas/", {
+        "alumno_id": id_s, "estado": "activa", "is_conference": True
+    })
+    st2, group_two = instr.call("POST", "/api/videollamadas/", {
+        "alumno_id": second_me["id"], "estado": "activa", "conference_call_id": group_one["id"]
+    })
+    log(st == 201 and st2 == 201 and group_one["room_id"] == group_two["room_id"]
+        and group_one["is_conference"] and group_two["is_conference"],
+        "conferencia_grupal_solo_invitacion_explicita")
+    st, _ = instr.call("PATCH", f"/api/videollamadas/{group_one['id']}/", {"estado": "finalizada"})
+    st2, active_calls = instr.call("GET", "/api/videollamadas/?estado=activa")
+    log(st == 200 and st2 == 200 and active_calls == [], "instructor_cierra_conferencia_explicita")
 
     st, perm = admin.call(
         "POST",

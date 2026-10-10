@@ -18,7 +18,7 @@ export default function AlumnoVideo({ alumnoId, alumnoNombre }) {
       try {
         const activas = await conexionesService.videollamadas.filter({ alumno_id: alumnoId, estado: 'activa' });
         if (mounted) {
-          setLlamadaActiva(activas[0] || null);
+          setLlamadaActiva(previous => activas.find(call => call.id === previous?.id) || activas[0] || null);
           if (!activas.length) setEnLlamada(false);
           setLoading(false);
         }

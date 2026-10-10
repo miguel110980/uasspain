@@ -1,0 +1,710 @@
+{
+  "phase": "04",
+  "authorization": "One use, exactly four temporary profiles; explicitly granted by user",
+  "origin": "https://localhost",
+  "namespace": "TEMP_PHASE04_aecd29fa3a1640a9b1d40d722fa3af9d",
+  "profiles": [
+    {
+      "id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+      "email": "temp_phase04_aecd29fa3a1640a9b1d40d722fa3af9d-0@example.invalid",
+      "name": "TEMP_PHASE04_aecd29fa3a1640a9b1d40d722fa3af9d 0",
+      "role": "instructor",
+      "roles": [
+        "instructor",
+        "admin"
+      ],
+      "userId": 13
+    },
+    {
+      "id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+      "email": "temp_phase04_aecd29fa3a1640a9b1d40d722fa3af9d-1@example.invalid",
+      "name": "TEMP_PHASE04_aecd29fa3a1640a9b1d40d722fa3af9d 1",
+      "role": "instructor",
+      "roles": [
+        "instructor",
+        "admin"
+      ],
+      "userId": 14
+    },
+    {
+      "id": "6403bb47-3495-4b2c-a704-9491c3089995",
+      "email": "temp_phase04_aecd29fa3a1640a9b1d40d722fa3af9d-2@example.invalid",
+      "name": "TEMP_PHASE04_aecd29fa3a1640a9b1d40d722fa3af9d 2",
+      "role": "alumno",
+      "roles": [
+        "alumno"
+      ],
+      "userId": 15
+    },
+    {
+      "id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+      "email": "temp_phase04_aecd29fa3a1640a9b1d40d722fa3af9d-3@example.invalid",
+      "name": "TEMP_PHASE04_aecd29fa3a1640a9b1d40d722fa3af9d 3",
+      "role": "alumno",
+      "roles": [
+        "alumno"
+      ],
+      "userId": 16
+    }
+  ],
+  "fixtureLogin2faOverride": false,
+  "backup": {
+    "createdAt": "2026-10-10T08:42:30.381Z",
+    "file": "pre-test-snapshot.enc",
+    "encrypted": true,
+    "sha256": "a6785fcdfa50949575543956922088860beb833e7e6afb150656fee0474b516d",
+    "plainSha256": "59aa669c45db04402c3c9c42268b07d671fc59c51675e75d44fa2e389e88f887",
+    "restoreVerified": true,
+    "tables": 42,
+    "rows": 379
+  },
+  "createdAt": "2026-10-10T08:42:31.693Z",
+  "createdData": [
+    {
+      "table": "accounts_userprofile",
+      "id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+      "ownership": {
+        "id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "user_id": 14,
+        "assigned_instructor_id": null
+      }
+    },
+    {
+      "table": "accounts_userprofile",
+      "id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+      "ownership": {
+        "id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "user_id": 16,
+        "assigned_instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "accounts_userprofile",
+      "id": "6403bb47-3495-4b2c-a704-9491c3089995",
+      "ownership": {
+        "id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "user_id": 15,
+        "assigned_instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "accounts_userprofile",
+      "id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+      "ownership": {
+        "id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "user_id": 13,
+        "assigned_instructor_id": null
+      }
+    },
+    {
+      "table": "auth_user",
+      "id": 13,
+      "ownership": {
+        "id": 13
+      }
+    },
+    {
+      "table": "auth_user",
+      "id": 14,
+      "ownership": {
+        "id": 14
+      }
+    },
+    {
+      "table": "auth_user",
+      "id": 15,
+      "ownership": {
+        "id": 15
+      }
+    },
+    {
+      "table": "auth_user",
+      "id": 16,
+      "ownership": {
+        "id": 16
+      }
+    },
+    {
+      "table": "conexiones_conexion",
+      "id": "4a1fd448-736f-4174-acc6-0d037b27e05a",
+      "ownership": {
+        "id": "4a1fd448-736f-4174-acc6-0d037b27e05a",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_conexion",
+      "id": "e6c0faf5-97eb-4938-90d0-6477d2eab83b",
+      "ownership": {
+        "id": "e6c0faf5-97eb-4938-90d0-6477d2eab83b",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensaje",
+      "id": "43e20473-2e40-45e2-bbcb-6e4688119a45",
+      "ownership": {
+        "id": "43e20473-2e40-45e2-bbcb-6e4688119a45",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensaje",
+      "id": "454c193d-4602-423a-8e9e-13666af6068c",
+      "ownership": {
+        "id": "454c193d-4602-423a-8e9e-13666af6068c",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensaje",
+      "id": "4e8eecf5-a0a8-4901-a467-ef6bb0690e24",
+      "ownership": {
+        "id": "4e8eecf5-a0a8-4901-a467-ef6bb0690e24",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensaje",
+      "id": "6140f190-fc00-443c-b568-444fcb4b4354",
+      "ownership": {
+        "id": "6140f190-fc00-443c-b568-444fcb4b4354",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensaje",
+      "id": "e6d7a38e-7e62-439a-9162-378dc707117a",
+      "ownership": {
+        "id": "e6d7a38e-7e62-439a-9162-378dc707117a",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensajestaff",
+      "id": "2e3f2a40-97a3-44a1-b811-b2529434ad81",
+      "ownership": {
+        "id": "2e3f2a40-97a3-44a1-b811-b2529434ad81",
+        "remitente_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "destinatario_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "40c78137-c08a-4453-bad4-fb6f0233dbb6",
+      "ownership": {
+        "id": "40c78137-c08a-4453-bad4-fb6f0233dbb6",
+        "profile_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "4482d612-ffa2-4d8c-a6b0-58751448fa84",
+      "ownership": {
+        "id": "4482d612-ffa2-4d8c-a6b0-58751448fa84",
+        "profile_id": "6403bb47-3495-4b2c-a704-9491c3089995"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "872b47a7-8d9a-4ddb-89fb-32a97825abff",
+      "ownership": {
+        "id": "872b47a7-8d9a-4ddb-89fb-32a97825abff",
+        "profile_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "96bde7db-f9d0-44df-8e77-3cf4e225d902",
+      "ownership": {
+        "id": "96bde7db-f9d0-44df-8e77-3cf4e225d902",
+        "profile_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "d02cb39f-a265-462b-88d6-64d8ad04a679",
+      "ownership": {
+        "id": "d02cb39f-a265-462b-88d6-64d8ad04a679",
+        "profile_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "2338549d-fe90-4246-8dc0-d5d106265cdd",
+      "ownership": {
+        "id": "2338549d-fe90-4246-8dc0-d5d106265cdd",
+        "alumno_id": null,
+        "iniciador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "moderador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "administrador_id": null,
+        "instructor_peer_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "3410f3de-2a72-4b88-90e4-a49dbd55d433",
+      "ownership": {
+        "id": "3410f3de-2a72-4b88-90e4-a49dbd55d433",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "45a1ca9c-70f6-40ec-8d89-9a745e103331",
+      "ownership": {
+        "id": "45a1ca9c-70f6-40ec-8d89-9a745e103331",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "4a155c1f-ec95-4d94-863e-5e5d6102b252",
+      "ownership": {
+        "id": "4a155c1f-ec95-4d94-863e-5e5d6102b252",
+        "alumno_id": null,
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "administrador_id": null,
+        "instructor_peer_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "6092551c-0504-4317-bbbe-5a5ee3fa8599",
+      "ownership": {
+        "id": "6092551c-0504-4317-bbbe-5a5ee3fa8599",
+        "alumno_id": null,
+        "iniciador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "moderador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "677b6e55-d179-4214-84e5-8973ef2ad876",
+      "ownership": {
+        "id": "677b6e55-d179-4214-84e5-8973ef2ad876",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "iniciador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "99d5636c-5e26-487b-8e13-5ddb506d2bfc",
+      "ownership": {
+        "id": "99d5636c-5e26-487b-8e13-5ddb506d2bfc",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "iniciador_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "ab5e155f-2a21-436b-9d74-1cb6750fda77",
+      "ownership": {
+        "id": "ab5e155f-2a21-436b-9d74-1cb6750fda77",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "b35586c5-1fde-4b61-a599-2e73b7632760",
+      "ownership": {
+        "id": "b35586c5-1fde-4b61-a599-2e73b7632760",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "e2ad53ea-347f-46ec-8931-5731ad178961",
+      "ownership": {
+        "id": "e2ad53ea-347f-46ec-8931-5731ad178961",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "e6d0f563-9194-4bf5-bb0f-9fedb42a6555",
+      "ownership": {
+        "id": "e6d0f563-9194-4bf5-bb0f-9fedb42a6555",
+        "alumno_id": null,
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_peer_id": null
+      }
+    }
+  ],
+  "deletedData": [
+    {
+      "table": "accounts_userprofile",
+      "id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+      "ownership": {
+        "id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "user_id": 14,
+        "assigned_instructor_id": null
+      }
+    },
+    {
+      "table": "accounts_userprofile",
+      "id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+      "ownership": {
+        "id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "user_id": 16,
+        "assigned_instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "accounts_userprofile",
+      "id": "6403bb47-3495-4b2c-a704-9491c3089995",
+      "ownership": {
+        "id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "user_id": 15,
+        "assigned_instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "accounts_userprofile",
+      "id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+      "ownership": {
+        "id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "user_id": 13,
+        "assigned_instructor_id": null
+      }
+    },
+    {
+      "table": "auth_user",
+      "id": 13,
+      "ownership": {
+        "id": 13
+      }
+    },
+    {
+      "table": "auth_user",
+      "id": 14,
+      "ownership": {
+        "id": 14
+      }
+    },
+    {
+      "table": "auth_user",
+      "id": 15,
+      "ownership": {
+        "id": 15
+      }
+    },
+    {
+      "table": "auth_user",
+      "id": 16,
+      "ownership": {
+        "id": 16
+      }
+    },
+    {
+      "table": "conexiones_conexion",
+      "id": "4a1fd448-736f-4174-acc6-0d037b27e05a",
+      "ownership": {
+        "id": "4a1fd448-736f-4174-acc6-0d037b27e05a",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_conexion",
+      "id": "e6c0faf5-97eb-4938-90d0-6477d2eab83b",
+      "ownership": {
+        "id": "e6c0faf5-97eb-4938-90d0-6477d2eab83b",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensaje",
+      "id": "e6d7a38e-7e62-439a-9162-378dc707117a",
+      "ownership": {
+        "id": "e6d7a38e-7e62-439a-9162-378dc707117a",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensajestaff",
+      "id": "2e3f2a40-97a3-44a1-b811-b2529434ad81",
+      "ownership": {
+        "id": "2e3f2a40-97a3-44a1-b811-b2529434ad81",
+        "remitente_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "destinatario_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "40c78137-c08a-4453-bad4-fb6f0233dbb6",
+      "ownership": {
+        "id": "40c78137-c08a-4453-bad4-fb6f0233dbb6",
+        "profile_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "4482d612-ffa2-4d8c-a6b0-58751448fa84",
+      "ownership": {
+        "id": "4482d612-ffa2-4d8c-a6b0-58751448fa84",
+        "profile_id": "6403bb47-3495-4b2c-a704-9491c3089995"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "872b47a7-8d9a-4ddb-89fb-32a97825abff",
+      "ownership": {
+        "id": "872b47a7-8d9a-4ddb-89fb-32a97825abff",
+        "profile_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "96bde7db-f9d0-44df-8e77-3cf4e225d902",
+      "ownership": {
+        "id": "96bde7db-f9d0-44df-8e77-3cf4e225d902",
+        "profile_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823"
+      }
+    },
+    {
+      "table": "conexiones_registroconexion",
+      "id": "d02cb39f-a265-462b-88d6-64d8ad04a679",
+      "ownership": {
+        "id": "d02cb39f-a265-462b-88d6-64d8ad04a679",
+        "profile_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "2338549d-fe90-4246-8dc0-d5d106265cdd",
+      "ownership": {
+        "id": "2338549d-fe90-4246-8dc0-d5d106265cdd",
+        "alumno_id": null,
+        "iniciador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "moderador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "administrador_id": null,
+        "instructor_peer_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "3410f3de-2a72-4b88-90e4-a49dbd55d433",
+      "ownership": {
+        "id": "3410f3de-2a72-4b88-90e4-a49dbd55d433",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "45a1ca9c-70f6-40ec-8d89-9a745e103331",
+      "ownership": {
+        "id": "45a1ca9c-70f6-40ec-8d89-9a745e103331",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "4a155c1f-ec95-4d94-863e-5e5d6102b252",
+      "ownership": {
+        "id": "4a155c1f-ec95-4d94-863e-5e5d6102b252",
+        "alumno_id": null,
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "administrador_id": null,
+        "instructor_peer_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "6092551c-0504-4317-bbbe-5a5ee3fa8599",
+      "ownership": {
+        "id": "6092551c-0504-4317-bbbe-5a5ee3fa8599",
+        "alumno_id": null,
+        "iniciador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "moderador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "677b6e55-d179-4214-84e5-8973ef2ad876",
+      "ownership": {
+        "id": "677b6e55-d179-4214-84e5-8973ef2ad876",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "iniciador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "99d5636c-5e26-487b-8e13-5ddb506d2bfc",
+      "ownership": {
+        "id": "99d5636c-5e26-487b-8e13-5ddb506d2bfc",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "iniciador_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "ab5e155f-2a21-436b-9d74-1cb6750fda77",
+      "ownership": {
+        "id": "ab5e155f-2a21-436b-9d74-1cb6750fda77",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "b35586c5-1fde-4b61-a599-2e73b7632760",
+      "ownership": {
+        "id": "b35586c5-1fde-4b61-a599-2e73b7632760",
+        "alumno_id": "45cd26fa-f28a-4ba0-9330-d5ee972a3f83",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "e2ad53ea-347f-46ec-8931-5731ad178961",
+      "ownership": {
+        "id": "e2ad53ea-347f-46ec-8931-5731ad178961",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": null,
+        "instructor_peer_id": null
+      }
+    },
+    {
+      "table": "conexiones_videollamada",
+      "id": "e6d0f563-9194-4bf5-bb0f-9fedb42a6555",
+      "ownership": {
+        "id": "e6d0f563-9194-4bf5-bb0f-9fedb42a6555",
+        "alumno_id": null,
+        "iniciador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "moderador_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489",
+        "administrador_id": "0ea18a1c-47c9-44b1-a36e-c861cc037823",
+        "instructor_peer_id": null
+      }
+    }
+  ],
+  "clearedDuringTest": [
+    {
+      "table": "conexiones_mensaje",
+      "id": "43e20473-2e40-45e2-bbcb-6e4688119a45",
+      "ownership": {
+        "id": "43e20473-2e40-45e2-bbcb-6e4688119a45",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensaje",
+      "id": "454c193d-4602-423a-8e9e-13666af6068c",
+      "ownership": {
+        "id": "454c193d-4602-423a-8e9e-13666af6068c",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensaje",
+      "id": "4e8eecf5-a0a8-4901-a467-ef6bb0690e24",
+      "ownership": {
+        "id": "4e8eecf5-a0a8-4901-a467-ef6bb0690e24",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    },
+    {
+      "table": "conexiones_mensaje",
+      "id": "6140f190-fc00-443c-b568-444fcb4b4354",
+      "ownership": {
+        "id": "6140f190-fc00-443c-b568-444fcb4b4354",
+        "alumno_id": "6403bb47-3495-4b2c-a704-9491c3089995",
+        "instructor_id": "9c2ddf65-8d14-4b1a-a567-8e815cdba489"
+      }
+    }
+  ],
+  "cleanedAt": "2026-10-10T08:43:08.287Z",
+  "TEMP_DATA_RESIDUE": 0,
+  "REAL_USER_DATA_MODIFIED": 0,
+  "REAL_USER_DATA_DELETED": 0
+}

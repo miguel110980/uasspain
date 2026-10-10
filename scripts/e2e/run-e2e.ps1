@@ -274,6 +274,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'La suite de canales privados de chat E2E fallo' }
     & node (Join-Path $Root 'scripts/e2e/e2e-instructor-peer.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de canales entre instructores E2E fallo' }
+    & node (Join-Path $Root 'scripts/e2e/e2e-video-isolation.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de aislamiento de videollamadas E2E fallo' }
     Write-Host '==> Probando caída y recuperación de dependencias aisladas'
     foreach ($Dependency in @('redis-e2e', 'postgres-e2e')) {
         try {

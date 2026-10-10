@@ -3,13 +3,15 @@ import { useActiveProfileSessions } from '@/hooks/useActiveProfileSessions';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Send, Loader2, MessageCircle } from 'lucide-react';
+import { Send, Loader2, MessageCircle, Trash2 } from 'lucide-react';
+import PanelModal from '@/components/ui/PanelModal';
 import { usePrivateStudentChat } from '@/hooks/usePrivateStudentChat';
 import { sanitizeInput } from '@/lib/sanitize';
 import ChatExportPdfButton from '@/components/chat/ChatExportPdfButton';
 
 export default function AlumnoChat({ alumnoId, alumnoNombre }) {
   const [texto, setTexto] = useState('');
+  const [confirmClear, setConfirmClear] = useState(false);
   const { profile } = usePanelAuthContext();
   const { isOnline } = useActiveProfileSessions();
   const hasInstructor = Boolean(profile?.assigned_instructor_id);
@@ -23,7 +25,11 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
     enabled:hasInstructor,
     isVisible:() => Boolean(scrollContainerRef.current?.getClientRects().length),
   });
-  const { messages:mensajes, loading, sending, error } = chat;
+  const { messages:mensajes, loading, sending, clearing, error } = chat;
+  const handleClear = async () => {
+    try { await chat.clear(); setConfirmClear(false); setNewMessageCount(0); }
+    catch { /* Keep the confirmation open and show the channel error. */ }
+  };
   const handleScroll = useCallback(() => {
     const element = scrollContainerRef.current;
     if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 80) setNewMessageCount(0);
@@ -45,7 +51,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
   const handleSend = async event => {
     event.preventDefault();
     const content = sanitizeInput(texto, 'message');
-    if (!content.trim() || sending || !chat.canSend) return;
+    if (!content.trim() || sending || clearing || !chat.canSend) return;
     try {
       await chat.send(content);
       setTexto(current => current === texto ? '' : current);
@@ -93,6 +99,11 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
                   created_date: m.created_date,
                 })}
               />
+              <button type="button" aria-label="Limpiar conversación" title="Limpiar conversación"
+                onClick={() => setConfirmClear(true)} disabled={!chat.canSend || !mensajes.length || sending || clearing}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest border border-border-subtle text-muted-foreground hover:text-danger disabled:opacity-40">
+                <Trash2 className="w-3.5 h-3.5" /> Limpiar
+              </button>
             </div>
           </div>
           <div
@@ -150,7 +161,7 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
             <button
               type="submit"
                   aria-label="Enviar mensaje"
-              disabled={sending || !texto.trim() || !chat.canSend}
+              disabled={sending || clearing || !texto.trim() || !chat.canSend}
               className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 font-bold uppercase tracking-tighter text-xs hover:bg-primary/80 transition-all duration-300 disabled:opacity-50"
             >
               {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
@@ -158,6 +169,15 @@ export default function AlumnoChat({ alumnoId, alumnoNombre }) {
           </form>
         </div>
       </div>
+      {confirmClear && <PanelModal label="Limpiar chat" onClose={() => { if (!clearing) setConfirmClear(false); }} className="max-w-sm glass-card p-6 space-y-4">
+        <h3 className="font-heading text-lg font-bold">Limpiar chat</h3>
+        <p className="text-sm text-muted-foreground">Se eliminarán los mensajes de esta conversación con tu instructor para ambos participantes. Esta acción no se puede deshacer.</p>
+        {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+        <div className="flex justify-end gap-3">
+          <button type="button" disabled={clearing} onClick={() => setConfirmClear(false)} className="px-4 py-2 text-xs border border-border-subtle">Cancelar</button>
+          <button type="button" disabled={clearing} onClick={() => void handleClear()} className="px-4 py-2 text-xs text-danger border border-danger-border">{clearing ? 'Limpiando…' : 'Limpiar chat'}</button>
+        </div>
+      </PanelModal>}
     </motion.div>
   );
 }
