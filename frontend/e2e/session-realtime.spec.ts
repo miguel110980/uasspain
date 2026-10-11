@@ -41,9 +41,10 @@ test('@session-regression refresh, full navigation, token renewal and temporary 
       await page.goto(`/${account.role}`);
       await expect(page.locator('header h1')).toHaveText('Dashboard');
       expect(await binding(page)).toBe(id);
-      await context.clearCookies({ name: 'uasspain_access' });
-      const renewal = page.waitForResponse(r => r.url().includes('/api/auth/refresh/') && r.status() === 200);
-      await page.reload(); await renewal;
+      const credential = (await context.cookies()).find(c => c.name.endsWith('uasspain_context'));
+      const checked = page.waitForResponse(r => r.url().includes('/api/auth/me/') && r.status() === 200);
+      await page.reload(); await checked;
+      expect((await context.cookies()).find(c => c.name === credential?.name)?.value).toBe(credential?.value);
       await expect(page.locator('header h1')).toHaveText('Dashboard');
       expect(await binding(page)).toBe(id);
       const sessionEndpoint = (url: URL) => url.pathname === '/api/auth/me/';
@@ -223,8 +224,7 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
     }).toBe(true);
     for (const page of pages) await expect.poll(() => page.evaluate(() => (window as ObservedWindow).auditSockets.filter(s => s.readyState === WebSocket.OPEN && new URL(s.url).pathname === '/ws/conexiones/').length)).toBe(1);
     // Force a transport interruption; delivery must catch up without a page reload.
-    await student.context().clearCookies({ name: 'uasspain_access' });
-    const renewed = student.waitForResponse(r => r.url().includes('/api/auth/refresh/') && r.status() === 200);
+    const renewed = student.waitForResponse(r => r.url().includes('/api/auth/me/') && r.status() === 200);
     await student.evaluate(() => (window as ObservedWindow).auditSockets.filter(s => new URL(s.url).pathname.startsWith('/ws/chat/')).forEach(s => s.close()));
     await instructor.locator('main').getByRole('button', { name: /^Alumnos(?:\s+\d+)?$/ }).filter({ visible: true }).click(); await selectStudent();
     const resumed = `Tras reconexión ${Date.now()}`;

@@ -17,7 +17,6 @@ const InstructorConexiones = lazy(() => import('@/pages/instructor/InstructorCon
 const InstructorResultados = lazy(() => import('@/pages/instructor/InstructorResultados'));
 const InstructorEstadisticas = lazy(() => import('@/pages/instructor/InstructorEstadisticas'));
 const InstructorChat = lazy(() => import('@/pages/instructor/InstructorChat'));
-const BloqueoExamenesModal = lazy(() => import('@/pages/instructor/BloqueoExamenesModal'));
 const ResultadosAlumnoModal = lazy(() => import('@/pages/instructor/ResultadosAlumnoModal'));
 const InstructorAccesos = lazy(() => import('@/pages/instructor/InstructorAccesos'));
 const AdminUsuarios = lazy(() => import('@/pages/admin/AdminUsuarios'));
@@ -66,35 +65,39 @@ export default function InstructorPanel() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profiles, setProfiles] = useState([]);
   const [examenes, setExamenes] = useState([]);
-  const [bloqueos, setBloqueos] = useState([]);
   const [resultados, setResultados] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dataError, setDataError] = useState('');
   const [counts, setCounts] = useState(null);
-  const [actionLoading, setActionLoading] = useState({});
   const { user, profile: authProfile } = usePanelAuthContext();
   const [accountProfile, setAccountProfile] = useState(null);
   const [chatSinLeerAlumno, setChatSinLeerAlumno] = useState(0);
   const [chatSinLeerStaff, setChatSinLeerStaff] = useState(0);
   const [chatInitialTab, setChatInitialTab] = useState(/** @type {'alumnos' | 'admin' | undefined} */ (undefined));
   const [videoEntrante, setVideoEntrante] = useState(false);
-  const [modalBloqueo, setModalBloqueo] = useState(null);
   const [modalResultados, setModalResultados] = useState(null);
   const [modalAccesos, setModalAccesos] = useState(null);
   const [visitedTabs, setVisitedTabs] = useState(() => new Set(['dashboard']));
   const refreshTimerRef = useRef(/** @type {ReturnType<typeof setTimeout> | undefined} */ (undefined));
+  const loadVersion = useRef(0);
+  const countsVersion = useRef(0);
 
   useEffect(() => {
     document.title = 'Panel Instructor | UASSPAIN';
     loadAll().catch((err) => console.error('Error cargando datos del panel:', err));
+    const refreshAcademic = () => { void loadAll(true); };
+    window.addEventListener('uasspain:academic-resources-changed', refreshAcademic);
     const unsubscribe = conexionesService.subscribeConexiones((event) => {
       const payload = conexionesService.parseWsPayload(event);
       if (payload?.type === 'conexion' || payload?.type === 'asignacion' || event.type === 'poll') {
         clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = setTimeout(() => {
           if (payload?.type === 'conexion') {
-            authService.dashboardCounts().then(setCounts).catch(() => {
-              setDataError('No se pudieron actualizar las conexiones. Vuelve a intentarlo.');
+            const request = ++countsVersion.current;
+            authService.dashboardCounts().then(value => {
+              if (request === countsVersion.current) setCounts(value);
+            }).catch(() => {
+              if (request === countsVersion.current) setDataError('No se pudieron actualizar las conexiones. Vuelve a intentarlo.');
             });
           } else loadAll(true).catch(() => {});
         }, 1000);
@@ -103,6 +106,9 @@ export default function InstructorPanel() {
     return () => {
       unsubscribe();
       clearTimeout(refreshTimerRef.current);
+      window.removeEventListener('uasspain:academic-resources-changed', refreshAcademic);
+      loadVersion.current++;
+      countsVersion.current++;
     };
   }, []);
 
@@ -139,6 +145,8 @@ export default function InstructorPanel() {
   }, [authProfile?.id]);
 
   const loadAll = async (silent = false) => {
+    const request = ++loadVersion.current;
+    const totalsRequest = ++countsVersion.current;
     if (!silent) setLoading(true);
     try {
       const { values, failed } = await loadResources({
@@ -148,38 +156,18 @@ export default function InstructorPanel() {
         Resultados: () => examenesService.resultados.list('-created_date', 500),
         Totales: () => authService.dashboardCounts(),
       });
+      if (request !== loadVersion.current) return;
       if (values.Alumnos) setProfiles(values.Alumnos);
       if (values.Exámenes) setExamenes([...values.Exámenes].sort((a, b) => CURSOS.indexOf(a.categoria) - CURSOS.indexOf(b.categoria)));
-      if (values.Bloqueos) setBloqueos(values.Bloqueos);
       if (values.Resultados) setResultados(values.Resultados);
-      if (values.Totales) setCounts(values.Totales);
+      if (values.Totales && totalsRequest === countsVersion.current) setCounts(values.Totales);
       setDataError(failed.length ? `No se pudieron actualizar: ${failed.join(', ')}. Se conservan los últimos datos disponibles.` : '');
     } catch {
-      setDataError('No se pudieron actualizar los datos del panel. Vuelve a intentarlo.');
+      if (request === loadVersion.current) setDataError('No se pudieron actualizar los datos del panel. Vuelve a intentarlo.');
     } finally {
-      if (!silent) setLoading(false);
+      if (request === loadVersion.current) setLoading(false);
     }
   };
-
-  const toggleBloqueoAlumno = async (alumnoId, examenId) => {
-    const key = `${alumnoId}-${examenId}`;
-    setActionLoading((prev) => ({ ...prev, [key]: true }));
-    try {
-      const existente = bloqueos.find((b) => b.alumno_id === alumnoId && b.examen_id === examenId);
-      if (existente) {
-        await examenesService.bloqueos.update(existente.id, { bloqueado: !existente.bloqueado });
-        setBloqueos((prev) => prev.map((b) => (b.id === existente.id ? { ...b, bloqueado: !existente.bloqueado } : b)));
-      } else {
-        const nuevo = await examenesService.bloqueos.create({ alumno_id: alumnoId, examen_id: examenId, bloqueado: true });
-        setBloqueos((prev) => [...prev, nuevo]);
-      }
-    } finally {
-      setActionLoading((prev) => ({ ...prev, [key]: false }));
-    }
-  };
-
-  const estaBloqueado = (alumnoId, examenId) =>
-    bloqueos.some((b) => b.alumno_id === alumnoId && b.examen_id === examenId && b.bloqueado);
 
   const handleLogout = async () => {
     await authService.logout('/');
@@ -188,6 +176,7 @@ export default function InstructorPanel() {
   const handleSelect = (id) => {
     setSection(id);
     setVisitedTabs((prev) => new Set(prev).add(id));
+    void loadAll(true);
     if (id === 'chat') {
       setChatSinLeerAlumno(0);
       setChatSinLeerStaff(0);
@@ -263,7 +252,6 @@ export default function InstructorPanel() {
       allowInstructorAssignment
       assignmentOwnerId={authProfile?.id}
       onAssignmentChanged={() => { void loadAll(true); }}
-      onExamenes={setModalBloqueo}
       onResultados={setModalResultados}
       onAccesos={setModalAccesos}
     /></PanelSection>
@@ -345,20 +333,13 @@ export default function InstructorPanel() {
         </main>
       </div>
 
-      {modalBloqueo && (<PanelSection><BloqueoExamenesModal
-        profile={modalBloqueo}
-        examenes={examenes}
-        estaBloqueado={estaBloqueado}
-        onToggle={toggleBloqueoAlumno}
-        actionLoading={actionLoading}
-        onClose={() => setModalBloqueo(null)}
-      /></PanelSection>)}
       {modalResultados && (<PanelSection><ResultadosAlumnoModal
         profile={modalResultados}
         onClose={() => setModalResultados(null)}
       /></PanelSection>)}
       {modalAccesos && (<PanelSection><InstructorAccesos
         profile={modalAccesos}
+        onChanged={() => { void loadAll(true); }}
         onClose={() => setModalAccesos(null)}
       /></PanelSection>)}
     </div>

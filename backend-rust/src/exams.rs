@@ -93,28 +93,26 @@ pub async fn list_exams(
 ) -> Result<Json<Vec<ExamView>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let rows = sqlx::query_as::<_, ExamView>(
+    let statement = format!(
         "SELECT e.id, e.nombre, e.categoria, e.descripcion, e.activo, \
          e.num_preguntas::integer, e.created_date, e.updated_date \
          FROM examenes_examen e \
          WHERE ($1::text IS NULL OR e.categoria = $1) \
-           AND ($4::boolean = FALSE OR e.activo = TRUE) \
            AND ($2::boolean IS NULL OR e.activo = $2) \
            AND ($3::text IS NULL OR e.nombre = $3) \
-           AND ($4::boolean = FALSE OR NOT EXISTS ( \
-             SELECT 1 FROM examenes_bloqueoexamen b \
-             WHERE b.alumno_id = $5 AND b.bloqueado = TRUE \
-               AND (b.examen_id = e.id OR (b.examen_id IS NULL AND b.categoria = e.categoria)))) \
-         ORDER BY e.categoria ASC, e.created_date DESC LIMIT $6",
-    )
-    .bind(query.categoria.as_deref())
-    .bind(query.activo)
-    .bind(query.nombre.as_deref())
-    .bind(claims.role == "alumno")
-    .bind(claims.profile_id)
-    .bind(safe_limit(query.limit))
-    .fetch_all(pool)
-    .await?;
+           AND {} AND {} ORDER BY e.categoria ASC, e.created_date DESC LIMIT $6",
+        crate::academic_scope::resource_scope("e", "creado_por_id", 4, 5),
+        crate::academic_scope::exam_access("e", 4, 5)
+    );
+    let rows = sqlx::query_as::<_, ExamView>(&statement)
+        .bind(query.categoria.as_deref())
+        .bind(query.activo)
+        .bind(query.nombre.as_deref())
+        .bind(&claims.role)
+        .bind(claims.profile_id)
+        .bind(safe_limit(query.limit))
+        .fetch_all(pool)
+        .await?;
     Ok(Json(rows))
 }
 
@@ -125,22 +123,21 @@ pub async fn exam_detail(
 ) -> Result<Json<ExamView>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let row = sqlx::query_as::<_, ExamView>(
+    let statement = format!(
         "SELECT e.id, e.nombre, e.categoria, e.descripcion, e.activo, \
          e.num_preguntas::integer, e.created_date, e.updated_date \
          FROM examenes_examen e WHERE e.id = $1 \
-           AND ($2::boolean = FALSE OR e.activo = TRUE) \
-           AND ($2::boolean = FALSE OR NOT EXISTS ( \
-             SELECT 1 FROM examenes_bloqueoexamen b \
-             WHERE b.alumno_id = $3 AND b.bloqueado = TRUE \
-               AND (b.examen_id = e.id OR (b.examen_id IS NULL AND b.categoria = e.categoria))))",
-    )
-    .bind(id)
-    .bind(claims.role == "alumno")
-    .bind(claims.profile_id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
+           AND {} AND {}",
+        crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3),
+        crate::academic_scope::exam_access("e", 2, 3)
+    );
+    let row = sqlx::query_as::<_, ExamView>(&statement)
+        .bind(id)
+        .bind(&claims.role)
+        .bind(claims.profile_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(Json(row))
 }
 
@@ -190,24 +187,22 @@ pub async fn list_questions(
     let claims = authenticate(&state, &headers, "access")?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let exam_id = query.examen_id.or(query.examen);
-    let rows = sqlx::query_as::<_, QuestionRow>(
+    let statement = format!(
         "SELECT q.id, q.examen_id, q.enunciado, q.opcion_a, q.opcion_b, q.opcion_c, \
          q.opcion_d, q.respuesta_correcta, q.orden::integer, q.imagen_url, q.created_date \
          FROM examenes_pregunta q JOIN examenes_examen e ON e.id = q.examen_id \
          WHERE ($1::uuid IS NULL OR q.examen_id = $1) \
-           AND ($2::boolean = FALSE OR e.activo = TRUE) \
-           AND ($2::boolean = FALSE OR NOT EXISTS ( \
-             SELECT 1 FROM examenes_bloqueoexamen b \
-             WHERE b.alumno_id = $3 AND b.bloqueado = TRUE \
-               AND (b.examen_id = e.id OR (b.examen_id IS NULL AND b.categoria = e.categoria)))) \
-         ORDER BY q.orden ASC, q.created_date ASC LIMIT $4",
-    )
-    .bind(exam_id)
-    .bind(claims.role == "alumno")
-    .bind(claims.profile_id)
-    .bind(safe_limit(query.limit))
-    .fetch_all(pool)
-    .await?;
+           AND {} AND {} ORDER BY q.orden ASC, q.created_date ASC LIMIT $4",
+        crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3),
+        crate::academic_scope::exam_access("e", 2, 3)
+    );
+    let rows = sqlx::query_as::<_, QuestionRow>(&statement)
+        .bind(exam_id)
+        .bind(&claims.role)
+        .bind(claims.profile_id)
+        .bind(safe_limit(query.limit))
+        .fetch_all(pool)
+        .await?;
     let expose_answers = claims.role != "alumno";
     Ok(Json(
         rows.into_iter()
@@ -234,8 +229,18 @@ pub async fn question_detail(
     Path(id): Path<Uuid>,
 ) -> Result<Json<QuestionView>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    let row = sqlx::query_as::<_, QuestionRow>("SELECT q.id,q.examen_id,q.enunciado,q.opcion_a,q.opcion_b,q.opcion_c,q.opcion_d,q.respuesta_correcta,q.orden::integer,q.imagen_url,q.created_date FROM examenes_pregunta q JOIN examenes_examen e ON e.id=q.examen_id WHERE q.id=$1 AND ($2::boolean=FALSE OR (e.activo=TRUE AND NOT EXISTS (SELECT 1 FROM examenes_bloqueoexamen b WHERE b.alumno_id=$3 AND b.bloqueado=TRUE AND (b.examen_id=e.id OR (b.examen_id IS NULL AND b.categoria=e.categoria)))))")
-        .bind(id).bind(claims.role=="alumno").bind(claims.profile_id).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?.ok_or(AppError::NotFound)?;
+    let statement = format!(
+        "SELECT q.id,q.examen_id,q.enunciado,q.opcion_a,q.opcion_b,q.opcion_c,q.opcion_d,q.respuesta_correcta,q.orden::integer,q.imagen_url,q.created_date FROM examenes_pregunta q JOIN examenes_examen e ON e.id=q.examen_id WHERE q.id=$1 AND {} AND {}",
+        crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3),
+        crate::academic_scope::exam_access("e", 2, 3)
+    );
+    let row = sqlx::query_as::<_, QuestionRow>(&statement)
+        .bind(id)
+        .bind(&claims.role)
+        .bind(claims.profile_id)
+        .fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(Json(QuestionView {
         id: row.id,
         examen_id: row.examen_id,
@@ -656,16 +661,22 @@ async fn fetch_submittable_exam(
     profile_id: Uuid,
     exam_id: Uuid,
 ) -> Result<ExamIdentity, AppError> {
-    let exam = sqlx::query_as::<_, ExamIdentity>(
-        "SELECT id, nombre, categoria, num_preguntas::integer FROM examenes_examen WHERE id = $1 AND activo=TRUE",
-    )
-    .bind(exam_id)
-    .fetch_optional(&mut **transaction)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    let statement = format!(
+        "SELECT e.id,e.nombre,e.categoria,e.num_preguntas::integer FROM examenes_examen e WHERE e.id=$1 AND e.activo AND {}",
+        crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3)
+    );
+    let exam = sqlx::query_as::<_, ExamIdentity>(&statement)
+        .bind(exam_id)
+        .bind("alumno")
+        .bind(profile_id)
+        .fetch_optional(&mut **transaction)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let blocked: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM examenes_bloqueoexamen b \
          WHERE b.alumno_id = $1 AND b.bloqueado = TRUE \
+           AND (b.fecha_inicio IS NULL OR b.fecha_inicio<=NOW()) \
+           AND (b.fecha_fin IS NULL OR b.fecha_fin>NOW()) \
            AND (b.examen_id = $2 OR (b.examen_id IS NULL AND b.categoria = $3)))",
     )
     .bind(profile_id)

@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = Arc::new(AppState::from_env().await?);
     uasspain_backend::backups::spawn_scheduler(Arc::clone(&state));
+    uasspain_backend::content_realtime::spawn_dispatcher(Arc::clone(&state));
     let app = build_router(state);
     let address: SocketAddr = std::env::var("BIND_ADDRESS")
         .unwrap_or_else(|_| "0.0.0.0:8000".to_owned())

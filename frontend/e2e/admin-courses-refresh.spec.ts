@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-test('admin lists all database courses and refreshes when returning to the section', async ({ page }) => {
-  await page.goto('/?auth=login');
+test('admin lists all database courses and refreshes when returning to the section', async ({ page, baseURL }) => {
+  await page.goto('/?auth=login', { waitUntil: 'domcontentloaded' });
   await page.getByLabel('Correo electrónico *', { exact: true }).fill('e2e-admin@test.local');
   await page.getByLabel('Contraseña *', { exact: true }).fill('E2eAdmin_2026!'); // pragma: allowlist secret - isolated fixture
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
@@ -9,7 +9,7 @@ test('admin lists all database courses and refreshes when returning to the secti
   const nav = page.locator('aside:visible nav');
   await nav.getByRole('button', { name: 'Formación / Cursos', exact: true }).click();
   const headers = {
-    Origin: 'http://127.0.0.1:8011',
+    Origin: baseURL || 'http://127.0.0.1:8011',
     'X-UASSpain-Window-ID': await page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || ''),
   };
   const response = await page.request.get('/api/admin/courses', { headers });
@@ -41,12 +41,12 @@ test('admin lists all database courses and refreshes when returning to the secti
     await expect(page.getByRole('heading', { name: 'Cursos guardados (15)', exact: true })).toBeVisible();
     await expect(page.getByRole('article')).toHaveCount(15);
     await expect(page.getByRole('heading', { name: 'Aeromodelismo', exact: true })).toBeVisible();
-    expect((await page.request.delete(`/api/admin/courses/${id}`, { headers })).status()).toBe(204);
+    expect((await page.request.delete(`/api/admin/courses/${id}`, { headers: { ...headers, 'If-Match': '1' } })).status()).toBe(204);
     id = undefined;
     await page.getByRole('button', { name: 'Actualizar cursos', exact: true }).click();
     await expect(page.getByRole('article')).toHaveCount(14);
     await expect(page.getByRole('heading', { name: 'Aeromodelismo', exact: true })).toHaveCount(0);
   } finally {
-    if (id) await page.request.delete(`/api/admin/courses/${id}`, { headers });
+    if (id) await page.request.delete(`/api/admin/courses/${id}`, { headers: { ...headers, 'If-Match': '1' } });
   }
 });

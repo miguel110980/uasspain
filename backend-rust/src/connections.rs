@@ -340,8 +340,8 @@ pub async fn active_sessions(
 ) -> Result<Json<Vec<Value>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin", "instructor", "alumno"])?;
-    let rows = sqlx::query_scalar::<_, Value>("SELECT jsonb_build_object('id',r.id,'profile_id',p.id,'nombre_completo',r.nombre_completo,'rol',r.rol,'fecha_hora',r.fecha_hora,'ultima_actividad',r.ultima_actividad,'estado_sesion','activa') FROM conexiones_registroconexion r JOIN accounts_userprofile p ON p.id=r.profile_id JOIN auth_user u ON u.id=p.user_id WHERE r.estado_sesion='activa' AND r.estado_acceso='correcto' AND r.session_id=p.active_session_key AND p.status='activo' AND p.otp_verified AND u.is_active AND r.ultima_actividad > NOW()-INTERVAL '90 seconds' AND ($1 IN ('admin','instructor') OR p.id=$2 OR p.id=(SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$2)) ORDER BY r.fecha_hora DESC")
-        .bind(&claims.role).bind(claims.profile_id).fetch_all(pool(&state)?).await?;
+    let rows = sqlx::query_scalar::<_, Value>("SELECT jsonb_build_object('id',r.id,'profile_id',p.id,'nombre_completo',r.nombre_completo,'rol',r.rol,'fecha_hora',r.fecha_hora,'ultima_actividad',r.ultima_actividad,'estado_sesion','activa') FROM conexiones_registroconexion r JOIN accounts_userprofile p ON p.id=r.profile_id JOIN auth_user u ON u.id=p.user_id WHERE r.estado_sesion='activa' AND r.estado_acceso='correcto' AND EXISTS(SELECT 1 FROM auth_tab_session ats WHERE ats.session_key=r.session_id AND ats.revoked_at IS NULL AND ats.expires_at>clock_timestamp() AND ats.last_activity_at>clock_timestamp()-($3::bigint * INTERVAL '1 second')) AND p.status='activo' AND p.otp_verified AND u.is_active AND r.ultima_actividad > NOW()-($3::bigint * INTERVAL '1 second') AND ($1 IN ('admin','instructor') OR p.id=$2 OR p.id=(SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$2)) ORDER BY r.fecha_hora DESC")
+        .bind(&claims.role).bind(claims.profile_id).bind(crate::auth::IDLE_TIMEOUT_SECONDS).fetch_all(pool(&state)?).await?;
     let mut result = Vec::with_capacity(rows.len());
     for mut row in rows {
         row["nombre_completo"] = json!(
@@ -942,6 +942,7 @@ pub async fn connections_socket(
 async fn run_connections_socket(socket: WebSocket, state: Arc<AppState>, claims: Claims) {
     let (mut output, mut input) = socket.split();
     let mut events = state.events.subscribe();
+    let mut authorization = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(25));
     loop {
         tokio::select! {
@@ -971,13 +972,16 @@ async fn run_connections_socket(socket: WebSocket, state: Arc<AppState>, claims:
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             },
+            _ = authorization.tick() => {
+                if !session_is_active(&state, &claims).await.unwrap_or(false) {
+                    let _ = output.send(Message::Close(Some(axum::extract::ws::CloseFrame { code: 1008, reason: "session_expired".into() }))).await;
+                    break;
+                }
+            },
             _ = heartbeat.tick() => {
                 if !session_is_active(&state, &claims).await.unwrap_or(false)
                     || output.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
-                if let Ok(pool) = pool(&state) {
-                    let _ = sqlx::query("UPDATE conexiones_registroconexion SET ultima_actividad=NOW(),updated_date=NOW() WHERE profile_id=$1 AND session_id=$2 AND estado_sesion='activa'")
-                        .bind(claims.profile_id).bind(&claims.session_key).execute(pool).await;
-                }
+
             },
         }
     }

@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Lock, Download, Loader2, BookOpen, AlertCircle, CheckCircle2, Circle, ShieldAlert } from 'lucide-react';
+import { FileText, Download, Loader2, BookOpen, CheckCircle2, Circle, ShieldAlert } from 'lucide-react';
 import materialesService from '@/services/materialesService';
 import { getSafeUrl } from '@/lib/sanitize';
 
@@ -8,50 +8,44 @@ const CATEGORIAS = ['A1/A3', 'A2', 'STS', 'Radiofonista'];
 
 export default function AlumnoMaterial({ alumnoId }) {
   const [materiales, setMateriales] = useState([]);
-  const [permisos, setPermisos] = useState({});
   const [publicaciones, setPublicaciones] = useState([]);
   const [completados, setCompletados] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const loadVersion = useRef(0);
 
   useEffect(() => {
-    loadData();
+    void loadData();
+    const refresh = () => { void loadData(true); };
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener('focus', refresh);
+    return () => { loadVersion.current++; clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [alumnoId]);
 
-  const loadData = async () => {
-    setLoading(true);
-    setError(null);
+  const loadData = async (silent = false) => {
+    const request = ++loadVersion.current;
+    if (!silent) setLoading(true);
     try {
-      const mats = await materialesService.materiales.list('-orden');
+      const [mats, pubs, completadosData] = await Promise.all([
+        materialesService.materiales.list('-orden'),
+        materialesService.publicacionesBoe.list('-fecha_publicacion', 50),
+        materialesService.completados.filter({ alumno_id: alumnoId }, null, 500),
+      ]);
+      if (request !== loadVersion.current) return;
       setMateriales(mats);
 
-      const permsData = await materialesService.permisos.filter(
-        { alumno_id: alumnoId },
-        null,
-        100
-      );
-      
-      const permisosObj = {
-        'A1/A3': true,
-        A2: permsData.some((p) => p.categoria === 'A2' && p.permitido),
-        STS: permsData.some((p) => p.categoria === 'STS' && p.permitido),
-        Radiofonista: permsData.some((p) => p.categoria === 'Radiofonista' && p.permitido),
-      };
-      setPermisos(permisosObj);
-
-      const pubs = await materialesService.publicacionesBoe.list('-fecha_publicacion', 50);
       setPublicaciones(pubs);
-
-      const completadosData = await materialesService.completados.filter({ alumno_id: alumnoId }, null, 500);
       setCompletados(completadosData);
+      setError(null);
     } catch (err) {
+      if (request !== loadVersion.current) return;
       if (err?.response?.status === 403) {
         setError('No tienes acceso al material de estudio. Consulta con tu instructor.');
       } else {
         setError('No se pudo cargar el material. Vuelve a intentarlo.');
       }
     } finally {
-      setLoading(false);
+      if (request === loadVersion.current) setLoading(false);
     }
   };
 
@@ -97,7 +91,7 @@ export default function AlumnoMaterial({ alumnoId }) {
       <div role="alert" className="flex flex-col items-center justify-center py-20 glass-card">
         <ShieldAlert className="w-10 h-10 text-warning mb-3" />
         <p className="text-sm text-muted-foreground text-center">{error}</p>
-        <button type="button" onClick={loadData} className="mt-3 text-primary underline">Reintentar</button>
+        <button type="button" onClick={() => void loadData()} className="mt-3 text-primary underline">Reintentar</button>
       </div>
     );
   }
@@ -146,7 +140,6 @@ export default function AlumnoMaterial({ alumnoId }) {
 
         {CATEGORIAS.map((cat) => {
           const matsCat = materiales.filter((m) => m.categoria === cat);
-          const tieneAcceso = permisos[cat];
 
           return (
             <div key={cat} className="mb-8">
@@ -154,20 +147,8 @@ export default function AlumnoMaterial({ alumnoId }) {
                 <h4 className="font-heading text-base font-semibold uppercase tracking-wider text-foreground">
                   {cat}
                 </h4>
-                {!tieneAcceso && (
-                  <div className="flex items-center gap-1 text-xs text-warning">
-                    <Lock className="w-3 h-3" />
-                    <span>Bloqueado</span>
-                  </div>
-                )}
               </div>
 
-              {!tieneAcceso && (
-                <div className="mb-4 flex items-start gap-2 text-xs text-warning bg-warning-soft/50 border border-warning-border px-4 py-3 rounded-sm">
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>Este material está bloqueado por el Instructor. Solicita acceso cuando completes la categoría anterior.</span>
-                </div>
-              )}
 
               {matsCat.length > 0 ? (
                 <div className="grid gap-3 mb-6">
@@ -176,17 +157,16 @@ export default function AlumnoMaterial({ alumnoId }) {
                       key={mat.id}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className={`glass-card p-4 flex items-start gap-4 ${!tieneAcceso ? 'opacity-50' : ''}`}
+                      className="glass-card p-4 grid grid-cols-[auto_minmax(0,1fr)] gap-4 sm:flex sm:items-start"
                     >
-                      <FileText className={`w-5 h-5 shrink-0 mt-0.5 ${tieneAcceso ? 'text-primary' : 'text-muted-foreground'}`} />
-                      <div className="flex-1 min-w-0">
+                      <FileText className="w-5 h-5 shrink-0 mt-0.5 text-primary" />
+                      <div className="flex-1 min-w-0 break-words">
                         <p className="font-semibold text-sm text-foreground">{mat.titulo}</p>
                         {mat.descripcion && (
                           <p className="text-xs text-muted-foreground mt-1">{mat.descripcion}</p>
                         )}
                       </div>
-                      {tieneAcceso ? (
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="col-span-2 flex flex-wrap items-center gap-2 sm:shrink-0">
                           <button
                             onClick={() => toggleCompletado(mat.id)}
                             className={`inline-flex items-center gap-2 px-3 py-2 border text-xs font-bold uppercase tracking-widest transition-all duration-200 ${
@@ -206,12 +186,6 @@ export default function AlumnoMaterial({ alumnoId }) {
                             Descargar
                           </button>
                         </div>
-                      ) : (
-                        <div className="flex items-center gap-1 px-3 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground border border-border-subtle shrink-0">
-                          <Lock className="w-3.5 h-3.5" />
-                          Bloqueado
-                        </div>
-                      )}
                     </motion.div>
                   ))}
                 </div>

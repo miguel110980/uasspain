@@ -421,6 +421,7 @@ async fn run_socket(
             json!({"type":"join","sender_id":peer_id}),
         )
         .await;
+    let mut authorization = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut heartbeat = tokio::time::interval(Duration::from_secs(25));
     loop {
         tokio::select! {
@@ -446,6 +447,12 @@ async fn run_socket(
                 && (!session_is_active(&state, &claims).await.unwrap_or(false)
                     || authorize_active(&state, id, claims.profile_id, &claims.role).await.is_err()
                     || output.send(Message::Text(event.payload.to_string().into())).await.is_err()) { break; },
+            _ = authorization.tick() => {
+                if !session_is_active(&state, &claims).await.unwrap_or(false) {
+                    let _ = output.send(Message::Close(Some(axum::extract::ws::CloseFrame { code: 1008, reason: "session_expired".into() }))).await;
+                    break;
+                }
+            },
             _ = heartbeat.tick() => {
                 if !session_is_active(&state, &claims).await.unwrap_or(false)
                     || authorize_active(&state, id, claims.profile_id, &claims.role).await.is_err()

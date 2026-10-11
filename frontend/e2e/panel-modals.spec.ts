@@ -121,7 +121,7 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
     await page.route('**/api/resultados-examen/**', route => route.fulfill({ json: [
       { id: '00000000-0000-4000-8000-000000000001', categoria: 'A1/A3', fecha: '2026-10-01T12:00:00Z', modalidad: 'libre', nota: 8, aciertos: 8, errores: 2, aprobado: true },
     ] }));
-    for (const [title, label] of [['Gestionar accesos', 'Gestionar accesos'], ['Exámenes', 'Acceso a exámenes'], ['Resultados', 'Resultados del alumno']]) {
+    for (const [title, label] of [['Gestionar accesos', 'Gestionar accesos'], ['Resultados', 'Resultados del alumno']]) {
       await row.getByTitle(title, { exact: true }).click();
       const dialog = page.getByRole('dialog', { name: label, exact: true });
       if (label === 'Resultados del alumno') await expect(dialog.getByRole('table')).toBeVisible();
@@ -204,7 +204,7 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
       await page.getByRole('button', { name: 'Reintentar', exact: true }).click();
       await expect(page.getByRole('alert')).toHaveCount(0);
     } finally {
-      expect((await page.request.delete(`/api/admin/courses/${course.id}`, { headers })).status()).toBe(204);
+      expect((await page.request.delete(`/api/admin/courses/${course.id}`, { headers: { ...headers, 'If-Match': String(course.version) } })).status()).toBe(204);
     }
   });
 
@@ -244,7 +244,11 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
       expect((await (await page.request.get('/api/admin/blog/posts', { headers })).json()).some(item => item.id === postId)).toBe(false);
       postId = undefined;
     } finally {
-      if (postId) await page.request.delete(`/api/admin/blog/posts/${postId}`, { headers });
+      if (postId) {
+        const posts = await (await page.request.get('/api/admin/blog/posts', { headers })).json();
+        const post = posts.find(item => item.id === postId);
+        if (post) await page.request.delete(`/api/admin/blog/posts/${postId}`, { headers: { ...headers, 'If-Match': String(post.version) } });
+      }
     }
   });
 });

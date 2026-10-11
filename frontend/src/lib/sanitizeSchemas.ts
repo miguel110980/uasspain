@@ -63,6 +63,8 @@ export const MATERIAL_SCHEMA = {
   categoria: 'text',
   tipo: 'text',
   archivo_url: 'text',
+  archivo_path: 'text',
+  archivo_content_type: 'text',
   video_url: 'text',
   archivo_nombre_original: 'text',
   archivo_sha256: 'text',

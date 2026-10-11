@@ -238,7 +238,8 @@ pub async fn update_exam(
     Path(id): Path<Uuid>,
     Json(input): Json<ExamWrite>,
 ) -> Result<Json<ExamRecord>, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    crate::academic_scope::staff_resource(pool(&state)?, &claims, "examen", id, false).await?;
     let has_nombre = input.nombre.is_some();
     let has_categoria = input.categoria.is_some();
     let nombre = optional_text(input.nombre, 255)?;
@@ -279,7 +280,8 @@ pub async fn delete_exam(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    crate::academic_scope::staff_resource(pool(&state)?, &claims, "examen", id, false).await?;
     delete_by_id(pool(&state)?, "examenes_examen", id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -317,10 +319,11 @@ pub async fn create_question(
     headers: HeaderMap,
     Json(input): Json<QuestionWrite>,
 ) -> Result<(StatusCode, Json<QuestionRecord>), AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
     let exam_id = input
         .examen_id
         .ok_or_else(|| AppError::Validation("El examen es obligatorio.".to_owned()))?;
+    crate::academic_scope::staff_resource(pool(&state)?, &claims, "examen", exam_id, false).await?;
     let statement = required_text(input.enunciado, "Enunciado obligatorio.", 10_000)?;
     let correct = answer_letter(input.respuesta_correcta.as_deref())?;
     let row = sqlx::query_as::<_, QuestionRecord>(
@@ -351,7 +354,17 @@ pub async fn update_question(
     Path(id): Path<Uuid>,
     Json(input): Json<QuestionWrite>,
 ) -> Result<Json<QuestionRecord>, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    let exam_id: Uuid = sqlx::query_scalar("SELECT examen_id FROM examenes_pregunta WHERE id=$1")
+        .bind(id)
+        .fetch_optional(pool(&state)?)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    crate::academic_scope::staff_resource(pool(&state)?, &claims, "examen", exam_id, false).await?;
+    if let Some(target) = input.examen_id {
+        crate::academic_scope::staff_resource(pool(&state)?, &claims, "examen", target, false)
+            .await?;
+    }
     let statement = input
         .enunciado
         .map(|value| required_text(Some(value), "Enunciado obligatorio.", 10_000))
@@ -413,7 +426,13 @@ pub async fn delete_question(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    let exam_id: Uuid = sqlx::query_scalar("SELECT examen_id FROM examenes_pregunta WHERE id=$1")
+        .bind(id)
+        .fetch_optional(pool(&state)?)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    crate::academic_scope::staff_resource(pool(&state)?, &claims, "examen", exam_id, false).await?;
     delete_by_id(pool(&state)?, "examenes_pregunta", id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -490,7 +509,11 @@ pub async fn create_block(
     let student = input
         .alumno_id
         .ok_or_else(|| AppError::Validation("Alumno obligatorio.".to_owned()))?;
-    ensure_student(pool(&state)?, student).await?;
+    ensure_assigned_student(pool(&state)?, &claims, student).await?;
+    if let Some(exam_id) = input.examen_id {
+        crate::academic_scope::staff_resource(pool(&state)?, &claims, "examen", exam_id, false)
+            .await?;
+    }
     let row = sqlx::query_as::<_, BlockRecord>(
         "INSERT INTO examenes_bloqueoexamen (id, created_date, updated_date, alumno_id, \
          examen_id, categoria, motivo, bloqueado, fecha_inicio, fecha_fin, creado_por_id) \
@@ -518,7 +541,12 @@ pub async fn update_block(
     Path(id): Path<Uuid>,
     Json(input): Json<BlockWrite>,
 ) -> Result<Json<BlockRecord>, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    ensure_block_scope(pool(&state)?, &claims, id).await?;
+    if let Some(exam_id) = input.examen_id {
+        crate::academic_scope::staff_resource(pool(&state)?, &claims, "examen", exam_id, false)
+            .await?;
+    }
     let has_categoria = input.categoria.is_some();
     let categoria = optional_text(input.categoria, 50)?;
     let row = sqlx::query_as::<_, BlockRecord>(
@@ -554,7 +582,8 @@ pub async fn delete_block(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    ensure_block_scope(pool(&state)?, &claims, id).await?;
     delete_by_id(pool(&state)?, "examenes_bloqueoexamen", id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -598,19 +627,23 @@ pub async fn list_archives(
     headers: HeaderMap,
     Query(query): Query<ArchiveQuery>,
 ) -> Result<Json<Vec<ArchiveRecord>>, AppError> {
-    authenticate(&state, &headers, "access")?;
-    let rows = sqlx::query_as::<_, ArchiveRecord>(
+    let claims = staff(&state, &headers)?;
+    let statement = format!(
         "SELECT id, examen_id, nombre_archivo, archivo_url, archivo_path, \
          archivo_content_type, archivo_tamano::bigint, archivo_sha256, descripcion, \
          categoria, num_examenes::integer, created_date, updated_date \
-         FROM examenes_archivoexamen WHERE ($1::text IS NULL OR categoria = $1) \
-           AND ($2::text IS NULL OR examen_id = $2) ORDER BY created_date DESC LIMIT $3",
-    )
-    .bind(query.categoria.as_deref())
-    .bind(query.examen_id.as_deref())
-    .bind(query.limit.unwrap_or(10_000).clamp(1, 10_000))
-    .fetch_all(pool(&state)?)
-    .await?;
+         FROM examenes_archivoexamen a WHERE ($1::text IS NULL OR categoria = $1) \
+           AND ($2::text IS NULL OR examen_id = $2) AND {} ORDER BY created_date DESC LIMIT $3",
+        crate::academic_scope::resource_scope("a", "subido_por_id", 4, 5)
+    );
+    let rows = sqlx::query_as::<_, ArchiveRecord>(&statement)
+        .bind(query.categoria.as_deref())
+        .bind(query.examen_id.as_deref())
+        .bind(query.limit.unwrap_or(10_000).clamp(1, 10_000))
+        .bind(&claims.role)
+        .bind(claims.profile_id)
+        .fetch_all(pool(&state)?)
+        .await?;
     Ok(Json(rows))
 }
 
@@ -623,6 +656,7 @@ pub async fn create_archive(
     let name = required_text(input.nombre_archivo, "Nombre de archivo obligatorio.", 255)?;
     let exam_ids = optional_text(input.examen_id, 500)?;
     let url = optional_url(input.archivo_url)?;
+    crate::materials::ensure_file_scope(pool(&state)?, &claims, "", &url).await?;
     let description = optional_text(input.descripcion, 10_000)?;
     let category = optional_text(input.categoria, 50)?;
     let count = positive_i32(input.num_examenes.unwrap_or(0), "Número de exámenes")?;
@@ -636,7 +670,8 @@ pub async fn archive_detail(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ArchiveRecord>, AppError> {
-    authenticate(&state, &headers, "access")?;
+    let claims = staff(&state, &headers)?;
+    ensure_archive_scope(pool(&state)?, &claims, id).await?;
     let row=sqlx::query_as::<_,ArchiveRecord>("SELECT id,examen_id,nombre_archivo,archivo_url,archivo_path,archivo_content_type,archivo_tamano::bigint,archivo_sha256,descripcion,categoria,num_examenes::integer,created_date,updated_date FROM examenes_archivoexamen WHERE id=$1").bind(id).fetch_optional(pool(&state)?).await?.ok_or(AppError::NotFound)?;
     Ok(Json(row))
 }
@@ -647,7 +682,11 @@ pub async fn update_archive(
     Path(id): Path<Uuid>,
     Json(input): Json<ArchiveWrite>,
 ) -> Result<Json<ArchiveRecord>, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    ensure_archive_scope(pool(&state)?, &claims, id).await?;
+    if let Some(url) = input.archivo_url.as_deref() {
+        crate::materials::ensure_file_scope(pool(&state)?, &claims, "", url).await?;
+    }
     let name = input
         .nombre_archivo
         .map(|v| required_text(Some(v), "Nombre de archivo obligatorio.", 255))
@@ -681,7 +720,8 @@ pub async fn delete_archive(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    ensure_archive_scope(pool(&state)?, &claims, id).await?;
     delete_by_id(pool(&state)?, "examenes_archivoexamen", id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -696,7 +736,7 @@ pub async fn delete_results_many(
     headers: HeaderMap,
     Json(input): Json<DeleteManyRequest>,
 ) -> Result<Json<Value>, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
     let student = query_uuid(input.query.as_ref(), "alumno_id")?;
     let exam = query_uuid(input.query.as_ref(), "examen_id")?;
     if student.is_none() && exam.is_none() {
@@ -705,11 +745,14 @@ pub async fn delete_results_many(
         ));
     }
     let result = sqlx::query(
-        "DELETE FROM examenes_resultadoexamen WHERE ($1::uuid IS NULL OR alumno_id = $1) \
-         AND ($2::uuid IS NULL OR examen_id = $2)",
+        "DELETE FROM examenes_resultadoexamen r USING accounts_userprofile p \
+         WHERE p.id=r.alumno_id AND ($3='admin' OR p.assigned_instructor_id=$4) \
+         AND ($1::uuid IS NULL OR r.alumno_id = $1) AND ($2::uuid IS NULL OR r.examen_id = $2)",
     )
     .bind(student)
     .bind(exam)
+    .bind(&claims.role)
+    .bind(claims.profile_id)
     .execute(pool(&state)?)
     .await?;
     Ok(Json(json!({"deleted": result.rows_affected()})))
@@ -720,7 +763,7 @@ pub async fn delete_blocks_many(
     headers: HeaderMap,
     Json(input): Json<DeleteManyRequest>,
 ) -> Result<Json<Value>, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
     let student = query_uuid(input.query.as_ref(), "alumno_id")?;
     let exam = query_uuid(input.query.as_ref(), "examen_id")?;
     if student.is_none() && exam.is_none() {
@@ -729,14 +772,32 @@ pub async fn delete_blocks_many(
         ));
     }
     let result = sqlx::query(
-        "DELETE FROM examenes_bloqueoexamen WHERE ($1::uuid IS NULL OR alumno_id = $1) \
-         AND ($2::uuid IS NULL OR examen_id = $2)",
+        "DELETE FROM examenes_bloqueoexamen b USING accounts_userprofile p \
+         WHERE p.id=b.alumno_id AND ($3='admin' OR p.assigned_instructor_id=$4) \
+         AND ($1::uuid IS NULL OR b.alumno_id = $1) AND ($2::uuid IS NULL OR b.examen_id = $2)",
     )
     .bind(student)
     .bind(exam)
+    .bind(&claims.role)
+    .bind(claims.profile_id)
     .execute(pool(&state)?)
     .await?;
     Ok(Json(json!({"deleted": result.rows_affected()})))
+}
+
+async fn ensure_archive_scope(pool: &PgPool, claims: &Claims, id: Uuid) -> Result<(), AppError> {
+    let statement = format!(
+        "SELECT a.id FROM examenes_archivoexamen a WHERE a.id=$1 AND {}",
+        crate::academic_scope::resource_scope("a", "subido_por_id", 2, 3)
+    );
+    sqlx::query_scalar::<_, Uuid>(&statement)
+        .bind(id)
+        .bind(&claims.role)
+        .bind(claims.profile_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(())
 }
 
 fn staff(state: &AppState, headers: &HeaderMap) -> Result<Claims, AppError> {
@@ -794,12 +855,15 @@ fn optional_url(value: Option<String>) -> Result<String, AppError> {
     Ok(value)
 }
 
-async fn ensure_student(pool: &PgPool, id: Uuid) -> Result<(), AppError> {
+async fn ensure_assigned_student(pool: &PgPool, claims: &Claims, id: Uuid) -> Result<(), AppError> {
     let valid: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM accounts_userprofile WHERE id = $1 AND \
-         (role = 'alumno' OR roles @> '[\"alumno\"]'::jsonb))",
+         (role = 'alumno' OR roles @> '[\"alumno\"]'::jsonb) \
+         AND ($2='admin' OR assigned_instructor_id=$3))",
     )
     .bind(id)
+    .bind(&claims.role)
+    .bind(claims.profile_id)
     .fetch_one(pool)
     .await?;
     if valid {
@@ -807,6 +871,20 @@ async fn ensure_student(pool: &PgPool, id: Uuid) -> Result<(), AppError> {
     } else {
         Err(AppError::Validation("Alumno no vÃ¡lido.".to_owned()))
     }
+}
+
+async fn ensure_block_scope(pool: &PgPool, claims: &Claims, id: Uuid) -> Result<(), AppError> {
+    let (student, exam): (Uuid, Option<Uuid>) =
+        sqlx::query_as("SELECT alumno_id,examen_id FROM examenes_bloqueoexamen WHERE id=$1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or(AppError::NotFound)?;
+    ensure_assigned_student(pool, claims, student).await?;
+    if let Some(exam) = exam {
+        crate::academic_scope::staff_resource(pool, claims, "examen", exam, false).await?;
+    }
+    Ok(())
 }
 
 async fn delete_by_id(pool: &PgPool, table: &str, id: Uuid) -> Result<(), AppError> {

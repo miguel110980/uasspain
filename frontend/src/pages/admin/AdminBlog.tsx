@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { Edit3, Eye, EyeOff, ImagePlus, Loader2, Newspaper, Plus, Save, Trash2, X } from 'lucide-react';
+import { ArrowUp, ArrowDown, Edit3, Eye, EyeOff, ImagePlus, Loader2, Newspaper, Plus, Save, Trash2, X } from 'lucide-react';
 import contentService, { type BlogPost, type ContentStatus } from '@/services/contentService';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -14,26 +15,28 @@ const MAX_IMAGES = 12;
 const MAX_BYTES = 10 * 1024 * 1024;
 
 export default function AdminBlog() {
-  const [posts, setPosts] = useState<BlogPost[]>([]);
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ['admin', 'posts'], queryFn: contentService.adminPosts, staleTime: 0, retry: false });
+  const posts = query.data || [];
+  const setPosts = (update: BlogPost[] | ((current: BlogPost[]) => BlogPost[])) => queryClient.setQueryData<BlogPost[]>(['admin', 'posts'], current => typeof update === 'function' ? update(current || []) : update);
   const [form, setForm] = useState<BlogForm>({ ...EMPTY });
   const [editing, setEditing] = useState<BlogPost | null>(null);
   const [files, setFiles] = useState<File[]>([]);
-  const [loading, setLoading] = useState(true);
+  const loading = query.isPending;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [pendingDelete, setPendingDelete] = useState<BlogPost | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const savingLock = useRef(false);
 
   const previews = useMemo(() => files.map((file) => ({ file, url: URL.createObjectURL(file) })), [files]);
   useEffect(() => () => previews.forEach(({ url }) => URL.revokeObjectURL(url)), [previews]);
 
   const load = async () => {
-    setLoading(true);
-    try { setPosts(await contentService.adminPosts()); setError(''); }
-    catch (err) { setError(err?.response?.data?.detail || 'No se pudieron cargar las publicaciones.'); }
-    finally { setLoading(false); }
+    const result = await query.refetch();
+    if (result.isError) setError((result.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'No se pudieron cargar las publicaciones.');
+    else setError('');
   };
-  useEffect(() => { load(); }, []);
 
   const reset = () => { setForm({ ...EMPTY }); setEditing(null); setFiles([]); if (inputRef.current) inputRef.current.value = ''; };
   const chooseFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,29 +54,45 @@ export default function AdminBlog() {
   };
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (savingLock.current) return;
     if (!form.body.trim()) { setError('Escribe el contenido de la publicación.'); return; }
     if ((editing?.images.length || 0) + files.length > MAX_IMAGES) { setError(`Máximo ${MAX_IMAGES} imágenes por publicación.`); return; }
-    setSaving(true); setError('');
+    savingLock.current = true; setSaving(true); setError('');
     try {
       const post = editing
-        ? await contentService.updatePost(editing.id, form)
+        ? await contentService.updatePost(editing.id, form, editing.version)
         : await contentService.createPost(form);
-      for (const file of files) await contentService.addPostImage(post.id, file, form.title || 'Imagen de la publicación');
+      setEditing(post);
+      let version = post.version;
+      for (const file of files) {
+        await contentService.addPostImage(post.id, file, form.title || 'Imagen de la publicación', version);
+        const current = (await contentService.adminPosts()).find(item => item.id === post.id);
+        if (!current) throw new Error('Publicación no disponible');
+        version = current.version; setEditing(current);
+        setFiles(remaining => remaining.filter(item => item !== file));
+      }
       reset(); await load();
     } catch (err) { setError(err?.response?.data?.detail || 'No se pudo guardar la publicación.'); }
-    finally { setSaving(false); }
+    finally { savingLock.current = false; setSaving(false); }
   };
   const removeExistingImage = async (postId: string, imageId: string) => {
-    try { await contentService.deletePostImage(postId, imageId); await load(); if (editing?.id === postId) setEditing((current) => current ? { ...current, images: current.images.filter((image) => image.id !== imageId) } : null); }
+    try { await contentService.deletePostImage(postId, imageId, editing?.id === postId ? editing.version : posts.find(post => post.id === postId)?.version); const current = await contentService.adminPosts(); setPosts(current); if (editing?.id === postId) setEditing(current.find(post => post.id === postId) || null); }
     catch (err) { setError(err?.response?.data?.detail || 'No se pudo eliminar la imagen.'); }
   };
   const togglePublished = async (post: BlogPost) => {
-    try { await contentService.updatePost(post.id, { status: post.status === 'published' ? 'draft' : 'published' }); await load(); }
+    try { await contentService.updatePost(post.id, { status: post.status === 'published' ? 'draft' : 'published' }, post.version); await load(); }
     catch (err) { setError(err?.response?.data?.detail || 'No se pudo cambiar el estado.'); }
+  };
+  const movePost = async (index: number, delta: number) => {
+    if (savingLock.current) return; const target = index + delta; if (target < 0 || target >= posts.length) return;
+    savingLock.current = true; setSaving(true); setError('');
+    try { const ordered = [...posts]; [ordered[index], ordered[target]] = [ordered[target], ordered[index]]; await contentService.reorder('posts', ordered.map((post, sort_order) => ({ id: post.id, version: post.version, sort_order }))); await load(); }
+    catch (err) { setError(err?.response?.data?.detail || 'No se pudo cambiar el orden.'); }
+    finally { savingLock.current = false; setSaving(false); }
   };
   const confirmDelete = async () => {
     if (!pendingDelete) return;
-    try { await contentService.deletePost(pendingDelete.id); setPosts((current) => current.filter((post) => post.id !== pendingDelete.id)); if (editing?.id === pendingDelete.id) reset(); }
+    try { await contentService.deletePost(pendingDelete.id, pendingDelete.version); setPosts((current) => current.filter((post) => post.id !== pendingDelete.id)); if (editing?.id === pendingDelete.id) reset(); }
     catch (err) { setError(err?.response?.data?.detail || 'No se pudo eliminar la publicación.'); }
     finally { setPendingDelete(null); }
   };
@@ -81,7 +100,7 @@ export default function AdminBlog() {
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       <div><h2 className="font-heading text-xl font-bold flex items-center gap-2"><Newspaper className="w-5 h-5 text-primary" /> Blog / Publicaciones</h2><p className="text-xs text-muted-foreground mt-1">Publica bloques independientes con texto y fotografías opcionales.</p></div>
-      {error && <div role="alert" className="border border-danger/30 bg-danger/10 text-danger text-sm p-3 rounded">{error}</div>}
+      {(error || query.isError) && <div role="alert" className="border border-danger/30 bg-danger/10 text-danger text-sm p-3 rounded">{error || 'No se pudieron cargar las publicaciones.'}</div>}
       <form onSubmit={save} className="glass-card p-5 space-y-4">
         <div className="flex items-center justify-between"><h3 className="font-heading font-bold">{editing ? 'Editar publicación' : 'Nueva publicación'}</h3>{editing && <button type="button" onClick={reset} className="text-xs text-muted-foreground hover:text-primary">Cancelar edición</button>}</div>
         <input aria-label="Título de la publicación" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={180} placeholder="Título opcional" className="w-full bg-surface-muted border border-border rounded px-3 py-2 text-sm" />
@@ -100,9 +119,9 @@ export default function AdminBlog() {
       </form>
       <div className="space-y-4">
         <h3 className="font-heading font-bold">Bloques publicados</h3>
-        {loading ? <Loader2 className="w-6 h-6 animate-spin text-primary" /> : posts.length === 0 ? <div className="glass-card p-8 text-center text-sm text-muted-foreground">No hay publicaciones.</div> : posts.map((post) => <article key={post.id} className="glass-card p-5">
+        {loading ? <Loader2 className="w-6 h-6 animate-spin text-primary" /> : posts.length === 0 ? <div className="glass-card p-8 text-center text-sm text-muted-foreground">No hay publicaciones.</div> : posts.map((post, index) => <article key={post.id} className="glass-card p-5">
           <div className="flex flex-col md:flex-row gap-4"><div className="flex-1 min-w-0"><div className="flex items-center gap-2 mb-2"><span className={`text-[10px] uppercase font-bold px-2 py-1 border rounded ${post.status === 'published' ? 'text-success border-success/30' : 'text-warning border-warning/30'}`}>{post.status === 'published' ? 'Publicado' : 'Borrador'}</span><span className="text-[10px] text-muted-foreground">{new Date(post.created_at).toLocaleString('es-ES')}</span></div>{post.title && <h4 className="font-heading font-bold mb-2">{post.title}</h4>}<p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-5">{post.body}</p></div>{post.images.length > 0 && <div className="grid grid-cols-3 gap-2 md:w-64">{post.images.slice(0, 6).map((image) => <img key={image.id} src={image.url} alt={image.alt_text || ''} loading="lazy" className="aspect-square w-full object-cover rounded" />)}</div>}</div>
-          <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-border"><button onClick={() => edit(post)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-border rounded text-xs hover:text-primary"><Edit3 className="w-3.5 h-3.5" />Editar</button><button onClick={() => togglePublished(post)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-border rounded text-xs hover:text-primary">{post.status === 'published' ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}{post.status === 'published' ? 'Despublicar' : 'Publicar'}</button><button onClick={() => setPendingDelete(post)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-danger/30 text-danger rounded text-xs ml-auto"><Trash2 className="w-3.5 h-3.5" />Eliminar</button></div>
+          <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-border"><button onClick={() => edit(post)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-border rounded text-xs hover:text-primary"><Edit3 className="w-3.5 h-3.5" />Editar</button><button onClick={() => togglePublished(post)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-border rounded text-xs hover:text-primary">{post.status === 'published' ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}{post.status === 'published' ? 'Despublicar' : 'Publicar'}</button><button disabled={saving || index === 0} onClick={() => void movePost(index, -1)} aria-label={`Subir ${post.title || 'publicación'}`} className="border border-border rounded p-2"><ArrowUp className="w-4 h-4" /></button><button disabled={saving || index === posts.length - 1} onClick={() => void movePost(index, 1)} aria-label={`Bajar ${post.title || 'publicación'}`} className="border border-border rounded p-2"><ArrowDown className="w-4 h-4" /></button><button onClick={() => setPendingDelete(post)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-danger/30 text-danger rounded text-xs ml-auto"><Trash2 className="w-3.5 h-3.5" />Eliminar</button></div>
         </article>)}
       </div>
       <AlertDialog open={Boolean(pendingDelete)} onOpenChange={(open) => !open && setPendingDelete(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Eliminar esta publicación</AlertDialogTitle><AlertDialogDescription>Se eliminará únicamente “{pendingDelete?.title || pendingDelete?.body.slice(0, 60)}” y sus imágenes asociadas.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-danger/90">Eliminar bloque</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>

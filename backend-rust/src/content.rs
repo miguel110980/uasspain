@@ -98,7 +98,7 @@ pub async fn public_posts(
 ) -> Result<Json<Vec<Value>>, AppError> {
     let rows = sqlx::query_scalar::<_, Value>(
         "SELECT jsonb_build_object(
-            'id', p.id, 'title', p.title, 'body', p.body, 'status', p.status,
+            'id', p.id, 'version',p.version, 'title', p.title, 'body', p.body, 'status', p.status,
             'sort_order', p.sort_order, 'created_at', p.created_at,
             'updated_at', p.updated_at, 'published_at', p.published_at,
             'images', COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -127,14 +127,14 @@ pub async fn admin_posts(
     admin(&state, &headers)?;
     let rows = sqlx::query_scalar::<_, Value>(
         "SELECT jsonb_build_object(
-            'id', p.id, 'title', p.title, 'body', p.body, 'status', p.status,
+            'id', p.id, 'version',p.version, 'title', p.title, 'body', p.body, 'status', p.status,
             'sort_order', p.sort_order, 'created_at', p.created_at,
             'updated_at', p.updated_at, 'published_at', p.published_at,
             'images', COALESCE((SELECT jsonb_agg(jsonb_build_object(
                 'id', i.id, 'url', i.file_url, 'alt_text', i.alt_text,
                 'sort_order', i.sort_order, 'created_at', i.created_at
             ) ORDER BY i.sort_order, i.created_at) FROM blog_post_images i WHERE i.post_id=p.id), '[]'::jsonb)
-        ) FROM blog_posts p ORDER BY p.sort_order, p.created_at DESC LIMIT 200",
+        ) FROM blog_posts p WHERE p.status!='deleted' ORDER BY p.sort_order, p.created_at DESC LIMIT 200",
     )
     .fetch_all(pool(&state)?)
     .await?;
@@ -175,6 +175,8 @@ pub async fn update_post(
 ) -> Result<Json<Value>, AppError> {
     admin(&state, &headers)?;
     validate_post_patch(&input)?;
+    let mut tx = pool(&state)?.begin().await?;
+    crate::content_realtime::lock_edit(&mut tx, "blog_posts", id, &headers).await?;
     let changed = sqlx::query(
         "UPDATE blog_posts SET title=COALESCE($2,title), body=COALESCE($3,body),
          status=COALESCE($4,status), sort_order=COALESCE($5,sort_order), updated_at=NOW(),
@@ -186,11 +188,12 @@ pub async fn update_post(
     .bind(input.body.map(|value| value.trim().to_owned()))
     .bind(input.status)
     .bind(input.sort_order)
-    .execute(pool(&state)?)
+    .execute(&mut *tx)
     .await?;
     if changed.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
+    tx.commit().await?;
     Ok(Json(post_json(pool(&state)?, id, false).await?))
 }
 
@@ -201,20 +204,12 @@ pub async fn delete_post(
 ) -> Result<StatusCode, AppError> {
     admin(&state, &headers)?;
     let mut tx = pool(&state)?.begin().await?;
-    let paths: Vec<String> =
-        sqlx::query_scalar("SELECT storage_path FROM blog_post_images WHERE post_id=$1 FOR UPDATE")
-            .bind(id)
-            .fetch_all(&mut *tx)
-            .await?;
-    let deleted = sqlx::query("DELETE FROM blog_posts WHERE id=$1")
+    crate::content_realtime::lock_edit(&mut tx, "blog_posts", id, &headers).await?;
+    sqlx::query("UPDATE blog_posts SET status='deleted' WHERE id=$1")
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    if deleted.rows_affected() == 0 {
-        return Err(AppError::NotFound);
-    }
     tx.commit().await?;
-    remove_files(paths).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -224,7 +219,7 @@ pub async fn add_post_image(
     Path(id): Path<Uuid>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
-    admin(&state, &headers)?;
+    let claims = admin(&state, &headers)?;
     let mut alt_text = String::new();
     let mut upload: Option<(String, String, Vec<u8>)> = None;
     while let Some(field) = multipart
@@ -259,7 +254,7 @@ pub async fn add_post_image(
     }
     let (name, mime, bytes) = upload.ok_or_else(|| invalid("No se envió ninguna imagen."))?;
     let mut tx = pool(&state)?.begin().await?;
-    lock_post(&mut tx, id).await?;
+    crate::content_realtime::lock_edit(&mut tx, "blog_posts", id, &headers).await?;
     let (count, total): (i64, i64) = sqlx::query_as(
         "SELECT COUNT(*),COALESCE(SUM(size_bytes),0)::BIGINT FROM blog_post_images WHERE post_id=$1",
     )
@@ -276,6 +271,19 @@ pub async fn add_post_image(
         ));
     }
     let (storage_path, file_url) = store_image_bytes(&name, &mime, &bytes, "blog", "post_").await?;
+    if let Err(error) = crate::content_images::register(
+        &mut tx,
+        &storage_path,
+        &file_url,
+        &mime,
+        bytes.len(),
+        claims.profile_id,
+    )
+    .await
+    {
+        let _ = remove_managed_media(&storage_path).await;
+        return Err(error);
+    }
     let image_id = Uuid::new_v4();
     let inserted = sqlx::query_scalar::<_, Value>(
         "INSERT INTO blog_post_images (id,post_id,storage_path,file_url,alt_text,content_type,size_bytes,sort_order)
@@ -294,7 +302,10 @@ pub async fn add_post_image(
     .await;
     match inserted {
         Ok(image) => {
-            tx.commit().await?;
+            if let Err(error) = tx.commit().await {
+                let _ = remove_managed_media(&storage_path).await;
+                return Err(error.into());
+            }
             Ok((StatusCode::CREATED, Json(image)))
         }
         Err(error) => {
@@ -310,17 +321,19 @@ pub async fn delete_post_image(
     Path((post_id, image_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
     admin(&state, &headers)?;
+    let mut tx = pool(&state)?.begin().await?;
+    crate::content_realtime::lock_edit(&mut tx, "blog_posts", post_id, &headers).await?;
     let path: String = sqlx::query_scalar(
         "DELETE FROM blog_post_images WHERE id=$1 AND post_id=$2 RETURNING storage_path",
     )
     .bind(image_id)
     .bind(post_id)
-    .fetch_optional(pool(&state)?)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or(AppError::NotFound)?;
-    if let Err(error) = remove_managed_media(&path).await {
-        tracing::warn!(%error, %image_id, "orphaned blog image could not be removed");
-    }
+    tx.commit().await?;
+    // The verified image remains available in the shared resource inventory.
+    let _ = path;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -328,7 +341,7 @@ pub async fn public_courses(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<Value>>, AppError> {
     let rows = sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',id,'name',name,'slug',slug,
+        "SELECT jsonb_build_object('id',id,'version',version,'name',name,'slug',slug,
          'short_description',short_description,'description',CASE WHEN status='published' THEN description ELSE '' END,'modality',modality,'duration',duration,'cover_image_url',cover_image_url,
          'category',category,'menu_icon',presentation->>'icon','status',status,'content_available',status='published','sort_order',sort_order,'published_at',published_at)
          FROM courses WHERE status IN ('upcoming','published') ORDER BY sort_order,name",
@@ -353,7 +366,7 @@ pub async fn admin_courses(
 ) -> Result<Json<Vec<Value>>, AppError> {
     admin(&state, &headers)?;
     let rows = sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'category',c.category,'presentation',c.presentation,
+        "SELECT jsonb_build_object('id',c.id,'version',c.version,'name',c.name,'slug',c.slug,'category',c.category,'presentation',c.presentation,
          'modality',c.modality,'duration',c.duration,'short_description',c.short_description,'description',c.description,
          'introduction',c.introduction,'syllabus',c.syllabus,
          'cover_image_url',c.cover_image_url,'cover_image_path',c.cover_image_path,
@@ -361,7 +374,7 @@ pub async fn admin_courses(
          'updated_at',c.updated_at,'published_at',c.published_at,
          'sections',COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.sort_order,s.created_at)
           FROM course_sections s WHERE s.course_id=c.id),'[]'::jsonb))
-         FROM courses c ORDER BY c.sort_order,c.name",
+         FROM courses c WHERE c.status!='deleted' ORDER BY c.sort_order,c.name",
     )
     .fetch_all(pool(&state)?)
     .await?;
@@ -429,6 +442,7 @@ pub async fn update_course(
     validate_course_patch(&input)?;
     let slug = input.slug.as_deref().map(normalize_slug).transpose()?;
     let mut tx = pool(&state)?.begin().await?;
+    crate::content_realtime::lock_edit(&mut tx, "courses", id, &headers).await?;
     let existing_description: Option<String> =
         sqlx::query_scalar("SELECT description FROM courses WHERE id=$1 FOR UPDATE")
             .bind(id)
@@ -510,17 +524,13 @@ pub async fn delete_course(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     admin(&state, &headers)?;
-    let path: Option<String> =
-        sqlx::query_scalar("DELETE FROM courses WHERE id=$1 RETURNING NULLIF(cover_image_path,'')")
-            .bind(id)
-            .fetch_optional(pool(&state)?)
-            .await?
-            .ok_or(AppError::NotFound)?;
-    if let Some(path) = path
-        && let Err(error) = remove_managed_media(&path).await
-    {
-        tracing::warn!(%error, %id, "orphaned course cover could not be removed");
-    }
+    let mut tx = pool(&state)?.begin().await?;
+    crate::content_realtime::lock_edit(&mut tx, "courses", id, &headers).await?;
+    sqlx::query("UPDATE courses SET status='deleted' WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -530,7 +540,7 @@ pub async fn upload_course_cover(
     Path(id): Path<Uuid>,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, AppError> {
-    admin(&state, &headers)?;
+    let claims = admin(&state, &headers)?;
     let mut upload: Option<(String, String, Vec<u8>)> = None;
     while let Some(field) = multipart
         .next_field()
@@ -551,28 +561,31 @@ pub async fn upload_course_cover(
         }
     }
     let (name, mime, bytes) = upload.ok_or_else(|| invalid("No se envió ninguna portada."))?;
-    let old: String = sqlx::query_scalar("SELECT cover_image_path FROM courses WHERE id=$1")
-        .bind(id)
-        .fetch_optional(pool(&state)?)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let mut tx = pool(&state)?.begin().await?;
+    crate::content_realtime::lock_edit(&mut tx, "courses", id, &headers).await?;
     let (path, url) = store_image_bytes(&name, &mime, &bytes, "courses", "cover_").await?;
+    if let Err(error) =
+        crate::content_images::register(&mut tx, &path, &url, &mime, bytes.len(), claims.profile_id)
+            .await
+    {
+        let _ = remove_managed_media(&path).await;
+        return Err(error);
+    }
     if let Err(error) = sqlx::query(
         "UPDATE courses SET cover_image_path=$2,cover_image_url=$3,updated_at=NOW() WHERE id=$1",
     )
     .bind(id)
     .bind(&path)
     .bind(&url)
-    .execute(pool(&state)?)
+    .execute(&mut *tx)
     .await
     {
         let _ = remove_managed_media(&path).await;
         return Err(error.into());
     }
-    if !old.is_empty()
-        && let Err(error) = remove_managed_media(&old).await
-    {
-        tracing::warn!(%error, %id, "old course cover could not be removed");
+    if let Err(error) = tx.commit().await {
+        let _ = remove_managed_media(&path).await;
+        return Err(error.into());
     }
     Ok(Json(json!({"cover_image_url":url,"cover_image_path":path})))
 }
@@ -585,11 +598,14 @@ pub async fn create_section(
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     admin(&state, &headers)?;
     validate_section(&input.title, &input.body, input.sort_order)?;
+    let mut tx = pool(&state)?.begin().await?;
+    crate::content_realtime::lock_edit(&mut tx, "courses", course_id, &headers).await?;
     let row = sqlx::query_scalar::<_, Value>(
         "INSERT INTO course_sections (id,course_id,title,body,sort_order) SELECT $1,id,$3,$4,$5 FROM courses WHERE id=$2
          RETURNING to_jsonb(course_sections)",
     ).bind(Uuid::new_v4()).bind(course_id).bind(input.title.trim()).bind(input.body.trim()).bind(input.sort_order)
-        .fetch_optional(pool(&state)?).await?.ok_or(AppError::NotFound)?;
+        .fetch_optional(&mut *tx).await?.ok_or(AppError::NotFound)?;
+    tx.commit().await?;
     Ok((StatusCode::CREATED, Json(row)))
 }
 
@@ -601,12 +617,15 @@ pub async fn update_section(
 ) -> Result<Json<Value>, AppError> {
     admin(&state, &headers)?;
     validate_section_patch(&input)?;
+    let mut tx = pool(&state)?.begin().await?;
+    crate::content_realtime::lock_edit(&mut tx, "courses", course_id, &headers).await?;
     let row = sqlx::query_scalar::<_, Value>(
         "UPDATE course_sections SET title=COALESCE($3,title),body=COALESCE($4,body),sort_order=COALESCE($5,sort_order),updated_at=NOW()
          WHERE id=$1 AND course_id=$2 RETURNING to_jsonb(course_sections)",
     ).bind(section_id).bind(course_id).bind(input.title.map(|v|v.trim().to_owned()))
         .bind(input.body.map(|v|v.trim().to_owned())).bind(input.sort_order)
-        .fetch_optional(pool(&state)?).await?.ok_or(AppError::NotFound)?;
+        .fetch_optional(&mut *tx).await?.ok_or(AppError::NotFound)?;
+    tx.commit().await?;
     Ok(Json(row))
 }
 
@@ -616,34 +635,37 @@ pub async fn delete_section(
     Path((course_id, section_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
     admin(&state, &headers)?;
+    let mut tx = pool(&state)?.begin().await?;
+    crate::content_realtime::lock_edit(&mut tx, "courses", course_id, &headers).await?;
     let result = sqlx::query("DELETE FROM course_sections WHERE id=$1 AND course_id=$2")
         .bind(section_id)
         .bind(course_id)
-        .execute(pool(&state)?)
+        .execute(&mut *tx)
         .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn post_json(pool: &PgPool, id: Uuid, public_only: bool) -> Result<Value, AppError> {
     sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',p.id,'title',p.title,'body',p.body,'status',p.status,
+        "SELECT jsonb_build_object('id',p.id,'version',p.version,'title',p.title,'body',p.body,'status',p.status,
          'sort_order',p.sort_order,'created_at',p.created_at,'updated_at',p.updated_at,'published_at',p.published_at,
          'images',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',i.id,'url',i.file_url,'alt_text',i.alt_text,'sort_order',i.sort_order,'created_at',i.created_at) ORDER BY i.sort_order,i.created_at) FROM blog_post_images i WHERE i.post_id=p.id),'[]'::jsonb))
-         FROM blog_posts p WHERE p.id=$1 AND ($2=FALSE OR p.status='published')",
+         FROM blog_posts p WHERE p.id=$1 AND p.status!='deleted' AND ($2=FALSE OR p.status='published')",
     ).bind(id).bind(public_only).fetch_optional(pool).await?.ok_or(AppError::NotFound)
 }
 
 async fn course_json_by_id(pool: &PgPool, id: Uuid) -> Result<Value, AppError> {
     sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'category',c.category,'presentation',c.presentation,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
+        "SELECT jsonb_build_object('id',c.id,'version',c.version,'name',c.name,'slug',c.slug,'category',c.category,'presentation',c.presentation,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
          'description',c.description,'introduction',c.introduction,'syllabus',c.syllabus,
          'cover_image_url',c.cover_image_url,'cover_image_path',c.cover_image_path,'status',c.status,
          'sort_order',c.sort_order,'created_at',c.created_at,'updated_at',c.updated_at,'published_at',c.published_at,
          'sections',COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.sort_order,s.created_at) FROM course_sections s WHERE s.course_id=c.id),'[]'::jsonb))
-         FROM courses c WHERE c.id=$1",
+         FROM courses c WHERE c.id=$1 AND c.status!='deleted'",
     ).bind(id).fetch_optional(pool).await?.ok_or(AppError::NotFound)
 }
 
@@ -653,7 +675,7 @@ async fn course_json_by_slug(
     admin_view: bool,
 ) -> Result<Value, AppError> {
     sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id',c.id,'name',c.name,'slug',c.slug,'category',c.category,'presentation',c.presentation,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
+        "SELECT jsonb_build_object('id',c.id,'version',c.version,'name',c.name,'slug',c.slug,'category',c.category,'presentation',c.presentation,'modality',c.modality,'duration',c.duration,'short_description',c.short_description,
          'description',CASE WHEN c.status='published' OR $2 THEN c.description ELSE '' END,
          'introduction',CASE WHEN c.status='published' OR $2 THEN c.introduction ELSE '' END,
          'syllabus',CASE WHEN c.status='published' OR $2 THEN c.syllabus ELSE '' END,
@@ -662,23 +684,6 @@ async fn course_json_by_slug(
          'sections',CASE WHEN c.status='published' OR $2 THEN COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.sort_order,s.created_at) FROM course_sections s WHERE s.course_id=c.id),'[]'::jsonb) ELSE '[]'::jsonb END)
          FROM courses c WHERE c.slug=$1 AND (c.status IN ('upcoming','published') OR $2)",
     ).bind(slug).bind(admin_view).fetch_optional(pool).await?.ok_or(AppError::NotFound)
-}
-
-async fn lock_post(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<(), AppError> {
-    let exists: Option<Uuid> =
-        sqlx::query_scalar("SELECT id FROM blog_posts WHERE id=$1 FOR UPDATE")
-            .bind(id)
-            .fetch_optional(&mut **tx)
-            .await?;
-    exists.map(|_| ()).ok_or(AppError::NotFound)
-}
-
-async fn remove_files(paths: Vec<String>) {
-    for path in paths {
-        if let Err(error) = remove_managed_media(&path).await {
-            tracing::warn!(%error, %path, "orphaned managed media could not be removed");
-        }
-    }
 }
 
 fn admin(state: &AppState, headers: &HeaderMap) -> Result<Claims, AppError> {
@@ -791,7 +796,7 @@ fn validate_course(input: &CourseWrite, slug: &str) -> Result<(), AppError> {
         || input.duration.chars().count() > 120
         || input.introduction.chars().count() > 50_000
         || input.syllabus.chars().count() > 50_000
-        || !matches!(input.status.as_str(), "upcoming" | "published")
+        || !matches!(input.status.as_str(), "upcoming" | "draft" | "published")
         || input.sort_order < 0
         || slug.is_empty()
     {
@@ -824,7 +829,7 @@ fn validate_course_patch(input: &CoursePatch) -> Result<(), AppError> {
     if input
         .status
         .as_deref()
-        .is_some_and(|v| !matches!(v, "upcoming" | "published"))
+        .is_some_and(|v| !matches!(v, "upcoming" | "draft" | "published"))
         || input.sort_order.is_some_and(|v| v < 0)
     {
         return Err(invalid("Datos de curso no válidos."));

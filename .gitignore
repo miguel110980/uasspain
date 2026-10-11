@@ -60,6 +60,14 @@ project-tree.txt
 *.rej
 *.zip
 *.bundle
+# Copias de seguridad y pruebas de depuración fuera del código distribuible
+*.enc
+*.dump
+*.pgcustom
+*.sql.gz
+*.snapshot
+*.dpapi
+frontend/*.tmp.mjs
 .idea/
 .vscode/
 .cursor/

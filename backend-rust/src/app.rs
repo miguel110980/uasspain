@@ -70,11 +70,54 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let cors = cors_layer();
     Router::new()
         .route("/", get(api::root))
+        .route(
+            "/api/admin/content/images",
+            get(crate::content_images::list),
+        )
         .route("/api/health/live/", get(api::live))
         .route("/api/health/ready/", get(api::ready))
         .route("/api/public/stats/", get(api::public_stats))
         .route("/api/public/oauth/google/", get(api::public_google_oauth))
         .route("/api/public/publicaciones/", get(api::public_publications))
+        .route(
+            "/api/public/content/versions/",
+            get(crate::content_realtime::revisions),
+        )
+        .route(
+            "/api/admin/content/{kind}/order",
+            post(crate::content_realtime::reorder),
+        )
+        .route("/ws/public-content/", get(crate::content_realtime::socket))
+        .route("/api/services", get(crate::services::public_list))
+        .route("/api/services/{slug}", get(crate::services::public_detail))
+        .route(
+            "/api/public/seo/service-route/{slug}",
+            get(crate::seo::service_route),
+        )
+        .route(
+            "/api/public/seo/service-head/{slug}",
+            get(crate::seo::service_head),
+        )
+        .route(
+            "/api/public/seo/service-body/{slug}",
+            get(crate::seo::service_body),
+        )
+        .route(
+            "/api/public/seo/sitemap-services.xml",
+            get(crate::seo::service_sitemap),
+        )
+        .route(
+            "/api/admin/services",
+            get(crate::services::admin_list).post(crate::services::create),
+        )
+        .route(
+            "/api/admin/services/{id}",
+            axum::routing::patch(crate::services::update).delete(crate::services::delete),
+        )
+        .route(
+            "/api/admin/services/{id}/image",
+            post(crate::services::upload_image).layer(DefaultBodyLimit::max(10 * 1024 * 1024)),
+        )
         .route("/api/blog/posts", get(crate::content::public_posts))
         .route("/api/blog/posts/{id}", get(crate::content::public_post))
         .route("/api/courses", get(crate::content::public_courses))
@@ -159,6 +202,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(api::auth_policy_get).put(api::auth_policy_put),
         )
         .route("/api/auth/login/", post(auth::login))
+        .route("/api/auth/context/", post(auth::browser_context))
+        .route(
+            "/api/auth/activity/",
+            get(auth::activity).post(auth::activity),
+        )
         .route("/api/auth/google/", post(auth::google_login))
         .route("/api/auth/google/challenge/", post(auth::google_challenge))
         .route("/api/auth/refresh/", post(auth::refresh))
@@ -307,6 +355,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/materiales-completados/",
             get(materials::list_completions).post(materials::create_completion),
+        )
+        .route(
+            "/api/materiales/{id}/contenido/",
+            get(crate::material_text::extract),
         )
         .route(
             "/api/materiales-completados/{id}/",
@@ -565,6 +617,9 @@ async fn security_headers(request: Request<axum::body::Body>, next: Next) -> Res
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
     );
+    headers
+        .entry(axum::http::header::CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static("no-store"));
     headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
     headers.insert(
         "x-robots-tag",
@@ -605,6 +660,7 @@ fn cors_layer() -> CorsLayer {
         .allow_headers([
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
+            axum::http::header::IF_MATCH,
             HeaderName::from_static("x-csrftoken"),
             HeaderName::from_static("x-client-meta"),
             HeaderName::from_static("x-uasspain-window-id"),

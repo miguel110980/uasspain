@@ -174,7 +174,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
       {/* Charts fila 1 */}
       <p className="text-xs text-muted-foreground">Las gráficas muestran tus últimos {resultados.length} resultados cargados.</p>
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="glass-card p-5 lg:col-span-2">
+        <div className="glass-card min-w-0 p-5 lg:col-span-2">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Evolución de notas</h3>
           <p className="text-xs text-muted-foreground mb-4">Tus notas a lo largo del tiempo</p>
           {evolucion.length >= 2 ? (
@@ -201,7 +201,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
           )}
         </div>
 
-        <div className="glass-card p-5">
+        <div className="glass-card min-w-0 p-5">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Aprobación</h3>
           <p className="text-xs text-muted-foreground mb-4">Aprobados vs suspendidos</p>
           {realizados.length > 0 ? (
@@ -231,7 +231,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
       </div>
 
       {/* Actividad semanal */}
-      <div className="glass-card p-5">
+      <div className="glass-card min-w-0 p-5">
         <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Actividad semanal</h3>
         <p className="text-xs text-muted-foreground mb-4">Exámenes realizados en los últimos 7 días</p>
         <ResponsiveContainer width="100%" height={180}>
@@ -247,7 +247,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
 
       {/* Charts fila 2 */}
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="glass-card p-5 lg:col-span-2">
+        <div className="glass-card min-w-0 p-5 lg:col-span-2">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Resultados por categoría</h3>
           <p className="text-xs text-muted-foreground mb-4">Realizados vs aprobados</p>
           {realizados.length > 0 ? (
@@ -268,7 +268,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
           )}
         </div>
 
-        <div className="glass-card p-5">
+        <div className="glass-card min-w-0 p-5">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
             <Clock className="w-4 h-4 text-primary" /> Actividad reciente
           </h3>

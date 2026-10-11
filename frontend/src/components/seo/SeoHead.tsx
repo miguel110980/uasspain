@@ -49,6 +49,7 @@ export default function SeoHead({ title, description, keywords, canonical, noind
   const { theme } = useTheme();
   const isPrivate = PRIVATE_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
   const routeSeo = getSeoForPath(pathname);
+  const managedService = pathname.startsWith('/servicios/');
 
   const finalTitle = title || routeSeo.title;
   const finalDescription = description || routeSeo.description;
@@ -57,6 +58,9 @@ export default function SeoHead({ title, description, keywords, canonical, noind
   const blockIndex = isPrivate || new URLSearchParams(search).has('auth') || (noindex ?? routeSeo.noindex);
 
   useEffect(() => {
+    // The dynamic service page owns its PostgreSQL metadata. Preserve the
+    // server-rendered head while its initial request is pending.
+    if (managedService && !title && !noindex) return;
     document.title = finalTitle;
     upsertMeta('name', 'description', finalDescription);
     upsertMeta('name', 'keywords', finalKeywords);
@@ -85,7 +89,7 @@ export default function SeoHead({ title, description, keywords, canonical, noind
     } else {
       document.getElementById('seo-org-jsonld')?.remove();
     }
-  }, [finalTitle, finalDescription, finalKeywords, finalCanonical, blockIndex, isPrivate, jsonLd, theme]);
+  }, [finalTitle, finalDescription, finalKeywords, finalCanonical, blockIndex, isPrivate, jsonLd, theme, managedService, title, noindex]);
 
   return null;
 }

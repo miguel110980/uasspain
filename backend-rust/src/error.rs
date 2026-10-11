@@ -12,10 +12,14 @@ pub enum AppError {
     Unauthorized,
     #[error("session window mismatch")]
     SessionWindowMismatch,
+    #[error("session expired due to inactivity")]
+    SessionIdleExpired,
     #[error("permission denied")]
     Forbidden,
     #[error("resource not found")]
     NotFound,
+    #[error("content was changed by another editor")]
+    EditConflict,
     #[error("{0}")]
     Validation(String),
     #[error("service temporarily unavailable")]
@@ -51,6 +55,11 @@ impl IntoResponse for AppError {
                 "session_window_mismatch",
                 "Acceda desde esta ventana para continuar.".to_owned(),
             ),
+            Self::SessionIdleExpired => (
+                StatusCode::UNAUTHORIZED,
+                "session_idle_expired",
+                "Tu sesión ha caducado por inactividad".to_owned(),
+            ),
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
                 "permission_denied",
@@ -60,6 +69,11 @@ impl IntoResponse for AppError {
                 StatusCode::NOT_FOUND,
                 "not_found",
                 "Recurso no encontrado.".to_owned(),
+            ),
+            Self::EditConflict => (
+                StatusCode::CONFLICT,
+                "edit_conflict",
+                "El contenido ha cambiado. Actualice la lista y revise los cambios antes de guardar.".to_owned(),
             ),
             Self::Validation(message) => {
                 (StatusCode::BAD_REQUEST, "validation_error", message.clone())

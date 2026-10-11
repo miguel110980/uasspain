@@ -123,8 +123,11 @@ try {
     .replace(/<div id="root">[\s\S]*?<\/div>\s*<noscript>/, '<div id="root"><!--#include virtual="/_course-body?slug=$course_slug" --></div><noscript>')
     .replace('UASSPAIN necesita JavaScript para funcionar.', 'Activa JavaScript para acceder a tu cuenta.'));
   await writeFile('dist/404.html', documentFor('/404', '<main><h1>Página no encontrada</h1><p>La página solicitada no existe.</p><a href="/">Volver al inicio</a></main>', { title: 'Página no encontrada | UASSPAIN', description: 'La página solicitada no existe.', noindex: true }));
+  await writeFile('dist/service.html', shell.replace('</head>', `${preload(modules.get('ServicioDinamico'))}<!--#include virtual="/_service-head?slug=$service_slug" --></head>`)
+    .replace(/<div id="root">[\s\S]*?<\/div>\s*<noscript>/, '<div id="root"><!--#include virtual="/_service-body?slug=$service_slug" --></div><noscript>')
+    .replace('UASSPAIN necesita JavaScript para funcionar.', 'Activa JavaScript para acceder a tu cuenta.'));
   await writeFile('dist/sitemap-static.xml', `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map(url => `<url><loc>${escape(url)}</loc></url>`).join('')}</urlset>`);
-  await writeFile('dist/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${origin.origin}/sitemap-static.xml</loc></sitemap><sitemap><loc>${origin.origin}/sitemap-courses.xml</loc></sitemap></sitemapindex>`);
+  await writeFile('dist/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${origin.origin}/sitemap-static.xml</loc></sitemap><sitemap><loc>${origin.origin}/sitemap-courses.xml</loc></sitemap><sitemap><loc>${origin.origin}/sitemap-services.xml</loc></sitemap></sitemapindex>`);
   const robots = await readFile('public/robots.txt', 'utf8');
   await writeFile('dist/robots.txt', robots.replace(/^Sitemap:.*$/m, `Sitemap: ${origin.origin}/sitemap.xml`));
   console.log(`Prerendered ${routes.length} actual public pages; ${urls.length} indexable URLs.`);

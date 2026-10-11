@@ -23,7 +23,6 @@ use std::{
 #[derive(Deserialize)]
 struct Defaults {
     email: String,
-    services: Vec<String>,
 }
 fn defaults() -> Result<Defaults, AppError> {
     serde_json::from_str(include_str!("contact-defaults.json")).map_err(|_| AppError::Internal)
@@ -113,7 +112,7 @@ impl ContactWrite {
                 .telefono
                 .chars()
                 .any(|c| !c.is_ascii_digit() && !"+ -().".contains(c))
-            || !defaults()?.services.contains(&self.servicio)
+            || !header_text(&self.servicio, 1, 180)
             || !(10..=2000).contains(&self.mensaje.trim().chars().count())
             || self
                 .mensaje
@@ -218,7 +217,7 @@ fn configuration(recipient: &str) -> Result<(SmtpConfig, String, String), AppErr
     Ok((config, password, value("CONTACT_SMTP_CA_FILE")))
 }
 pub async fn send(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(input): Json<ContactWrite>,
 ) -> Result<Json<Value>, AppError> {
@@ -227,6 +226,20 @@ pub async fn send(
     }
     input.validate()?;
     limit(&headers)?;
+    if input.servicio != "Otro" {
+        let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+        let published: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM services WHERE status='published' AND title=$1)",
+        )
+        .bind(&input.servicio)
+        .fetch_one(pool)
+        .await?;
+        if !published {
+            return Err(AppError::Validation(
+                "Selecciona un servicio publicado.".into(),
+            ));
+        }
+    }
     let recipient = mailbox()?;
     if let Some(token) = postmark_token()? {
         let from = std::env::var("POSTMARK_FROM").map_err(|_| AppError::Unavailable)?;
@@ -363,7 +376,7 @@ mod tests {
         input.mensaje = "x".repeat(2001);
         assert!(input.validate().is_err());
         input = sample();
-        input.servicio = "inventado".into();
+        input.servicio = "Servicio\r\nBcc: injected@example.invalid".into();
         assert!(input.validate().is_err());
     }
     #[test]

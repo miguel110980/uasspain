@@ -133,19 +133,33 @@ pub async fn download(
     if !valid_private_path(&path) {
         return Err(AppError::NotFound);
     }
-    if claims.role == "alumno" {
-        let allowed: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM materiales_material m WHERE m.archivo_path=$1 AND m.activo=TRUE AND NOT EXISTS (SELECT 1 FROM materiales_permisoaccesomaterial p WHERE p.alumno_id=$2 AND p.permitido=FALSE AND (p.material_id=m.id OR (p.material_id IS NULL AND p.categoria=m.categoria))))",
-        )
-        .bind(&path)
-        .bind(claims.profile_id)
-        .fetch_one(state.pool.as_ref().ok_or(AppError::Unavailable)?)
-        .await?;
+    require_role(&claims, &["admin", "instructor", "alumno"])?;
+    if claims.role != "admin" {
+        let statement = format!(
+            "SELECT EXISTS(SELECT 1 FROM materiales_material m WHERE \
+             (m.archivo_path=$1 OR (m.archivo_path='' AND \
+               regexp_replace(split_part(m.archivo_url,'?',1),'^https?://[^/]+','','i') \
+                 IN ('/api/media/' || $1, '/media/' || $1))) \
+             AND {} AND ($3::text<>'alumno' OR (m.activo AND NOT EXISTS \
+               (SELECT 1 FROM materiales_permisoaccesomaterial p WHERE p.alumno_id=$2 \
+                 AND NOT p.permitido AND (p.material_id=m.id OR \
+                   (p.material_id IS NULL AND p.categoria=m.categoria)))))) \
+             OR ($3::text<>'alumno' AND EXISTS(SELECT 1 FROM examenes_archivoexamen a WHERE \
+               (a.archivo_path=$1 OR (a.archivo_path='' AND \
+                 regexp_replace(split_part(a.archivo_url,'?',1),'^https?://[^/]+','','i') \
+                   IN ('/api/media/' || $1, '/media/' || $1))) AND {}))",
+            crate::academic_scope::resource_scope("m", "subido_por_id", 3, 2),
+            crate::academic_scope::resource_scope("a", "subido_por_id", 3, 2)
+        );
+        let allowed: bool = sqlx::query_scalar(&statement)
+            .bind(&path)
+            .bind(claims.profile_id)
+            .bind(&claims.role)
+            .fetch_one(state.pool.as_ref().ok_or(AppError::Unavailable)?)
+            .await?;
         if !allowed {
             return Err(AppError::NotFound);
         }
-    } else {
-        require_role(&claims, &["admin", "instructor"])?;
     }
     let root = media_root().await?;
     let canonical = fs::canonicalize(root.join(&path))
@@ -188,7 +202,7 @@ pub async fn download(
         .map_err(|_| AppError::Internal)
 }
 
-fn valid_private_path(path: &str) -> bool {
+pub(crate) fn valid_private_path(path: &str) -> bool {
     path.starts_with("uploads/")
         && path.len() <= 160
         && !path.split('/').any(|part| {

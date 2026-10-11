@@ -1,63 +1,17 @@
 import React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import contentService from '@/services/contentService';
+import { SERVICE_ICONS } from '@/lib/serviceIcons';
 import { Link } from 'react-router-dom';
 import useScrollReveal from '@/hooks/useScrollReveal';
-import { Shield, Siren, Camera, Radio, SprayCan, ScanLine, Thermometer, ArrowRight } from 'lucide-react';
+import { Shield, ArrowRight } from 'lucide-react';
 
-const services = [
-  {
-    icon: Siren,
-    title: 'Emergencias',
-    desc: 'Soporte aéreo crítico para Fuerzas y Cuerpos de Seguridad, equipos de emergencias y Protección Civil con drones de despliegue inmediato.',
-    coord: '40.4168° N',
-    href: '/servicios/emergencias',
-  },
-  {
-    icon: Shield,
-    title: 'Seguridad',
-    desc: 'Vigilancia aérea perimetral con cámaras térmicas y ópticas, asesoramiento conforme a normativa AESA y experiencia en unidades especiales.',
-    coord: '38.3452° N',
-    href: '/servicios/seguridad',
-  },
-  {
-    icon: Radio,
-    title: 'Radiofonista',
-    desc: 'Formación práctica en comunicaciones radiofónicas para operadores de drones, con simulación real de escenarios y fraseología aeronáutica.',
-    coord: '41.3851° N',
-    href: '/servicios/radiofonista',
-  },
-  {
-    icon: Camera,
-    title: 'Audiovisuales',
-    desc: 'Imágenes aéreas de máxima resolución para proyectos creativos, corporativos y técnicos. Perspectivas únicas desde el aire.',
-    coord: '37.3891° N',
-    href: '/servicios/audiovisuales',
-  },
-  {
-    icon: SprayCan,
-    title: 'Fumigación',
-    desc: 'Pulverización agrícola de precisión con drones, reduciendo hasta un 90% el consumo de productos fitosanitarios y optimizando cada hectárea.',
-    coord: '39.4699° N',
-    href: '/servicios/fumigacion',
-  },
-  {
-    icon: ScanLine,
-    title: 'Inspección',
-    desc: 'Inspección técnica de infraestructuras e instalaciones con drones de alta precisión, sin riesgos para el personal y sin interrumpir la operación.',
-    coord: '36.7213° N',
-    href: '/servicios/inspeccion',
-  },
-  {
-    icon: Thermometer,
-    title: 'Termografía',
-    desc: 'Inspección térmica aérea con cámaras de alta sensibilidad para detectar anomalías invisibles en instalaciones eléctricas, solares y edificios.',
-    coord: '39.5717° N',
-    href: '/servicios/termografia',
-  },
-];
+
 
 function ServiceCard({ service }) {
   return (
     <div
+      data-service-id={service.id}
       className="group relative p-8 glass-card hover:border-primary/30 transition-all duration-500 overflow-hidden"
     >
       {/* Coord label */}
@@ -94,10 +48,13 @@ function ServiceCard({ service }) {
 }
 
 export default function ServicesSection() {
+  const { data: managedServices = [], isError, refetch } = useQuery({ queryKey: ['public', 'services'], queryFn: contentService.publicServices, staleTime: 0 });
+  const services = managedServices.map(service => ({ ...service, icon: SERVICE_ICONS[service.icon] || Shield, desc: service.short_description, coord: service.coordinate, href: service.action_href || '/servicios/' + service.slug }));
   const { ref, isVisible } = useScrollReveal(0.05);
 
   return (
     <section id="servicios" className="relative py-24 md:py-32 bg-background overflow-hidden">
+      {isError && <p role="alert" className="text-center text-sm text-muted-foreground">No se pudieron actualizar los servicios. <button onClick={() => void refetch()} className="text-primary">Reintentar</button></p>}
       {/* Subtle grid bg */}
       <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
         style={{
@@ -128,7 +85,7 @@ export default function ServicesSection() {
         {/* Grid */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {services.map((service) => (
-            <ServiceCard key={service.title} service={service} />
+            <ServiceCard key={service.id} service={service} />
           ))}
         </div>
       </div>

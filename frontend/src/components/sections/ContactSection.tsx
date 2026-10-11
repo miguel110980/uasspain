@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import contentService from '@/services/contentService';
 import { motion } from 'framer-motion';
 import { useTheme } from 'next-themes';
 import useScrollReveal from '@/hooks/useScrollReveal';
@@ -10,9 +12,7 @@ import { Send, MapPin, Phone, Mail, Facebook, Instagram } from 'lucide-react';
 import { sanitizeInput, sanitizePayload, type SanitizeKind } from '@/lib/sanitize';
 import { extractErrorMessage } from '@/lib/errors';
 import { sendContactMessage } from '@/services/contactService';
-import { corporateContactEmail, contactServices, contactField } from '@/lib/contactConfig';
-
-const serviceOptions = contactServices;
+import { corporateContactEmail, contactField } from '@/lib/contactConfig';
 
 const CONTACT_SCHEMA = {
   nombre: 'text',
@@ -42,6 +42,8 @@ const EMPTY_FORM = {
 };
 
 export default function ContactSection({ skipReveal = false }) {
+  const { data: services = [] } = useQuery({ queryKey: ['public', 'services'], queryFn: contentService.publicServices, staleTime: 0 });
+  const serviceOptions = [...services.map(service => service.title), 'Otro'];
   const { ref, isVisible } = useScrollReveal(0.1);
   const show = skipReveal || isVisible;
   const { resolvedTheme } = useTheme();

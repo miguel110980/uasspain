@@ -57,34 +57,6 @@ export const ROUTE_SEO = {
     description: 'Establece una nueva contraseña para acceder a tu cuenta de formación UASSPAIN.',
     noindex: true,
   },
-  '/servicios/seguridad': {
-    title: 'Servicios de Seguridad con Drones | UASSPAIN',
-    description: 'Vigilancia, patrullas aéreas y seguridad perimetral con sistemas UAS profesionales.',
-  },
-  '/servicios/emergencias': {
-    title: 'Drones en Emergencias | UASSPAIN',
-    description: 'Apoyo en emergencias, búsqueda, rescate y gestión de crisis con drones especializados.',
-  },
-  '/servicios/audiovisuales': {
-    title: 'Producción Audiovisual con Drones | UASSPAIN',
-    description: 'Grabación aérea, eventos y contenido audiovisual con operadores certificados.',
-  },
-  '/servicios/radiofonista': {
-    title: 'Formación Radiofonista Drones | UASSPAIN',
-    description: 'Curso de comunicaciones radiofónicas para operadores de drones según normativa AESA.',
-  },
-  '/servicios/fumigacion': {
-    title: 'Fumigación con Drones | UASSPAIN',
-    description: 'Tratamientos agrícolas de precisión con drones certificados para agricultura profesional.',
-  },
-  '/servicios/inspeccion': {
-    title: 'Inspección Industrial con Drones | UASSPAIN',
-    description: 'Inspecciones visuales y técnicas de infraestructuras, energía e industria con UAS.',
-  },
-  '/servicios/termografia': {
-    title: 'Termografía Aérea con Drones | UASSPAIN',
-    description: 'Análisis termográfico de placas solares, edificios e instalaciones industriales con drones.',
-  },
 };
 
 export function getSeoForPath(pathname) {

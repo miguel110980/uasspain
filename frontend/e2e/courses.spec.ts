@@ -176,7 +176,12 @@ test('course management updates the catalog, stable URL and ordered topics in re
     await expect(publicPage.getByRole('navigation', { name: 'Navegación principal' }).getByRole('link', { name: `${name} actualizado`, exact: true })).toHaveCount(0);
     id = undefined;
   } finally {
-    if (id) await page.request.delete(`/api/admin/courses/${id}`, { headers: { 'X-UASSpain-Window-ID': await page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || '') } });
+    if (id) {
+      const headers = { 'X-UASSpain-Window-ID': await page.evaluate(() => sessionStorage.getItem('uasspain.window_session_id') || '') };
+      const courses = await (await page.request.get('/api/admin/courses', { headers })).json();
+      const course = courses.find(item => item.id === id);
+      if (course) await page.request.delete(`/api/admin/courses/${id}`, { headers: { ...headers, 'If-Match': String(course.version) } });
+    }
     await publicPage.close();
     await catalogPage.close();
   }

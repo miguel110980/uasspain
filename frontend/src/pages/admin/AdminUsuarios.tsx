@@ -11,6 +11,7 @@ import materialesService from '@/services/materialesService';
 import { extractErrorMessage } from '@/lib/errors';
 import { useToast } from '@/components/ui/use-toast';
 import { getRoles, hasRole, profileHasAdmin, profileHasInstructor } from '@/lib/roles';
+import { loadResources } from '@/lib/loadResources';
 import type { AssignableInstructor } from '@/types/api';
 
 const instructorLabel = (instructor: AssignableInstructor) => `${`${instructor.nombre} ${instructor.apellidos}`.trim() || 'Instructor'} · ${instructor.username ? `@${instructor.username}` : instructor.id}`;
@@ -54,6 +55,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
   const [editUser, setEditUser] = useState(null);
   const [instructors, setInstructors] = useState<AssignableInstructor[]>([]);
   const [loadError, setLoadError] = useState('');
+  const [studentTotals, setStudentTotals] = useState<Record<string, number> | null>(null);
   const [assignmentErrors, setAssignmentErrors] = useState<Record<string, string>>({});
   const loadVersion = useRef(0);
   const pendingAssignments = useRef(new Set<string>());
@@ -63,16 +65,16 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
     const version = ++loadVersion.current;
     if (!silent) setLoading(true);
     try {
-      const [data, options] = await Promise.all([
-        authService.listProfiles('-created_date', 500),
-        allowInstructorAssignment ? authService.listInstructors() : Promise.resolve([]),
-      ]);
+      const { values, failed } = await loadResources({
+        Alumnos: () => authService.listProfiles('-created_date', scopeRole === 'alumno' ? 10_000 : 500, scopeRole ? { role: scopeRole } : {}),
+        Instructores: () => allowInstructorAssignment ? authService.listInstructors() : Promise.resolve([]),
+        Totales: () => scopeRole === 'alumno' ? authService.dashboardCounts() : Promise.resolve(null),
+      });
       if (version !== loadVersion.current) return;
-      setProfiles(scopeRole ? data.filter((p) => {
-        return hasRole(p, scopeRole);
-      }) : data);
-      setInstructors(options);
-      setLoadError('');
+      if (values.Alumnos) setProfiles(scopeRole ? values.Alumnos.filter(p => hasRole(p, scopeRole)) : values.Alumnos);
+      if (values.Instructores) setInstructors(values.Instructores);
+      if (values.Totales) setStudentTotals(values.Totales);
+      setLoadError(failed.length ? `No se pudieron actualizar: ${failed.join(', ')}. Se conservan los últimos datos disponibles.` : '');
     } catch (error) {
       if (version === loadVersion.current) setLoadError(extractErrorMessage(error, 'No se pudieron cargar los alumnos e instructores.'));
     } finally {
@@ -137,6 +139,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
     try {
       const updated = await authService.updateProfile(id, { status });
       setProfiles((prev) => prev.map((p) => (String(p.id) === String(updated.id) ? { ...p, ...updated } : p)));
+      if (scopeRole === 'alumno') await load(true);
     } catch (err) {
       toast({ title: 'Error al cambiar estado', description: extractErrorMessage(err), variant: 'destructive' });
     } finally {
@@ -168,11 +171,11 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
   const counts = useMemo(() => {
     if (scopeRole === 'alumno') {
       return {
-        total: profiles.length,
-        activo: profiles.filter((p) => p.status === 'activo').length,
-        pendiente: profiles.filter((p) => p.status === 'pendiente').length,
-        bloqueado: profiles.filter((p) => p.status === 'bloqueado').length,
-        rechazado: profiles.filter((p) => p.status === 'rechazado').length,
+        total: studentTotals?.students ?? '—',
+        activo: studentTotals?.active_students ?? '—',
+        pendiente: studentTotals?.pending_students ?? '—',
+        bloqueado: studentTotals?.blocked_students ?? '—',
+        rechazado: studentTotals?.rejected_students ?? '—',
       };
     }
     return {
@@ -182,7 +185,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
       admin: profiles.filter((p) => profileHasAdmin(p) && p.status === 'activo').length,
       pendiente: profiles.filter((p) => p.status === 'pendiente').length,
     };
-  }, [profiles, scopeRole]);
+  }, [profiles, scopeRole, studentTotals]);
 
   const exportCSV = () => {
     const headers = ['Nombre', 'Apellidos', 'Email', 'Usuario', 'Rol', 'Estado', 'Alta'];

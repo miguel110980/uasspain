@@ -6,6 +6,7 @@ import materialesService from '@/services/materialesService';
 import { useToast } from '@/components/ui/use-toast';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { getSafeUrl } from '@/lib/sanitize';
+import { loadResources } from '@/lib/loadResources';
 
 const CATEGORIAS = ['A1/A3', 'A2', 'STS', 'Radiofonista'];
 
@@ -54,12 +55,13 @@ export default function InstructorMaterial() {
     setLoading(true);
     setLoadError('');
     try {
-      const [mats, pubs] = await Promise.all([
-        materialesService.materiales.list('-orden'),
-        materialesService.publicacionesBoe.list('-fecha_publicacion'),
-      ]);
-      setMateriales(mats);
-      setPublicaciones(pubs);
+      const { values, failed } = await loadResources({
+        Materiales: () => materialesService.materiales.list('-orden'),
+        BOE: () => materialesService.publicacionesBoe.list('-fecha_publicacion'),
+      });
+      if (values.Materiales) setMateriales(values.Materiales);
+      if (values.BOE) setPublicaciones(values.BOE);
+      setLoadError(failed.length ? `No se pudieron actualizar: ${failed.join(', ')}. Se conservan los últimos datos disponibles.` : '');
     } catch {
       setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');
     } finally {
@@ -79,7 +81,11 @@ export default function InstructorMaterial() {
         titulo: formMaterial.titulo,
         descripcion: formMaterial.descripcion,
         categoria: formMaterial.categoria,
+        tipo: 'pdf',
         archivo_url: uploadRes.file_url || uploadRes.absolute_url,
+        archivo_path: uploadRes.path,
+        archivo_content_type: uploadRes.content_type,
+        archivo_tamano: uploadRes.size,
         archivo_nombre_original: uploadRes.original_name || formMaterial.archivo.name,
         archivo_sha256: uploadRes.sha256 || '',
         orden: materiales.filter((m) => m.categoria === formMaterial.categoria).length,
@@ -87,6 +93,7 @@ export default function InstructorMaterial() {
 
       setFormMaterial({ titulo: '', descripcion: '', categoria: 'A1/A3', archivo: null });
       await loadData();
+      window.dispatchEvent(new Event('uasspain:academic-resources-changed'));
       toast({ title: 'Material subido', description: 'El archivo se ha guardado correctamente.' });
     } catch (err) {
       console.error('Error subiendo material:', err);

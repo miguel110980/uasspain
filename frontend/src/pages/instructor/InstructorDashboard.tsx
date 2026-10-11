@@ -88,7 +88,7 @@ export default function InstructorDashboard({ profiles, resultados, loading, cou
 
       <p className="text-xs text-muted-foreground">Las gráficas muestran los últimos {resultados.length} resultados y {alumnos.length} alumnos cargados.</p>
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="glass-card p-5 lg:col-span-2">
+        <div className="glass-card min-w-0 p-5 lg:col-span-2">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Actividad (7 días)</h3>
           <p className="text-xs text-muted-foreground mb-4">Exámenes realizados y altas por día</p>
           <ResponsiveContainer width="100%" height={240}>
@@ -113,7 +113,7 @@ export default function InstructorDashboard({ profiles, resultados, loading, cou
           </ResponsiveContainer>
         </div>
 
-        <div className="glass-card p-5">
+        <div className="glass-card min-w-0 p-5">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Aprobación</h3>
           <p className="text-xs text-muted-foreground mb-4">Aprobados vs suspendidos</p>
           <ResponsiveContainer width="100%" height={240}>
@@ -135,7 +135,7 @@ export default function InstructorDashboard({ profiles, resultados, loading, cou
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="glass-card p-5 lg:col-span-2">
+        <div className="glass-card min-w-0 p-5 lg:col-span-2">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1">Resultados por categoría</h3>
           <p className="text-xs text-muted-foreground mb-4">Realizados vs aprobados</p>
           <ResponsiveContainer width="100%" height={220}>
@@ -150,7 +150,7 @@ export default function InstructorDashboard({ profiles, resultados, loading, cou
           </ResponsiveContainer>
         </div>
 
-        <div className="glass-card p-5">
+        <div className="glass-card min-w-0 p-5">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary" /> Actividad reciente
           </h3>

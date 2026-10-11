@@ -123,8 +123,7 @@ function createTransport(url: string): Subscription {
       return;
     }
     try {
-      // A closed socket may have outlived the access cookie. The HTTP client
-      // renews it using the HttpOnly refresh cookie before the next handshake.
+      // Revalidate this tab before reconnecting; this lookup never renews activity.
       if (failures) await apiClient.get(endpoints.auth.me);
       if (closed) return;
       const current = new WebSocket(windowBoundUrl(url));
@@ -144,9 +143,15 @@ function createTransport(url: string): Subscription {
         if (data?.type === 'resync_required') emit({ type: 'poll' });
         else emit({ type: 'ws', data });
       };
-      current.onclose = () => {
+      current.onclose = (event) => {
         if (current !== ws) return;
         ws = null;
+        if (event?.code === 1008) {
+          closed = true;
+          for (const listener of listeners) clearInterval(listener.timer);
+          void apiClient.get(endpoints.auth.me).catch(() => {});
+          return;
+        }
         scheduleReconnect();
       };
       current.onerror = () => current.close();

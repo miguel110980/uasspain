@@ -77,19 +77,20 @@ pub async fn list_materials(
     Query(query): Query<MaterialQuery>,
 ) -> Result<Json<Vec<Value>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    let rows = sqlx::query_scalar::<_, Value>(
+    let rows = sqlx::query_scalar::<_, Value>(&format!(
         "SELECT to_jsonb(m) FROM materiales_material m WHERE \
          ($1::text IS NULL OR m.categoria = $1) AND ($2::text IS NULL OR m.tipo = $2) \
          AND ($3::boolean IS NULL OR m.activo = $3) AND \
-         ($4::boolean = FALSE OR NOT EXISTS (SELECT 1 FROM materiales_permisoaccesomaterial p \
+         ($4::text <> 'alumno' OR (m.activo AND NOT EXISTS (SELECT 1 FROM materiales_permisoaccesomaterial p \
            WHERE p.alumno_id = $5 AND p.permitido = FALSE AND \
-           (p.material_id = m.id OR (p.material_id IS NULL AND p.categoria = m.categoria)))) \
-         ORDER BY m.orden, m.created_date DESC LIMIT $6",
-    )
+           (p.material_id = m.id OR (p.material_id IS NULL AND p.categoria = m.categoria))))) \
+         AND {} ORDER BY m.orden, m.created_date DESC LIMIT $6",
+        crate::academic_scope::resource_scope("m", "subido_por_id", 4, 5)
+    ))
     .bind(query.categoria.as_deref())
     .bind(query.tipo.as_deref())
     .bind(query.activo)
-    .bind(claims.role == "alumno")
+    .bind(&claims.role)
     .bind(claims.profile_id)
     .bind(limit(query.limit))
     .fetch_all(pool(&state)?)
@@ -104,6 +105,13 @@ pub async fn create_material(
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     let claims = staff(&state, &headers)?;
     validate_material(&input)?;
+    ensure_file_scope(
+        pool(&state)?,
+        &claims,
+        &input.archivo_path,
+        &input.archivo_url,
+    )
+    .await?;
     let row = sqlx::query_scalar::<_, Value>(
         "INSERT INTO materiales_material (id, created_date, updated_date, titulo, descripcion, \
          categoria, tipo, archivo_url, archivo_path, archivo_nombre_original, archivo_content_type, \
@@ -138,8 +146,17 @@ pub async fn material_detail(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    let row = sqlx::query_scalar::<_, Value>("SELECT to_jsonb(m) FROM materiales_material m WHERE m.id=$1 AND ($2::boolean=FALSE OR NOT EXISTS (SELECT 1 FROM materiales_permisoaccesomaterial p WHERE p.alumno_id=$3 AND p.permitido=FALSE AND (p.material_id=m.id OR (p.material_id IS NULL AND p.categoria=m.categoria))))")
-        .bind(id).bind(claims.role == "alumno").bind(claims.profile_id).fetch_optional(pool(&state)?).await?.ok_or(AppError::NotFound)?;
+    let statement = format!(
+        "SELECT to_jsonb(m) FROM materiales_material m WHERE m.id=$1 AND ($2::text<>'alumno' OR (m.activo AND NOT EXISTS (SELECT 1 FROM materiales_permisoaccesomaterial p WHERE p.alumno_id=$3 AND NOT p.permitido AND (p.material_id=m.id OR (p.material_id IS NULL AND p.categoria=m.categoria))))) AND {}",
+        crate::academic_scope::resource_scope("m", "subido_por_id", 2, 3)
+    );
+    let row = sqlx::query_scalar::<_, Value>(&statement)
+        .bind(id)
+        .bind(&claims.role)
+        .bind(claims.profile_id)
+        .fetch_optional(pool(&state)?)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(Json(row))
 }
 
@@ -149,7 +166,17 @@ pub async fn update_material(
     Path(id): Path<Uuid>,
     Json(input): Json<MaterialPatch>,
 ) -> Result<Json<Value>, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    crate::academic_scope::staff_resource(pool(&state)?, &claims, "material", id, false).await?;
+    if input.archivo_path.is_some() || input.archivo_url.is_some() {
+        ensure_file_scope(
+            pool(&state)?,
+            &claims,
+            input.archivo_path.as_deref().unwrap_or(""),
+            input.archivo_url.as_deref().unwrap_or(""),
+        )
+        .await?;
+    }
     validate_material_patch(&input)?;
     let size = input
         .archivo_tamano
@@ -179,7 +206,8 @@ pub async fn delete_material(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    staff(&state, &headers)?;
+    let claims = staff(&state, &headers)?;
+    crate::academic_scope::staff_resource(pool(&state)?, &claims, "material", id, false).await?;
     delete(pool(&state)?, "materiales_material", id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -481,6 +509,10 @@ pub async fn create_permission(
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     let claims = staff(&state, &headers)?;
     ensure_assigned_student(&state, &claims, input.alumno_id).await?;
+    if let Some(material) = input.material_id {
+        crate::academic_scope::staff_resource(pool(&state)?, &claims, "material", material, false)
+            .await?;
+    }
     let row = sqlx::query_scalar::<_, Value>("INSERT INTO materiales_permisoaccesomaterial (id, created_date, updated_date, alumno_id, material_id, categoria, permitido, motivo, concedido_por_id) VALUES ($1, NOW(), NOW(), $2, $3, $4, $5, $6, $7) RETURNING to_jsonb(materiales_permisoaccesomaterial) || jsonb_build_object('alumno_id', alumno_id, 'material_id', material_id)")
         .bind(Uuid::new_v4()).bind(input.alumno_id).bind(input.material_id).bind(input.categoria)
         .bind(input.permitido.unwrap_or(true)).bind(input.motivo).bind(claims.profile_id).fetch_one(pool(&state)?).await?;
@@ -504,6 +536,18 @@ pub async fn update_permission(
     Json(input): Json<PermissionPatch>,
 ) -> Result<Json<Value>, AppError> {
     let claims = staff(&state, &headers)?;
+    let (student, material): (Uuid, Option<Uuid>) = sqlx::query_as(
+        "SELECT alumno_id,material_id FROM materiales_permisoaccesomaterial WHERE id=$1",
+    )
+    .bind(id)
+    .fetch_optional(pool(&state)?)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    ensure_assigned_student(&state, &claims, student).await?;
+    for material in [material, input.material_id].into_iter().flatten() {
+        crate::academic_scope::staff_resource(pool(&state)?, &claims, "material", material, false)
+            .await?;
+    }
     let row=sqlx::query_scalar::<_,Value>("UPDATE materiales_permisoaccesomaterial SET material_id=COALESCE($2,material_id),categoria=COALESCE($3,categoria),permitido=COALESCE($4,permitido),motivo=COALESCE($5,motivo),updated_date=NOW() WHERE id=$1 AND ($6='admin' OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=alumno_id AND p.assigned_instructor_id=$7)) RETURNING to_jsonb(materiales_permisoaccesomaterial)||jsonb_build_object('alumno_id',alumno_id,'material_id',material_id)").bind(id).bind(input.material_id).bind(input.categoria).bind(input.permitido).bind(input.motivo).bind(&claims.role).bind(claims.profile_id).fetch_optional(pool(&state)?).await?.ok_or(AppError::NotFound)?;
     Ok(Json(row))
 }
@@ -574,6 +618,40 @@ fn validate_url(value: &str) -> Result<(), AppError> {
         Err(AppError::Validation("URL no vÃ¡lida.".to_owned()))
     }
 }
+pub(crate) async fn ensure_file_scope(
+    pool: &PgPool,
+    claims: &Claims,
+    path: &str,
+    url: &str,
+) -> Result<(), AppError> {
+    // A new record must not turn a known foreign private file into an owned resource.
+    let statement = format!(
+        "SELECT EXISTS(SELECT 1 FROM materiales_material m WHERE NOT {} AND \
+         ((NULLIF($1::text,'') IS NOT NULL AND m.archivo_path=$1) OR \
+          (regexp_replace(split_part($2::text,'?',1),'^https?://[^/]+','','i') ~ '^(/api)?/media/uploads/' AND \
+           regexp_replace(regexp_replace(split_part(m.archivo_url,'?',1),'^https?://[^/]+','','i'),'^(/api)?/media/','')= \
+           regexp_replace(regexp_replace(split_part($2,'?',1),'^https?://[^/]+','','i'),'^(/api)?/media/','')))) \
+         OR EXISTS(SELECT 1 FROM examenes_archivoexamen a WHERE NOT {} AND \
+         ((NULLIF($1::text,'') IS NOT NULL AND a.archivo_path=$1) OR \
+          (regexp_replace(split_part($2::text,'?',1),'^https?://[^/]+','','i') ~ '^(/api)?/media/uploads/' AND \
+           regexp_replace(regexp_replace(split_part(a.archivo_url,'?',1),'^https?://[^/]+','','i'),'^(/api)?/media/','')= \
+           regexp_replace(regexp_replace(split_part($2,'?',1),'^https?://[^/]+','','i'),'^(/api)?/media/',''))))",
+        crate::academic_scope::resource_scope("m", "subido_por_id", 3, 4),
+        crate::academic_scope::resource_scope("a", "subido_por_id", 3, 4)
+    );
+    let foreign: bool = sqlx::query_scalar(&statement)
+        .bind(path)
+        .bind(url)
+        .bind(&claims.role)
+        .bind(claims.profile_id)
+        .fetch_one(pool)
+        .await?;
+    if foreign {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
 fn staff(state: &AppState, headers: &HeaderMap) -> Result<Claims, AppError> {
     let claims = authenticate(state, headers, "access")?;
     require_role(&claims, &["admin", "instructor"])?;

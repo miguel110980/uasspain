@@ -2,7 +2,7 @@
 param(
     [switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser, [switch]$FrontendOnly, [switch]$SecureBrowser,
     [switch]$PreserveVolumes,
-    [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'sessions', 'realtime', 'concurrent', 'private')]
+    [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'content', 'instructor', 'sessions', 'realtime', 'concurrent', 'private')]
     [string[]]$BrowserScope = @('all')
 )
 
@@ -247,6 +247,18 @@ try {
     & node (Join-Path $Root 'scripts/e2e/e2e-courses.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de cursos E2E fallo' }
 
+    Write-Host '==> Validando servicios y sincronizacion de contenido'
+    & node (Join-Path $Root 'scripts/e2e/e2e-content.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de contenido E2E fallo' }
+
+    Write-Host '==> Validando accesos academicos, historicos y aislamiento de instructores'
+    & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a accesos academicos E2E fallo' }
+    & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'readiness previa a accesos academicos E2E fallo' }
+    & node (Join-Path $Root 'scripts/e2e/e2e-instructor-access.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de accesos academicos E2E fallo' }
+
     function Invoke-Operations {
         param([string]$Mode, [string[]]$FixtureArguments = @())
         & $Docker run --rm --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true `
@@ -312,12 +324,14 @@ try {
         # Each group uses the unchanged production login limit. A backend restart
         # between groups isolates test traffic instead of weakening that limit.
         $BrowserGroups = @(
-            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@session-regression|@realtime-regression|@concurrent-regression|@private-channel-regression|@private-chat-measurement|staff-presence-video.spec|student-assignment.spec') },
+            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@content-module|@instructor-access|@session-regression|@realtime-regression|@concurrent-regression|@private-channel-regression|@private-chat-measurement|staff-presence-video.spec|student-assignment.spec') },
             @{ Key = 'chat'; Label = 'chat bidireccional'; Arguments = @('panels.spec.ts', '--grep', 'chat messages appear bidirectionally') },
             @{ Key = 'presence'; Label = 'presencia y videollamada'; Arguments = @('staff-presence-video.spec.ts') },
             @{ Key = 'assignments'; Label = 'asignación de alumnos'; Arguments = @('student-assignment.spec.ts') },
             @{ Key = 'modals'; Label = 'modales y datos'; Arguments = @('--grep', '@panel-modals') },
             @{ Key = 'courses'; Label = 'cursos'; Arguments = @('--grep', '@course-module') },
+            @{ Key = 'content'; Label = 'servicios y sincronizacion de contenido'; Arguments = @('--grep', '@content-module') },
+            @{ Key = 'instructor'; Label = 'permisos academicos y sincronizacion'; Arguments = @('--grep', '@instructor-access') },
             @{ Key = 'sessions'; Label = 'persistencia y recuperación de sesión'; Arguments = @('--grep', '@session-regression') },
             @{ Key = 'realtime'; Label = 'chat y medios en tiempo real'; Arguments = @('--grep', '@realtime-regression') },
             @{ Key = 'concurrent'; Label = 'paneles simultaneos y 50 ventanas'; Arguments = @('--grep', '@concurrent-regression') },

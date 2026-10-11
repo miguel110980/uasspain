@@ -34,52 +34,51 @@ pub async fn list(
 ) -> Result<Json<Value>, AppError> {
     let claims = staff(&state, &headers)?;
     let pool = pool(&state)?;
-    let student = student_for_staff(pool, &claims, student_id).await?;
+    let student = student_for_staff(pool, &claims, student_id, false).await?;
 
-    let materials = sqlx::query_scalar::<_, Value>(
+    let materials = sqlx::query_scalar::<_, Value>(&format!(
         "SELECT jsonb_build_object(\
-             'id', m.id, 'titulo', m.titulo, 'categoria', m.categoria, 'tipo', m.tipo, \
-             'acceso', COALESCE(exact.permitido, category.permitido, TRUE)) \
+             'id', m.id, 'titulo', m.titulo, 'descripcion', m.descripcion, \
+             'categoria', m.categoria, 'tipo', m.tipo, 'activo', m.activo, \
+             'created_date', m.created_date, 'curso', NULL, \
+             'acceso', m.activo AND NOT EXISTS(SELECT 1 FROM materiales_permisoaccesomaterial p \
+               WHERE p.alumno_id=$1 AND NOT p.permitido AND (p.material_id=m.id \
+                 OR (p.material_id IS NULL AND p.categoria=m.categoria))), \
+             'heredado', EXISTS(SELECT 1 FROM materiales_permisoaccesomaterial p \
+               WHERE p.alumno_id=$1 AND p.material_id IS NULL AND p.categoria=m.categoria AND NOT p.permitido)) \
          FROM materiales_material m \
-         LEFT JOIN LATERAL (\
-             SELECT p.permitido FROM materiales_permisoaccesomaterial p \
-             WHERE p.alumno_id=$1 AND p.material_id=m.id \
-             ORDER BY p.updated_date DESC, p.created_date DESC LIMIT 1\
-         ) exact ON TRUE \
-         LEFT JOIN LATERAL (\
-             SELECT p.permitido FROM materiales_permisoaccesomaterial p \
-             WHERE p.alumno_id=$1 AND p.material_id IS NULL AND p.categoria=m.categoria \
-             ORDER BY p.updated_date DESC, p.created_date DESC LIMIT 1\
-         ) category ON TRUE \
-         WHERE m.activo ORDER BY m.categoria, m.titulo",
-    )
+         WHERE {} ORDER BY m.categoria, m.titulo",
+        crate::academic_scope::resource_scope("m", "subido_por_id", 2, 3)
+    ))
     .bind(student_id)
+    .bind(&claims.role)
+    .bind(claims.profile_id)
     .fetch_all(pool)
     .await?;
 
-    let exams = sqlx::query_scalar::<_, Value>(
+    let exams = sqlx::query_scalar::<_, Value>(&format!(
         "SELECT jsonb_build_object(\
-             'id', e.id, 'nombre', e.nombre, 'categoria', e.categoria, \
-             'acceso', NOT COALESCE(exact.bloqueado, category.bloqueado, FALSE)) \
+             'id', e.id, 'nombre', e.nombre, 'descripcion', e.descripcion, \
+             'categoria', e.categoria, 'activo', e.activo, 'created_date', e.created_date, 'curso', NULL, \
+             'acceso', e.activo AND NOT EXISTS(SELECT 1 FROM examenes_bloqueoexamen b \
+               WHERE b.alumno_id=$1 AND b.bloqueado AND (b.fecha_inicio IS NULL OR b.fecha_inicio<=NOW()) \
+                 AND (b.fecha_fin IS NULL OR b.fecha_fin>NOW()) \
+                 AND (b.examen_id=e.id OR (b.examen_id IS NULL AND b.categoria=e.categoria))), \
+             'heredado', EXISTS(SELECT 1 FROM examenes_bloqueoexamen b \
+               WHERE b.alumno_id=$1 AND b.examen_id IS NULL AND b.categoria=e.categoria AND b.bloqueado \
+                 AND (b.fecha_inicio IS NULL OR b.fecha_inicio<=NOW()) AND (b.fecha_fin IS NULL OR b.fecha_fin>NOW()))) \
          FROM examenes_examen e \
-         LEFT JOIN LATERAL (\
-             SELECT b.bloqueado FROM examenes_bloqueoexamen b \
-             WHERE b.alumno_id=$1 AND b.examen_id=e.id \
-             ORDER BY b.updated_date DESC, b.created_date DESC LIMIT 1\
-         ) exact ON TRUE \
-         LEFT JOIN LATERAL (\
-             SELECT b.bloqueado FROM examenes_bloqueoexamen b \
-             WHERE b.alumno_id=$1 AND b.examen_id IS NULL AND b.categoria=e.categoria \
-             ORDER BY b.updated_date DESC, b.created_date DESC LIMIT 1\
-         ) category ON TRUE \
-         WHERE e.activo ORDER BY e.categoria, e.nombre",
-    )
+         WHERE {} ORDER BY e.categoria, e.nombre",
+        crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3)
+    ))
     .bind(student_id)
+    .bind(&claims.role)
+    .bind(claims.profile_id)
     .fetch_all(pool)
     .await?;
 
     Ok(Json(json!({
-        "alumno": {"id": student_id, "nombre": student.0, "apellidos": student.1},
+        "alumno": {"id": student_id, "nombre": state.cipher.decrypt(&student.0)?, "apellidos": state.cipher.decrypt(&student.1)?},
         "materiales": materials,
         "examenes": exams,
     })))
@@ -93,7 +92,31 @@ pub async fn toggle(
     let claims = staff(&state, &headers)?;
     let (student_id, item_type, item_id, access) = validate_toggle(&input)?;
     let mut transaction = pool(&state)?.begin().await?;
-    student_for_staff(&mut *transaction, &claims, student_id).await?;
+    student_for_staff(&mut *transaction, &claims, student_id, true).await?;
+    let (category, published) =
+        crate::academic_scope::staff_resource(&mut *transaction, &claims, item_type, item_id, true)
+            .await?;
+    if !published {
+        return Err(AppError::Validation("El recurso no está publicado.".into()));
+    }
+    let inherited_statement = match item_type {
+        "material" => {
+            "SELECT EXISTS(SELECT 1 FROM materiales_permisoaccesomaterial WHERE alumno_id=$1 AND material_id IS NULL AND categoria=$2 AND NOT permitido)"
+        }
+        _ => {
+            "SELECT EXISTS(SELECT 1 FROM examenes_bloqueoexamen WHERE alumno_id=$1 AND examen_id IS NULL AND categoria=$2 AND bloqueado AND (fecha_inicio IS NULL OR fecha_inicio<=NOW()) AND (fecha_fin IS NULL OR fecha_fin>NOW()))"
+        }
+    };
+    let inherited: bool = sqlx::query_scalar(inherited_statement)
+        .bind(student_id)
+        .bind(&category)
+        .fetch_one(&mut *transaction)
+        .await?;
+    if inherited {
+        return Err(AppError::Validation(
+            "El bloqueo heredado de categoría no se puede modificar individualmente.".into(),
+        ));
+    }
 
     // Serializa cambios sobre el mismo alumno/item. La tabla de permisos legacy no
     // posee una restriccion unica y un update_or_create concurrente podria duplicar filas.
@@ -106,12 +129,6 @@ pub async fn toggle(
 
     let (instance_id, action, model_name) = match item_type {
         "material" => {
-            let category: String =
-                sqlx::query_scalar("SELECT categoria FROM materiales_material WHERE id=$1")
-                    .bind(item_id)
-                    .fetch_optional(&mut *transaction)
-                    .await?
-                    .ok_or(AppError::NotFound)?;
             let existing: Option<Uuid> = sqlx::query_scalar(
                 "SELECT id FROM materiales_permisoaccesomaterial \
                  WHERE alumno_id=$1 AND material_id=$2 \
@@ -153,12 +170,6 @@ pub async fn toggle(
             (id, "toggle_acceso_material", "PermisoAccesoMaterial")
         }
         "examen" => {
-            let category: String =
-                sqlx::query_scalar("SELECT categoria FROM examenes_examen WHERE id=$1")
-                    .bind(item_id)
-                    .fetch_optional(&mut *transaction)
-                    .await?
-                    .ok_or(AppError::NotFound)?;
             let id = Uuid::new_v4();
             let saved_id: Uuid = sqlx::query_scalar(
                 "INSERT INTO examenes_bloqueoexamen \
@@ -166,7 +177,7 @@ pub async fn toggle(
                  VALUES ($1,NOW(),NOW(),$2,$3,$4,NULL,NULL,$5,$6,$7) \
                  ON CONFLICT (alumno_id,examen_id) WHERE examen_id IS NOT NULL DO UPDATE SET \
                  categoria=EXCLUDED.categoria,motivo=EXCLUDED.motivo,bloqueado=EXCLUDED.bloqueado,\
-                 creado_por_id=EXCLUDED.creado_por_id,updated_date=NOW() RETURNING id",
+                 creado_por_id=EXCLUDED.creado_por_id,fecha_inicio=NULL,fecha_fin=NULL,updated_date=NOW() RETURNING id",
             )
             .bind(id)
             .bind(category)
@@ -243,17 +254,20 @@ async fn student_for_staff<'e, E>(
     executor: E,
     claims: &Claims,
     student_id: Uuid,
+    lock: bool,
 ) -> Result<(String, String), AppError>
 where
     E: sqlx::Executor<'e, Database = Postgres>,
 {
-    let row: Option<(String, String, Option<Uuid>)> = sqlx::query_as(
+    let statement = format!(
         "SELECT nombre,apellidos,assigned_instructor_id FROM accounts_userprofile \
-         WHERE id=$1 AND (role='alumno' OR roles ? 'alumno')",
-    )
-    .bind(student_id)
-    .fetch_optional(executor)
-    .await?;
+         WHERE id=$1 AND (role='alumno' OR roles ? 'alumno'){}",
+        if lock { " FOR UPDATE" } else { "" }
+    );
+    let row: Option<(String, String, Option<Uuid>)> = sqlx::query_as(&statement)
+        .bind(student_id)
+        .fetch_optional(executor)
+        .await?;
     let (name, surname, assigned) = row.ok_or(AppError::NotFound)?;
     if claims.role == "instructor" && assigned != Some(claims.profile_id) {
         return Err(AppError::Forbidden);

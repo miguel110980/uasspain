@@ -77,6 +77,10 @@ impl EventBus {
     }
 
     pub async fn publish(&self, topic: impl Into<String>, payload: Value) {
+        self.publish_confirmed(topic, payload).await;
+    }
+
+    pub async fn publish_confirmed(&self, topic: impl Into<String>, payload: Value) -> bool {
         let event = BusEvent {
             instance_id: self.instance_id,
             topic: topic.into(),
@@ -84,10 +88,10 @@ impl EventBus {
         };
         let _ = self.local.send(event.clone());
         let Some(manager) = &self.manager else {
-            return;
+            return false;
         };
         let Ok(serialized) = serde_json::to_string(&event) else {
-            return;
+            return false;
         };
         let mut connection = manager.clone();
         let result = tokio::time::timeout(
@@ -100,7 +104,9 @@ impl EventBus {
         .await;
         if !matches!(result, Ok(Ok(_))) {
             self.connected.store(false, Ordering::Release);
+            return false;
         }
+        true
     }
 
     pub fn configured(&self) -> bool {

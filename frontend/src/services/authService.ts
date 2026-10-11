@@ -1,15 +1,16 @@
-import apiClient from '@/api/apiClient';
+import apiClient, { requestLogin } from '@/api/apiClient';
 import type { SystemStatusResponse } from '@/api/systemStatus';
 import type { AssignableInstructor } from '@/types/api';
 import { getRoles, panelRouteForUser, isBlockedStatus } from '@/lib/roles';
 import { endpoints } from '@/api/endpoints';
 import { collectClientMeta } from '@/lib/clientMeta';
 import { buildListParams, unwrapItem, unwrapList } from '@/api/queryParams';
-import { buildUrl, encodeFormBody } from '@/lib/urls';
+import { encodeFormBody } from '@/lib/urls';
 import { sanitizeInput, sanitizePayload, type SanitizeKind } from '@/lib/sanitize';
 import { INSTRUCTOR_SCHEMA } from '@/lib/sanitizeSchemas';
 import { queryClientInstance } from '@/lib/query-client';
 import { SESSION_QUERY_KEY } from '@/hooks/useSession';
+import { ensureBrowserContext } from '@/lib/windowSession';
 
 type LoginResult = {
   completed: boolean;
@@ -41,6 +42,7 @@ const publicUser = (data) => ({
   role: data.session_role || data.role || data.rol,
   roles: getRoles(data),
   session_role: data.session_role || '',
+  idle_expires_at: data.idle_expires_at,
   status: data.status,
   profile: data.profile ?? null,
 });
@@ -73,9 +75,16 @@ export const authService = {
   },
 
   async fetchMe(optional = false) {
-    const res = await apiClient.get(endpoints.auth.me, optional ? { params: { optional: true } } : undefined);
-    const data = unwrapItem(res);
-    return data == null ? null : publicUser(data);
+    try {
+      const res = await apiClient.get(endpoints.auth.me, optional ? { params: { optional: true } } : undefined);
+      const data = unwrapItem(res);
+      return data == null ? null : publicUser(data);
+    } catch (error) {
+      // A public tab may share cookies owned by another window. Optional lookup
+      // can show an anonymous visitor; protected requests still require login.
+      if (optional && error?.response?.status === 401) return null;
+      throw error;
+    }
   },
 
   /** @deprecated Preferir fetchMe() con useSession(). */
@@ -139,6 +148,7 @@ export const authService = {
   },
 
   async login(email: string, password: string, code?: string, sessionRole?: string): Promise<LoginResult> {
+    await ensureBrowserContext();
     const client_meta = await collectClientMeta();
     const raw = { email, password, ...(code ? { code } : {}), ...(sessionRole ? { session_role: sessionRole } : {}) };
     const body = sanitizePayload(raw, AUTH_SCHEMA);
@@ -155,6 +165,7 @@ export const authService = {
   },
 
   async loginWithGoogleCredential(credential) {
+    await ensureBrowserContext();
     const client_meta = await collectClientMeta();
     await apiClient.post(endpoints.auth.google, {
       id_token: credential,
@@ -235,16 +246,12 @@ export const authService = {
     } catch {
       // Ignorar errores al cerrar sesión (p. ej. token ya expirado).
     }
-    authService.invalidateSession();
+    queryClientInstance.clear();
     if (redirectUrl) window.location.href = redirectUrl;
   },
 
   redirectToLogin(nextUrl?: string, reason?: string) {
-    if (reason) authService.setAuthNotice(reason);
-    window.location.href = buildUrl('/', {
-      auth: 'login',
-      ...(nextUrl ? { from: nextUrl } : {}),
-    });
+    requestLogin(reason || '', nextUrl);
   },
 
   // --- Perfiles de usuario (UserProfile) ---

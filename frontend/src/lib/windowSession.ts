@@ -1,6 +1,27 @@
 const STORAGE_KEY = 'uasspain.window_session_id';
 const HANDOFF_KEY = 'uasspain.window_session_handoff';
+const OWNER_KEY = 'uasspain.window_owner';
+const OWNER_PREFIX = 'uasspain.tab:';
 let ready: Promise<string> | undefined;
+let contextReady: Promise<void> | undefined;
+
+/** Serialize first cookie creation across tabs; credentials remain HttpOnly. */
+export async function ensureBrowserContext(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  if (!contextReady) contextReady = (async () => {
+    const windowId = await ensureWindowSession();
+    const prepare = async () => {
+      const response = await fetch('/api/auth/context/', {
+        method: 'POST', credentials: 'include',
+        headers: { 'X-UASSpain-Window-Id': windowId },
+      });
+      if (!response.ok) throw new Error('No se pudo preparar el contexto de sesión.');
+    };
+    if (navigator.locks) await navigator.locks.request('uasspain.browser-context', prepare);
+    else await prepare();
+  })().catch(error => { contextReady = undefined; throw error; });
+  return contextReady;
+}
 
 /** Only a random window binding is readable by JS; JWTs stay in HttpOnly cookies. */
 export function ensureWindowSession(): Promise<string> {
@@ -8,6 +29,17 @@ export function ensureWindowSession(): Promise<string> {
   if (ready) return ready;
   ready = (async () => {
     let id = window.sessionStorage.getItem(STORAGE_KEY);
+    // sessionStorage is copied by window.open/duplicate. The browsing-context
+    // name survives reload but belongs to the original window, even while its
+    // old document releases a lock. Neither identifier is an auth credential.
+    let owner = window.sessionStorage.getItem(OWNER_KEY);
+    if (!owner || window.name !== OWNER_PREFIX + owner) {
+      owner = crypto.randomUUID();
+      window.name = OWNER_PREFIX + owner;
+      window.sessionStorage.setItem(OWNER_KEY, owner);
+      id = crypto.randomUUID();
+      window.sessionStorage.removeItem(HANDOFF_KEY);
+    }
     const handoff = window.sessionStorage.getItem(HANDOFF_KEY);
     window.sessionStorage.removeItem(HANDOFF_KEY);
     if (!id || !/^[a-f0-9-]{36}$/.test(id)) id = crypto.randomUUID();

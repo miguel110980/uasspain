@@ -27,6 +27,7 @@ const AdminChat = lazy(() => import('@/pages/admin/AdminChat'));
 const AdminCuenta = lazy(() => import('@/components/admin/AdminCuenta'));
 const AdminBlog = lazy(() => import('@/pages/admin/AdminBlog'));
 const AdminCursos = lazy(() => import('@/pages/admin/AdminCursos'));
+const AdminServicios = lazy(() => import('@/pages/admin/AdminServicios'));
 const StaffVideo = lazy(() => import('@/components/videollamada/StaffVideo'));
 
 import PanelSection from '@/components/ui/PanelSection';
@@ -60,6 +61,7 @@ const NAV_GROUPS = [
       { id: 'instructores', label: 'Instructores', icon: UserCheck },
       { id: 'blog', label: 'Blog / Publicaciones', icon: Newspaper },
       { id: 'cursos', label: 'Formación / Cursos', icon: BookOpen },
+      { id: 'servicios', label: 'Servicios', icon: Shield },
     ],
   },
   {
@@ -198,6 +200,7 @@ export default function AdminPanel() {
     instructores: <PanelSection><AdminInstructores /></PanelSection>,
     blog: <PanelSection><AdminBlog /></PanelSection>,
     cursos: <PanelSection><AdminCursos active={section === 'cursos'} /></PanelSection>,
+    servicios: <PanelSection><AdminServicios active={section === 'servicios'} /></PanelSection>,
     video: <PanelSection><StaffVideo role="admin" /></PanelSection>,
     monitorizacion: <PanelSection><AdminMonitorizacion /></PanelSection>,
     notificaciones: <PanelSection><AdminNotificaciones /></PanelSection>,

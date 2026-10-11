@@ -15,15 +15,7 @@ const quickLinks = [
   { label: 'Contacto', href: '/contacto' },
 ];
 
-const serviceLinks = [
-  { label: 'Emergencias', href: '/servicios/emergencias' },
-  { label: 'Seguridad', href: '/servicios/seguridad' },
-  { label: 'Radiofonista', href: '/servicios/radiofonista' },
-  { label: 'Audiovisuales', href: '/servicios/audiovisuales' },
-  { label: 'Fumigación', href: '/servicios/fumigacion' },
-  { label: 'Inspección', href: '/servicios/inspeccion' },
-  { label: 'Termografía', href: '/servicios/termografia' },
-];
+
 
 
 const legalLinks = [
@@ -38,6 +30,8 @@ const socialLinks = [
 ];
 
 export default function Footer() {
+  const { data: services = [] } = useQuery({ queryKey: ['public', 'services'], queryFn: contentService.publicServices, staleTime: 0 });
+  const serviceLinks = services.map(service => ({ label: service.title, href: '/servicios/' + service.slug }));
   const { data: courses = [] } = useQuery({ queryKey: ['public', 'courses'], queryFn: contentService.publicCourses, staleTime: 30_000, refetchInterval: 30_000 });
   const formacionLinks = [{ label: 'Todos los cursos', href: '/formacion' }, ...courses.map(course => ({ label: course.name, href: coursePath(course) }))];
   return (

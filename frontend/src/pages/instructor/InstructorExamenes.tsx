@@ -1,4 +1,5 @@
 import DataLoadNotice from '@/components/ui/DataLoadNotice';
+import { loadResources } from '@/lib/loadResources';
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Plus, Trash2, Loader2, Upload, FileText, Download, ExternalLink } from 'lucide-react';
@@ -34,6 +35,7 @@ export default function InstructorExamenes() {
   const cancelUploadRef = useRef(false);
   const abortRef = useRef(/** @type {AbortController | null} */ (null));
   const fileInputRef = useRef(null);
+  const loadVersion = useRef(0);
   const { toast } = useToast();
 
   const [formPregunta, setFormPregunta] = useState({
@@ -51,26 +53,26 @@ export default function InstructorExamenes() {
   });
 
   useEffect(() => {
-    loadData();
+    void loadData();
+    const refresh = () => { void loadData(true); };
+    window.addEventListener('focus', refresh);
+    return () => { loadVersion.current++; window.removeEventListener('focus', refresh); };
   }, []);
 
-  const loadData = async () => {
-    setLoading(true);
-    setLoadError('');
-    try {
-      const [exs, pregs, archs] = await Promise.all([
-        examenesService.examenes.list(),
-        examenesService.preguntas.list(),
-        examenesService.archivos.list(),
-      ]);
-      setExamenes(exs);
-      setPreguntas(pregs);
-      setArchivosExamen(archs);
-    } catch {
-      setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');
-    } finally {
-      setLoading(false);
-    }
+  const loadData = async (silent = false) => {
+    const request = ++loadVersion.current;
+    if (!silent) setLoading(true);
+    const { values, failed } = await loadResources({
+      Exámenes: () => examenesService.examenes.list(),
+      Preguntas: () => examenesService.preguntas.list(),
+      Archivos: () => examenesService.archivos.list(),
+    });
+    if (request !== loadVersion.current) return;
+    if (values.Exámenes) setExamenes(values.Exámenes);
+    if (values.Preguntas) setPreguntas(values.Preguntas);
+    if (values.Archivos) setArchivosExamen(values.Archivos);
+    setLoadError(failed.length ? `No se pudieron actualizar: ${failed.join(', ')}.` : '');
+    setLoading(false);
   };
 
   const handleUploadArchivoPreguntas = async () => {
@@ -116,6 +118,7 @@ export default function InstructorExamenes() {
       } else {
         toast({ title: 'Examen importado', description: 'Se han creado los simulacros a partir del archivo.' });
         await loadData();
+        window.dispatchEvent(new Event('uasspain:academic-resources-changed'));
       }
 
       setFormArchivos({ categoria: 'A1/A3', archivo_preguntas: null });
@@ -210,8 +213,8 @@ export default function InstructorExamenes() {
     setDeleteArchivoLoading(true);
     const { archivo, examenIds, preguntasRelacionadas } = archivoToDelete;
     try {
-      await Promise.allSettled(preguntasRelacionadas.map((p) => examenesService.preguntas.delete(p.id)));
-      await Promise.allSettled(examenIds.map((id) => examenesService.examenes.delete(id)));
+      await Promise.all(preguntasRelacionadas.map((p) => examenesService.preguntas.delete(p.id)));
+      await Promise.all(examenIds.map((id) => examenesService.examenes.delete(id)));
       await examenesService.archivos.delete(archivo.id);
       setArchivosExamen((prev) => prev.filter((a) => a.id !== archivo.id));
       setExamenes((prev) => prev.filter((e) => !examenIds.includes(e.id)));
@@ -223,9 +226,11 @@ export default function InstructorExamenes() {
     } catch (err) {
       console.error('Error eliminando simulacro:', err);
       toast({ title: 'Error', description: 'No se pudo eliminar el simulacro completamente.', variant: 'destructive' });
+      await loadData(true);
     } finally {
       setDeleteArchivoLoading(false);
       setArchivoToDelete(null);
+      window.dispatchEvent(new Event('uasspain:academic-resources-changed'));
     }
   };
 

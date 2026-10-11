@@ -100,9 +100,15 @@ export function useWebrtc(callId: string) {
           }).catch(() => { if (!disposed) setError('No se pudo negociar la conexión. Vuelve a entrar en la llamada.'); });
         };
         current.onerror = () => current.close();
-        current.onclose = () => {
+        current.onclose = (event) => {
           if (disposed || socket !== current) return;
           for (const id of peers.keys()) removePeer(id);
+          if (event.code === 1008) {
+            release();
+            setError('La sesión ha finalizado.');
+            void apiClient.get(endpoints.auth.me).catch(() => {});
+            return;
+          }
           if (++attempts <= 3) {
             setStatus('Reconectando…');
             reconnect = setTimeout(() => { void connect(); }, 2000);

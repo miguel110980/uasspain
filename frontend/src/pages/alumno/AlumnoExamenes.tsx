@@ -1,5 +1,7 @@
 import PanelModal from '@/components/ui/PanelModal';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import DataLoadNotice from '@/components/ui/DataLoadNotice';
+import { loadResources } from '@/lib/loadResources';
 import { motion } from 'framer-motion';
 import { Lock, Play, Loader2, Clock, CheckCircle, ClipboardList, ShieldAlert } from 'lucide-react';
 import examenesService from '@/services/examenesService';
@@ -17,34 +19,40 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
   const [error, setError] = useState(null);
   const [selectedExamen, setSelectedExamen] = useState(null);
   const [modalidad, setModalidad] = useState('tiempo');
+  const loadVersion = useRef(0);
 
   useEffect(() => {
     if (!alumnoId) return;
-    loadData();
+    void loadData();
+    const refresh = () => { void loadData(true); };
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener('focus', refresh);
+    return () => { loadVersion.current++; clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [alumnoId]);
 
-  const loadData = async () => {
+  const loadData = async (silent = false) => {
     if (!alumnoId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const [exs, res, bloqData] = await Promise.all([
-        examenesService.examenes.list(),
-        examenesService.resultados.filter({ alumno_id: alumnoId }, '-created_date', 100),
-        examenesService.bloqueos.filter({ alumno_id: alumnoId }),
-      ]);
-      setExamenes(exs);
-      setResultados(res);
-      setBloqueos(bloqData.filter((b) => b.bloqueado));
-    } catch (err) {
-      if (err?.response?.status === 403) {
-        setError('No tienes acceso a los exámenes. Consulta con tu instructor.');
-      } else {
-        setError('No se pudieron cargar los exámenes. Comprueba tu conexión y vuelve a intentarlo.');
-      }
-    } finally {
-      setLoading(false);
+    const request = ++loadVersion.current;
+    if (!silent) setLoading(true);
+    const { values, failed } = await loadResources({
+      Exámenes: () => examenesService.examenes.list(),
+      Resultados: () => examenesService.resultados.filter({ alumno_id: alumnoId }, '-created_date', 100),
+      Bloqueos: () => examenesService.bloqueos.filter({ alumno_id: alumnoId }),
+    });
+    if (request !== loadVersion.current) return;
+    if (values.Exámenes) {
+      setExamenes(values.Exámenes);
+      setSelectedExamen(current => current && !values.Exámenes.some(exam => exam.id === current.id) ? null : current);
     }
+    if (values.Resultados) setResultados(values.Resultados);
+    if (values.Bloqueos) {
+      const now = Date.now();
+      setBloqueos(values.Bloqueos.filter(block => block.bloqueado &&
+        (!block.fecha_inicio || new Date(block.fecha_inicio).getTime() <= now) &&
+        (!block.fecha_fin || new Date(block.fecha_fin).getTime() > now)));
+    }
+    setError(failed.length ? `No se pudieron actualizar: ${failed.join(', ')}.` : null);
+    setLoading(false);
   };
 
   const getUltimoResultado = (examenId) =>
@@ -70,17 +78,19 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
     );
   }
 
-  if (error) {
+  if (error && examenes.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 glass-card">
         <ShieldAlert className="w-10 h-10 text-warning mb-3" />
         <p className="text-sm text-muted-foreground text-center">{error}</p>
+        <button type="button" onClick={() => void loadData()} className="mt-3 text-primary underline">Reintentar</button>
       </div>
     );
   }
 
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+      <DataLoadNotice error={error} retry={() => void loadData(true)} />
       <div className="mb-8">
         <div className="inline-flex items-center gap-2 mb-3 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">
           <ClipboardList className="w-3.5 h-3.5" /> Exámenes

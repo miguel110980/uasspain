@@ -3,14 +3,14 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Menu, X, ChevronDown, Shield, Siren, Camera, Radio,
-  SprayCan, ScanLine, Thermometer, GraduationCap, Plane,
+  Menu, X, ChevronDown, Shield, Siren, GraduationCap, Plane,
   RadioTower, Sun, Moon, LogOut, UserRound,
 } from 'lucide-react';
 const AuthModal = lazy(() => import('@/components/auth/AuthModal'));
 import Logo from '@/components/layout/Logo';
 import styles from './Navbar.module.css';
 import contentService from '@/services/contentService';
+import { SERVICE_ICONS } from '@/lib/serviceIcons';
 import { COURSE_CATEGORIES, coursePath } from '@/lib/courseCategories';
 import authService from '@/services/authService';
 import useSession from '@/hooks/useSession';
@@ -21,15 +21,7 @@ const navLinks = [
   {
     label: 'Servicios',
     href: '/servicios',
-    children: [
-      { label: 'Emergencias', href: '/servicios/emergencias', icon: Siren },
-      { label: 'Seguridad', href: '/servicios/seguridad', icon: Shield },
-      { label: 'Radiofonista', href: '/servicios/radiofonista', icon: Radio },
-      { label: 'Audiovisuales', href: '/servicios/audiovisuales', icon: Camera },
-      { label: 'Fumigación', href: '/servicios/fumigacion', icon: SprayCan },
-      { label: 'Inspección', href: '/servicios/inspeccion', icon: ScanLine },
-      { label: 'Termografía', href: '/servicios/termografia', icon: Thermometer },
-    ],
+    children: [],
   },
   { label: 'Formación', groups: [] },
   { label: 'Tecnología', href: '/tecnologia' },
@@ -71,11 +63,6 @@ export default function Navbar() {
   const rafRef = useRef(null);
   const location = useLocation();
   const { data: session } = useSession();
-  useEffect(() => {
-    // The parent may commit before this prerendered Suspense boundary hydrates.
-    // Replay queued navigation clicks only once its handlers are attached.
-    window.dispatchEvent(new Event('uasspain:ready'));
-  }, []);
   const { data: managedCourses = [] } = useQuery({
     queryKey: ['public', 'courses'],
     queryFn: contentService.publicCourses,
@@ -83,7 +70,8 @@ export default function Navbar() {
     refetchOnWindowFocus: true,
     refetchInterval: 30_000,
   });
-  const effectiveNavLinks = navLinks.map((link) => link.label !== 'Formación' ? link : {
+  const { data: managedServices = [] } = useQuery({ queryKey: ['public', 'services'], queryFn: contentService.publicServices, staleTime: 0 });
+  const effectiveNavLinks = navLinks.map((link) => link.label === 'Servicios' ? { ...link, children: managedServices.map(service => ({ label: service.title, href: '/servicios/' + service.slug, icon: SERVICE_ICONS[service.icon] || Shield })) } : link.label !== 'Formación' ? link : {
     ...link,
     groups: [
       { label: 'Catálogo', children: [{ label: 'Todos los cursos', href: '/formacion', icon: GraduationCap }] },
@@ -148,6 +136,12 @@ export default function Navbar() {
     closeMobileMenu(false);
     setDropdownOpen(null);
   }, [location.pathname, closeMobileMenu]);
+
+  useEffect(() => {
+    // Initialize route state before replaying a click captured during hydration.
+    // Otherwise the route effect immediately closes the menu just opened.
+    window.dispatchEvent(new Event('uasspain:ready'));
+  }, []);
 
   useEffect(() => {
     if (!mobileOpen) return undefined;

@@ -11,6 +11,7 @@ vi.mock('@/components/layout/Footer', () => ({ default: () => <footer>pie</foote
 import CourseTemplate from './CourseTemplate';
 
 const baseCourse: Course = {
+  version: 1,
   id: '00000000-0000-0000-0000-000000000001',
   name: 'Curso dinámico',
   slug: 'curso-dinamico',

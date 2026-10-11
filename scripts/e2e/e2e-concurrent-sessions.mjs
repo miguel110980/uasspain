@@ -53,10 +53,8 @@ try {
   assert(staleResult.status === 401 && sql(`SELECT session_role FROM accounts_userprofile WHERE id='${f.id}'`) === 'instructor', 'stale_role_cannot_modify_replaced_session');
   report.expectedRejections.staleRole = staleResult.status;
   const roleRefreshClient = await loginFixture(f);
-  release = await holdProfile(f.id);
-  const roleRefresh = roleRefreshClient.call('/api/auth/refresh/', 'POST', {});
-  try { await waitBlocked(); } finally { await release(`UPDATE accounts_userprofile SET session_role='admin' WHERE id='${f.id}'`); }
-  assert((await roleRefresh).status === 200 && (await roleRefreshClient.call('/api/auth/me/')).body.session_role === 'admin', 'refresh_rechecks_role_after_profile_lock');
+  assert((await roleRefreshClient.call('/api/auth/session-role/', 'POST', { role:'admin' })).status === 200, 'role_update_is_scoped_to_tab_session');
+  assert((await roleRefreshClient.call('/api/auth/refresh/', 'POST', {})).status === 200 && (await roleRefreshClient.call('/api/auth/me/')).body.session_role === 'admin', 'refresh_uses_current_tab_role_without_global_profile_role');
   const g = seed.fixtures[101];
   release = await holdProfile(g.id);
   const oldLogin = apiClient().call('/api/auth/login/', 'POST', { email: g.email, password: g.password });
@@ -112,9 +110,9 @@ try {
   assert((await current.call('/api/auth/session-role/', 'POST', { role:'instructor' })).status === 200, 'multirole_switch_awaited');
   assert((await current.call('/api/auth/me/')).body.session_role === 'instructor', 'multirole_me_reconciled');
   assert((await current.call('/api/auth/refresh/', 'POST', {})).status === 200, 'refresh_rotation');
-  assert((await replay.call('/api/auth/refresh/', 'POST', {})).status === 401, 'refresh_replay_rejected');
+  assert((await replay.call('/api/auth/refresh/', 'POST', {})).status === 200, 'browser_context_refresh_has_no_global_token_rotation');
   const replacement = await loginFixture(seed.fixtures[7]);
-  assert((await current.call('/api/auth/me/')).status === 401, 'multidevice_replaces_old_window');
+  assert((await current.call('/api/auth/me/')).status === 200, 'same_account_second_tab_preserves_original_session');
   assert((await current.call('/api/auth/logout/', 'POST', {})).status === 200 && (await replacement.call('/api/auth/me/')).status === 200, 'stale_logout_preserves_new_device');
   for (const size of [10,50,100]) {
     const responses = await Promise.all(Array.from({length:size},(_,i) => clients[3+i%4].call('/api/mensajes/', 'POST', {contenido:`concurrent-${size}-${i}`})));
@@ -130,7 +128,14 @@ try {
     const instructorCounts = await clients[2].call('/api/dashboard/counts/');
     assert(studentCounts.status === 200 && studentCounts.body.results === 600 && studentCounts.body.passed === 600 && studentCounts.body.average_grade === 8, 'aggregate_counts_exceed_list_limits');
     assert(otherCounts.body.results === 0 && instructorCounts.body.results === 600, 'aggregate_counts_are_identity_scoped');
-    const query = (await import('node:fs')).readFileSync(resolve(root,'backend-rust/src/dashboard.rs'),'utf8').split('r#"')[1].split('"#;')[0];
+    const {readFileSync}=await import('node:fs');
+    const template=readFileSync(resolve(root,'backend-rust/src/dashboard.rs'),'utf8').match(/r#"([\s\S]*?)"#/);
+    check(Boolean(template),'Dashboard SQL template must be present');
+    // Explain the same canonical scope template included by Rust, not a copied policy.
+    const scope=readFileSync(resolve(root,'backend-rust/src/academic_resource_scope.sql'),'utf8');
+    const render=(alias,author)=>scope.replaceAll('__ROLE__','$1').replaceAll('__PROFILE__','$2').replaceAll('__ALIAS__',alias).replaceAll('__AUTHOR__',author);
+    const query=template[1].replaceAll('{material_scope}',render('m','subido_por_id')).replaceAll('{exam_scope}',render('e','creado_por_id')).replaceAll('{idle_timeout}',readFileSync(resolve(root,'backend-rust/src/auth.rs'),'utf8').match(/IDLE_TIMEOUT_SECONDS: i64 = (\d+)/)[1]);
+    check(!/[{}]|__\w+__/.test(query),'All dashboard SQL placeholders must be resolved');
     const plan = sql(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query.replaceAll('$1',"'instructor'").replaceAll('$2',`'${seed.fixtures[2].id}'::uuid`)}`);
     writeFileSync(resolve(folder,'dashboard-explain.json'), plan);
     sql(`DELETE FROM examenes_resultadoexamen WHERE alumno_id='${seed.fixtures[3].id}'`);

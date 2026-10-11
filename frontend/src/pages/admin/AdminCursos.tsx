@@ -57,16 +57,29 @@ export default function AdminCursos({ active = true }: { active?: boolean }) {
     try {
       const payload = { name: form.name.trim(), description: form.description.trim(), category: form.category, modality: form.modality, duration: form.duration.trim(), status: form.status,
         sections: form.topics.map((topic, sort_order) => ({ ...(topic.id ? { id: topic.id } : {}), title: topic.title.trim(), body: topic.body.trim(), sort_order })), introduction: '', syllabus: '' };
-      const course = editing ? await contentService.updateCourse(editing.id, payload) : await contentService.createCourse(payload);
+      const course = editing ? await contentService.updateCourse(editing.id, payload, editing.version) : await contentService.createCourse(payload);
       setCourses(current => [...current.filter(item => item.id !== course.id), course].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)));
       reset(); setNotice('Curso guardado correctamente.');
     } catch (err) { setError(errorText(err, 'No se pudo guardar el curso. Vuelve a intentarlo.')); }
     finally { savingLock.current = false; setSaving(false); }
   };
+  const moveCourse = async (index: number, delta: number) => {
+    if (savingLock.current) return; const target = index + delta; if (target < 0 || target >= courses.length) return;
+    savingLock.current = true; setSaving(true); setError('');
+    try { const ordered = [...courses]; [ordered[index], ordered[target]] = [ordered[target], ordered[index]]; await contentService.reorder('courses', ordered.map((course, sort_order) => ({ id: course.id, version: course.version, sort_order }))); await load(); }
+    catch (err) { setError(errorText(err, 'No se pudo actualizar el orden.')); }
+    finally { savingLock.current = false; setSaving(false); }
+  };
+  const toggleCourse = async (course: Course) => {
+    if (savingLock.current) return; savingLock.current = true; setSaving(true); setError('');
+    try { await contentService.updateCourse(course.id, { status: course.status === 'published' ? 'draft' : 'published' }, course.version); await load(); }
+    catch (err) { setError(errorText(err, 'No se pudo cambiar el estado.')); }
+    finally { savingLock.current = false; setSaving(false); }
+  };
   const confirmDelete = async () => {
     if (!pendingDelete || deleting) return; setDeleting(true); setError(''); setNotice('');
     try {
-      await contentService.deleteCourse(pendingDelete.id);
+      await contentService.deleteCourse(pendingDelete.id, pendingDelete.version);
       setCourses(current => current.filter(course => course.id !== pendingDelete.id));
       if (editing?.id === pendingDelete.id) reset();
       setPendingDelete(null); setNotice('Curso eliminado correctamente.');
@@ -96,16 +109,16 @@ export default function AdminCursos({ active = true }: { active?: boolean }) {
         <div className="grid md:grid-cols-3 gap-4">
           <div><label htmlFor="course-modality" className="block text-sm font-medium">Modalidad</label><select id="course-modality" required value={form.modality} onChange={event => setForm({ ...form, modality: event.target.value as CourseModality })} className={fieldClass}>{COURSE_MODALITIES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div>
           <label htmlFor="course-duration" className="block text-sm font-medium">Duración<input id="course-duration" type="text" maxLength={120} value={form.duration} onChange={event => setForm({ ...form, duration: event.target.value })} placeholder="Ej. 40 horas o 3 semanas" className={fieldClass} /></label>
-          <div><label htmlFor="course-status" className="block text-sm font-medium">Estado</label><select id="course-status" required value={form.status} onChange={event => setForm({ ...form, status: event.target.value as CourseStatus })} aria-describedby="course-status-help" className={fieldClass}><option value="upcoming">Próximamente</option><option value="published">Publicado</option></select><p id="course-status-help" className="mt-2 text-xs text-muted-foreground">Todos los cursos tienen «Ver curso» y página propia. Publicado muestra el contenido completo; Próximamente muestra un aviso hasta su publicación.</p></div>
+          <div><label htmlFor="course-status" className="block text-sm font-medium">Estado</label><select id="course-status" required value={form.status} onChange={event => setForm({ ...form, status: event.target.value as CourseStatus })} aria-describedby="course-status-help" className={fieldClass}><option value="draft">Borrador</option><option value="upcoming">Próximamente</option><option value="published">Publicado</option></select><p id="course-status-help" className="mt-2 text-xs text-muted-foreground">Borrador queda oculto. Publicado muestra el contenido completo; Próximamente muestra un aviso hasta su publicación.</p></div>
         </div>
       </fieldset>
       <button disabled={saving || loading} className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-xs font-bold uppercase rounded disabled:opacity-50">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}Guardar</button>
     </form>
     <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-heading font-bold">Cursos guardados ({courses.length})</h3><button type="button" disabled={isFetching || saving} onClick={() => void load()} className="inline-flex items-center gap-2 px-3 py-2 border border-border rounded text-xs disabled:opacity-50">{isFetching && <Loader2 className="w-3.5 h-3.5 animate-spin" />}Actualizar cursos</button></div>
-    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4" aria-busy={isFetching}>{loading ? <Loader2 aria-label="Cargando cursos" className="animate-spin text-primary" /> : courses.length === 0 ? <p className="text-sm text-muted-foreground">Todavía no hay cursos guardados.</p> : courses.map(course => <article key={course.id} className="glass-card p-5 min-w-0 space-y-3">
+    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4" aria-busy={isFetching}>{loading ? <Loader2 aria-label="Cargando cursos" className="animate-spin text-primary" /> : courses.length === 0 ? <p className="text-sm text-muted-foreground">Todavía no hay cursos guardados.</p> : courses.map((course, index) => <article key={course.id} className="glass-card p-5 min-w-0 space-y-3">
       <h3 className="font-heading font-bold">{course.name}</h3><p className="text-sm text-muted-foreground line-clamp-3">{course.description || course.short_description}</p>
-      <dl className="text-xs space-y-2"><div><dt className="inline text-muted-foreground">Categoría: </dt><dd className="inline">{courseCategoryLabel(course.category)}</dd></div><div><dt className="inline text-muted-foreground">Modalidad: </dt><dd className="inline">{courseModalityLabel(course.modality)}</dd></div><div><dt className="inline text-muted-foreground">Duración: </dt><dd className="inline">{course.duration || 'Sin especificar'}</dd></div><div><dt className="inline text-muted-foreground">Estado: </dt><dd className={`inline font-bold ${course.status === 'published' ? 'text-success' : 'text-warning'}`}>{course.status === 'published' ? 'Publicado' : 'Próximamente'}</dd></div></dl>
-      <div className="flex flex-wrap gap-2"><button disabled={saving} onClick={() => selectCourse(course)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-border rounded text-xs"><Edit3 className="w-3.5 h-3.5" />Editar</button><button disabled={saving || deleting} onClick={() => setPendingDelete(course)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-danger/30 text-danger rounded text-xs"><Trash2 className="w-3.5 h-3.5" />Eliminar</button></div>
+      <dl className="text-xs space-y-2"><div><dt className="inline text-muted-foreground">Categoría: </dt><dd className="inline">{courseCategoryLabel(course.category)}</dd></div><div><dt className="inline text-muted-foreground">Modalidad: </dt><dd className="inline">{courseModalityLabel(course.modality)}</dd></div><div><dt className="inline text-muted-foreground">Duración: </dt><dd className="inline">{course.duration || 'Sin especificar'}</dd></div><div><dt className="inline text-muted-foreground">Estado: </dt><dd className={`inline font-bold ${course.status === 'published' ? 'text-success' : 'text-warning'}`}>{course.status === 'published' ? 'Publicado' : course.status === 'draft' ? 'Borrador' : 'Próximamente'}</dd></div></dl>
+      <div className="flex flex-wrap gap-2"><button disabled={saving} onClick={() => selectCourse(course)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-border rounded text-xs"><Edit3 className="w-3.5 h-3.5" />Editar</button><button disabled={saving} onClick={() => void toggleCourse(course)} className="px-3 py-1.5 border border-border rounded text-xs">{course.status === 'published' ? 'Despublicar' : 'Publicar'}</button><button disabled={saving || index === 0} onClick={() => void moveCourse(index, -1)} aria-label={`Subir ${course.name}`} className="border border-border rounded p-2"><ArrowUp className="w-4 h-4" /></button><button disabled={saving || index === courses.length - 1} onClick={() => void moveCourse(index, 1)} aria-label={`Bajar ${course.name}`} className="border border-border rounded p-2"><ArrowDown className="w-4 h-4" /></button><button disabled={saving || deleting} onClick={() => setPendingDelete(course)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-danger/30 text-danger rounded text-xs"><Trash2 className="w-3.5 h-3.5" />Eliminar</button></div>
     </article>)}</div>
     <AlertDialog open={Boolean(pendingDelete)} onOpenChange={open => !open && !deleting && setPendingDelete(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Eliminar curso</AlertDialogTitle><AlertDialogDescription>Se eliminará “{pendingDelete?.name}” y su temario. Esta acción no se puede deshacer.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel><AlertDialogAction disabled={deleting} onClick={event => { event.preventDefault(); void confirmDelete(); }} className="bg-destructive text-destructive-foreground hover:bg-danger/90">{deleting ? 'Eliminando…' : 'Eliminar curso'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </motion.div>;

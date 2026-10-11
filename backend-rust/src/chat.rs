@@ -127,6 +127,7 @@ async fn run_socket(socket: WebSocket, state: Arc<AppState>, room_id: String, cl
     let (mut output, mut input) = socket.split();
     let mut events = state.events.subscribe();
     let event_topic = format!("chat:{room_id}");
+    let mut authorization = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut heartbeat = tokio::time::interval(Duration::from_secs(25));
     loop {
         tokio::select! {
@@ -166,6 +167,12 @@ async fn run_socket(socket: WebSocket, state: Arc<AppState>, room_id: String, cl
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 _ => {}
+            },
+            _ = authorization.tick() => {
+                if !session_is_active(&state, &claims).await.unwrap_or(false) {
+                    let _ = output.send(Message::Close(Some(axum::extract::ws::CloseFrame { code: 1008, reason: "session_expired".into() }))).await;
+                    break;
+                }
             },
             _ = heartbeat.tick() => {
                 if !session_is_active(&state, &claims).await.unwrap_or(false)

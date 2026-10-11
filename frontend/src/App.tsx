@@ -1,9 +1,9 @@
 import { useToast } from '@/components/ui/use-toast';
-import { QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import { Suspense, lazy, useEffect, type ComponentType } from 'react';
-import { refreshCourseQueries } from '@/services/contentService';
+import { startContentRealtime } from '@/lib/contentRealtime';
 import { ThemeProvider } from 'next-themes';
 import { THEME_OPTIONS } from '@/lib/themeConfig';
 import PageNotFound from './lib/PageNotFound';
@@ -17,13 +17,7 @@ const Nosotros = lazy(() => import('./pages/Nosotros'));
 const Tecnologia = lazy(() => import('./pages/Tecnologia'));
 const Blog = lazy(() => import('./pages/Blog'));
 const Contacto = lazy(() => import('./pages/Contacto'));
-const Seguridad = lazy(() => import('./pages/servicios/Seguridad'));
-const Emergencias = lazy(() => import('./pages/servicios/Emergencias'));
-const Audiovisuales = lazy(() => import('./pages/servicios/Audiovisuales'));
-const Radiofonista = lazy(() => import('./pages/servicios/Radiofonista'));
-const Fumigacion = lazy(() => import('./pages/servicios/Fumigacion'));
-const Inspeccion = lazy(() => import('./pages/servicios/Inspeccion'));
-const Termografia = lazy(() => import('./pages/servicios/Termografia'));
+const ServicioDinamico = lazy(() => import('./pages/ServicioDinamico'));
 const Formacion = lazy(() => import('./pages/Formacion'));
 const CursoDinamico = lazy(() => import('./pages/CursoDinamico'));
 const AdminPanel = lazy(() => import('./pages/AdminPanel'));
@@ -61,6 +55,7 @@ export function AppProviders({ children, client = queryClientInstance }) {
   return <AppErrorBoundary>
       <ThemeProvider {...THEME_OPTIONS} scriptProps={{ src: __THEME_INIT_URL__, defer: true }}>
         <QueryClientProvider client={client}>
+          <ContentRealtime />
           {children}
           <ToastHost />
         </QueryClientProvider>
@@ -68,14 +63,16 @@ export function AppProviders({ children, client = queryClientInstance }) {
   </AppErrorBoundary>;
 }
 
+function ContentRealtime() {
+  const client = useQueryClient();
+  useEffect(() => startContentRealtime(client), [client]);
+  return null;
+}
+
 function App({ initialHome }: { initialHome?: ComponentType } = {}) {
   const HomePage = initialHome || Home;
   useEffect(() => {
     document.documentElement.dataset.hydrated = 'true';
-    if (typeof BroadcastChannel === 'undefined') return undefined;
-    const channel = new BroadcastChannel('uasspain-courses');
-    channel.onmessage = event => { if (event.data === 'changed') refreshCourseQueries(); };
-    return () => channel.close();
   }, []);
   return (
     <AppProviders>
@@ -95,13 +92,7 @@ function App({ initialHome }: { initialHome?: ComponentType } = {}) {
             <Route path="/politica-privacidad" element={<PoliticaPrivacidad />} />
             <Route path="/aviso-legal" element={<AvisoLegal />} />
             <Route path="/politica-cookies" element={<PoliticaCookies />} />
-            <Route path="/servicios/seguridad" element={<Seguridad />} />
-            <Route path="/servicios/emergencias" element={<Emergencias />} />
-            <Route path="/servicios/audiovisuales" element={<Audiovisuales />} />
-            <Route path="/servicios/radiofonista" element={<Radiofonista />} />
-            <Route path="/servicios/fumigacion" element={<Fumigacion />} />
-            <Route path="/servicios/inspeccion" element={<Inspeccion />} />
-            <Route path="/servicios/termografia" element={<Termografia />} />
+            <Route path="/servicios/:slug" element={<ServicioDinamico />} />
             <Route path="/formacion" element={<Formacion />} />
             <Route path="/formacion/*" element={<CursoDinamico />} />
             <Route path="/elegir-panel" element={<PanelChoice />} />

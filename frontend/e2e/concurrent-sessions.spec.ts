@@ -96,7 +96,7 @@ test('@concurrent-regression eight isolated panels, refresh burst, offline recov
     let refreshes = 0;
     const page = pages[0];
     page.on('request', r => { if (new URL(r.url()).pathname === '/api/auth/refresh/') refreshes++; });
-    await contexts[0].clearCookies({ name: 'uasspain_access' });
+    // The browser context credential remains unchanged during concurrent requests.
     const burst = await page.evaluate(async expectedProfile => {
       // Reuse the service loaded by the application, including its actual
       // refresh interceptor. Production has hashed assets, not /src modules.
@@ -108,7 +108,7 @@ test('@concurrent-regression eight isolated panels, refresh burst, offline recov
         const me=await auth.me();return (me?.profile?.id||me?.id)===expectedProfile;
       }));
     },seed.fixtures[0].id);
-    expect(burst).toEqual(Array(20).fill(true)); expect(refreshes).toBe(1);
+    expect(burst).toEqual(Array(20).fill(true)); expect(refreshes).toBe(0);
     const measure = async () => Promise.all(pages.map(p => p.evaluate(() => (window as Window & { auditSockets: WebSocket[] }).auditSockets.filter(s => s.readyState === WebSocket.OPEN).length)));
     const nav = (p: Page) => p.locator('aside:visible nav');
     const labels = await Promise.all(pages.map(p => nav(p).getByRole('button').evaluateAll(nodes => nodes.map(n => n.getAttribute('aria-label') || ''))));

@@ -100,6 +100,9 @@ export const endpoints = {
   },
   systemAuthPolicy: `${API_PREFIX}/system/auth-policy/`,
   public: {
+    services: `${API_PREFIX}/services`,
+    service: (slug: string) => `${API_PREFIX}/services/${encodeURIComponent(slug)}`,
+    contentVersions: `${API_PREFIX}/public/content/versions/`,
     googleOAuth: `${API_PREFIX}/public/oauth/google/`,
     publicaciones: `${API_PREFIX}/public/publicaciones/`,
     blogPosts: `${API_PREFIX}/blog/posts`,
@@ -108,6 +111,9 @@ export const endpoints = {
     course: (slug) => `${API_PREFIX}/courses/${slug.split('/').map(encodeURIComponent).join('/')}`,
   },
   adminContent: {
+    services: `${API_PREFIX}/admin/services`,
+    service: (id: string) => `${API_PREFIX}/admin/services/${id}`,
+    serviceImage: (id: string) => `${API_PREFIX}/admin/services/${id}/image`,
     blogPosts: `${API_PREFIX}/admin/blog/posts`,
     blogPost: (id) => `${API_PREFIX}/admin/blog/posts/${id}`,
     blogImages: (id) => `${API_PREFIX}/admin/blog/posts/${id}/images`,
@@ -132,6 +138,7 @@ export const endpoints = {
   ws: {
   /** WebSocket del backend activo (chat, conexiones en tiempo real). */
     base: WS_BASE,
+    content: `${WS_BASE}/public-content/`,
     chat: (roomId) => `${WS_BASE}/chat/${roomId}/`,
     conexiones: `${WS_BASE}/conexiones/`,
     videollamada: (callId) => `${WS_BASE}/videollamada/${callId}/`,

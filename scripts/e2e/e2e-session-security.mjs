@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {createRequire} from 'node:module';
+import {createHmac,randomUUID} from 'node:crypto';
+const c=JSON.parse(execFileSync('docker',['inspect','uasspain-e2e-backend-e2e-1'],{encoding:'utf8'}))[0];
+assert.equal(c.Config.Labels['com.docker.compose.project'],'uasspain-e2e');
+process.env.E2E_FIELD_ENCRYPTION_KEY=c.Config.Env.find(v=>v.startsWith('FIELD_ENCRYPTION_KEY=')).slice(21);
+const {apiClient,fixtureSessionId,sql,uuid}=await import('./auth-fixtures.mjs');
+assert.equal(process.env.E2E_API_BASE,'https://localhost:8444');assert.equal(sql('SELECT current_database()'),'test_e2e_uasspain');
+const WebSocket=createRequire(process.cwd()+'/frontend/package.json')('ws');
+const client=apiClient();assert.equal((await client.call('/api/auth/login/','POST',{email:'alumno.e2e@test.local',password:'E2ePass_2026!'})).status,200); // pragma: allowlist secret - isolated fixture
+const me=(await client.call('/api/auth/me/')).body;const sessionId=fixtureSessionId(client.windowId,me.id);
+const cookies=()=>Object.entries(client.cookies).map(([k,v])=>`${k}=${v}`).join('; ');
+const gates=[];const gate=(ok,name)=>{assert.ok(ok,name);gates.push(name);console.log('PASS | '+name);};
+const raw=async(path,{method='GET',origin='https://localhost:8444',extra={}}={})=>fetch('https://localhost:8444'+path,{method,headers:{Origin:origin,Cookie:cookies(),'X-UASSpain-Window-Id':client.windowId,...extra}});
+const encodedHeader=Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url');
+const encoded=Buffer.from(JSON.stringify({user_id:me.user_id,profile_id:me.id,role:'admin',token_type:'access',exp:Math.floor(Date.now()/1000)+60,iat:Math.floor(Date.now()/1000),jti:randomUUID(),session_key:'forged'})).toString('base64url');
+const unsigned=encodedHeader+'.'+encoded;
+// The disposable Compose signing key is public fixture data; never read MAIN secrets.
+const forged=unsigned+'.'+createHmac('sha256','e2e-only-secret-key-with-at-least-thirty-two-bytes').update(unsigned).digest('base64url');
+gate((await raw('/api/system/status/',{extra:{'X-UASSpain-Verified-Session':forged,Authorization:'Bearer '+forged}})).status===403,'forged_internal_header_and_bearer_cannot_elevate_role');
+const before=sql(`SELECT last_activity_at FROM auth_tab_session WHERE id='${uuid(sessionId)}' AND profile_id='${uuid(me.id)}'`);
+gate((await raw('/api/auth/activity/',{method:'POST',origin:'https://attacker.invalid'})).status===403,'cross_origin_activity_rejected');
+gate(sql(`SELECT last_activity_at FROM auth_tab_session WHERE id='${uuid(sessionId)}' AND profile_id='${uuid(me.id)}'`)===before,'rejected_csrf_does_not_extend_session');
+const connect=(path,override={})=>new Promise((resolve,reject)=>{
+ const ws=new WebSocket('wss://localhost:8444'+path,{ca:readFileSync('.secrets/tls/ca.crt'),origin:'https://localhost:8444',headers:{Cookie:cookies()},handshakeTimeout:10000,...override});
+ ws.on('open',()=>resolve({status:101,ws}));ws.on('unexpected-response',(request,response)=>{const status=response.statusCode;response.resume();request.destroy();resolve({status});});ws.on('error',reject);
+});
+gate((await connect('/ws/conexiones/?window_id='+client.windowId,{origin:'https://attacker.invalid'})).status===403,'wss_cross_origin_rejected');
+gate((await connect('/ws/conexiones/?window_id='+randomUUID())).status===401,'wss_wrong_tab_binding_rejected');
+gate((await connect('/ws/conexiones/?window_id='+client.windowId,{headers:{}})).status===401,'wss_identifier_without_cookie_rejected');
+const own=await connect('/ws/conexiones/?window_id='+client.windowId);gate(own.status===101,'wss_correct_context_and_tab_accepted');
+const closed=new Promise(resolve=>own.ws.once('close',(code)=>resolve(code)));
+sql(`UPDATE auth_tab_session SET last_activity_at=clock_timestamp()-INTERVAL '900 seconds' WHERE id='${uuid(sessionId)}' AND profile_id='${uuid(me.id)}'`);
+const timer=setTimeout(()=>own.ws.terminate(),5000);const closeCode=await closed;clearTimeout(timer);
+gate(closeCode===1008,'expired_wss_is_closed_with_policy_code');
+gate((await connect('/ws/conexiones/?window_id='+client.windowId)).status===401,'expired_wss_cannot_reconnect_or_replay');
+gate((await client.call('/api/auth/refresh/','POST',{})).status===401,'expired_http_cannot_reauthenticate');
+writeFileSync('.run/session-repair-20261011/security-session-tests.json',JSON.stringify({time:new Date().toISOString(),gates,tests:gates.length,result:'PASS',scope:'isolated HTTPS/WSS only',mainWrites:0},null,2));

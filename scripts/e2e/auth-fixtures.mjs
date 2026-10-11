@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,16 +22,26 @@ export function uuid(value) {
   check(/^[0-9a-f-]{36}$/.test(value), 'Fixture UUID is invalid');
   return value;
 }
+const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:8010';
+check(['http://127.0.0.1:8010', 'https://localhost:8444'].includes(apiBase), 'Authentication fixture origin must be isolated');
+export function fixtureSessionId(windowId, profileId) {
+  uuid(windowId); uuid(profileId);
+  const blindKey = createHash('sha256').update(key).update('|blind-index|v1').digest();
+  const lookup = createHmac('sha256', blindKey).update('window:' + windowId).digest('hex');
+  blindKey.fill(0);
+  return uuid(sql(`SELECT id FROM auth_tab_session WHERE profile_id='${profileId}' AND window_lookup='${lookup}' AND revoked_at IS NULL`));
+}
 export function apiClient(windowId = randomUUID(), cookies = {}) {
   return {
     windowId, cookies,
-    async call(path, method = 'GET', payload) {
+    async call(path, method = 'GET', payload, extraHeaders = {}) {
       const form = payload instanceof URLSearchParams;
-      const response = await fetch('http://127.0.0.1:8010' + path, {
+      const response = await fetch(apiBase + path, {
         method, headers: {
-          Origin: 'http://localhost:8010', 'X-UASSpain-Window-Id': windowId,
+          Origin: process.env.E2E_API_BASE ? new URL(apiBase).origin : 'http://localhost:8010', 'X-UASSpain-Window-Id': windowId,
           'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json',
           Cookie: Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; '),
+          ...extraHeaders,
         },
         body: payload === undefined ? undefined : form ? payload : JSON.stringify(payload),
       });

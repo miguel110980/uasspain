@@ -55,6 +55,9 @@ pub async fn import(
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin", "instructor"])?;
     let path = resolve_media(&input.file_url).await?;
+    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+    let relative = relative_media_path(&path).await.ok_or(AppError::NotFound)?;
+    crate::materials::ensure_file_scope(pool, &claims, &relative, &input.file_url).await?;
     let name = path
         .file_name()
         .and_then(|v| v.to_str())
@@ -80,7 +83,6 @@ pub async fn import(
             json!({"total_detectadas":detected,"total_validas":0,"total_errores":errors.len(),"examenes_creados":[],"errores":errors,"error":"No se encontraron preguntas válidas. Use preguntas numeradas con opciones A-D y la respuesta correcta en negrita."}),
         ));
     }
-    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let mut tx = pool.begin().await?;
     let base = Path::new(&name)
         .file_stem()
@@ -104,7 +106,6 @@ pub async fn import(
         created.push(json!({"id":id,"nombre":title,"num_preguntas":chunk.len()}));
     }
     let meta = input.metadata.unwrap_or_else(|| json!({}));
-    let relative = relative_media_path(&path).await.unwrap_or_default();
     let size = i64::try_from(
         fs::metadata(&path)
             .await
@@ -115,7 +116,7 @@ pub async fn import(
     let checksum = hex(&Sha256::digest(
         fs::read(&path).await.map_err(|_| AppError::NotFound)?,
     ));
-    sqlx::query("INSERT INTO examenes_archivoexamen (id,created_date,updated_date,examen_id,nombre_archivo,archivo_url,archivo_path,archivo_content_type,archivo_tamano,archivo_sha256,descripcion,categoria,num_examenes,subido_por_id) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)").bind(Uuid::new_v4()).bind(ids.join(",")).bind(meta.get("original_name").and_then(Value::as_str).unwrap_or(&name)).bind(&input.file_url).bind(meta.get("path").and_then(Value::as_str).unwrap_or(&relative)).bind(meta.get("content_type").and_then(Value::as_str).unwrap_or("")).bind(meta.get("size").and_then(Value::as_i64).unwrap_or(size)).bind(meta.get("sha256").and_then(Value::as_str).unwrap_or(&checksum)).bind(format!("Importación automática — {} preguntas",questions.len())).bind(&categoria).bind(i32::try_from(created.len()).unwrap_or(i32::MAX)).bind(claims.profile_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO examenes_archivoexamen (id,created_date,updated_date,examen_id,nombre_archivo,archivo_url,archivo_path,archivo_content_type,archivo_tamano,archivo_sha256,descripcion,categoria,num_examenes,subido_por_id) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)").bind(Uuid::new_v4()).bind(ids.join(",")).bind(meta.get("original_name").and_then(Value::as_str).unwrap_or(&name)).bind(&input.file_url).bind(&relative).bind(meta.get("content_type").and_then(Value::as_str).unwrap_or("")).bind(size).bind(&checksum).bind(format!("Importación automática — {} preguntas",questions.len())).bind(&categoria).bind(i32::try_from(created.len()).unwrap_or(i32::MAX)).bind(claims.profile_id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(
         json!({"total_detectadas":detected,"total_validas":questions.len(),"total_errores":errors.len(),"examenes_creados":created,"errores":errors}),

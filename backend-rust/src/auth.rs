@@ -60,7 +60,6 @@ pub struct GoogleLoginRequest {
 #[derive(FromRow)]
 struct LoginRow {
     id: Uuid,
-    user_id: Option<i32>,
     password: String,
     is_active: bool,
     status: String,
@@ -213,21 +212,18 @@ pub async fn google_challenge(
         ""
     };
     let mut response = Json(serde_json::json!({"nonce":nonce})).into_response();
-    response.headers_mut().append(SET_COOKIE, format!("uasspain_google_nonce={proof}; Path=/api/auth/google/; HttpOnly; SameSite=Strict; Max-Age=300{secure}").parse().map_err(|_| AppError::Internal)?);
+    let nonce_cookie = google_nonce_cookie(&headers)?;
+    response.headers_mut().append(SET_COOKIE, format!("{nonce_cookie}={proof}; Path=/api/auth/google/; HttpOnly; SameSite=Strict; Max-Age=300{secure}").parse().map_err(|_| AppError::Internal)?);
     Ok(response)
 }
 
+fn google_nonce_cookie(headers: &HeaderMap) -> Result<String, AppError> {
+    Ok(format!("uasspain_google_nonce_{}", window_id(headers)?))
+}
+
 fn google_proof(state: &AppState, headers: &HeaderMap) -> Result<Claims, AppError> {
-    let raw = headers
-        .get(COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|cookies| {
-            cookies
-                .split(';')
-                .map(str::trim)
-                .find_map(|cookie| cookie.strip_prefix("uasspain_google_nonce="))
-        })
-        .ok_or(AppError::Unauthorized)?;
+    let name = google_nonce_cookie(headers)?;
+    let raw = cookie(headers, &name).ok_or(AppError::Unauthorized)?;
     let proof = state.tokens.decode(raw, "google_nonce")?;
     if proof.exp <= Utc::now().timestamp() as usize {
         return Err(AppError::Unauthorized);
@@ -307,9 +303,12 @@ pub async fn google_login(
     let mut response = finish_login(&state, &headers, &row, &role, "google").await?;
     response.headers_mut().append(
         SET_COOKIE,
-        "uasspain_google_nonce=; Path=/api/auth/google/; HttpOnly; SameSite=Strict; Max-Age=0"
-            .parse()
-            .map_err(|_| AppError::Internal)?,
+        format!(
+            "{}=; Path=/api/auth/google/; HttpOnly; SameSite=Strict; Max-Age=0",
+            google_nonce_cookie(&headers)?
+        )
+        .parse()
+        .map_err(|_| AppError::Internal)?,
     );
     Ok(response)
 }
@@ -374,28 +373,14 @@ async fn finish_login(
     method: &str,
 ) -> Result<Response, AppError> {
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let user_id = i64::from(row.user_id.ok_or(AppError::Unauthorized)?);
     let session_key = Uuid::new_v4().simple().to_string();
     let window_lookup = state
         .cipher
         .blind_index(&format!("window:{}", window_id(headers)?))?;
-    let access = state.tokens.issue(
-        user_id,
-        row.id,
-        role,
-        "access",
-        state.tokens.access_minutes,
-        &session_key,
-    )?;
-    let refresh = state.tokens.issue(
-        user_id,
-        row.id,
-        role,
-        "refresh",
-        state.tokens.refresh_days * 24 * 60,
-        &session_key,
-    )?;
-    let refresh_jti = state.tokens.decode(&refresh, "refresh")?.jti.to_string();
+    let (context, new_cookie) = browser_credential(state, headers)?;
+    let context_lookup = state
+        .cipher
+        .blind_index(&format!("context:{}", context.session_key))?;
     let mut tx = pool.begin().await?;
     // Take the profile lock in its own statement: a joined auth_user row read
     // before waiting could otherwise retain a credential invalidated meanwhile.
@@ -409,8 +394,15 @@ async fn finish_login(
     if eligible != Some(true) {
         return Err(AppError::Unauthorized);
     }
-    sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,session_role=$2,updated_date=NOW(),active_window_lookup=$4,active_refresh_jti=$5 WHERE id=$3")
-        .bind(&session_key).bind(role).bind(row.id).bind(window_lookup).bind(refresh_jti).execute(&mut *tx).await?;
+    // Serialize logins only within this browser/tab. Other tabs keep their identity.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(format!("{context_lookup}:{window_lookup}"))
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE conexiones_registroconexion r SET estado_sesion='finalizada',fecha_cierre=clock_timestamp(),updated_date=clock_timestamp() FROM auth_tab_session s WHERE s.context_lookup=$1 AND s.window_lookup=$2 AND r.session_id=s.session_key AND r.estado_sesion='activa'")
+        .bind(&context_lookup).bind(&window_lookup).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO auth_tab_session(id,profile_id,context_lookup,window_lookup,session_key,role,expires_at) VALUES($1,$2,$3,$4,$5,$6,to_timestamp($7)) ON CONFLICT(context_lookup,window_lookup) DO UPDATE SET id=EXCLUDED.id,profile_id=EXCLUDED.profile_id,session_key=EXCLUDED.session_key,role=EXCLUDED.role,created_at=clock_timestamp(),last_activity_at=clock_timestamp(),expires_at=EXCLUDED.expires_at,revoked_at=NULL")
+        .bind(Uuid::new_v4()).bind(row.id).bind(context_lookup).bind(window_lookup).bind(&session_key).bind(role).bind(context.exp as f64).execute(&mut *tx).await?;
     record_login(state, headers, row, role, method, &session_key, &mut tx).await?;
     tx.commit().await?;
     state
@@ -420,38 +412,13 @@ async fn finish_login(
             serde_json::json!({"type":"conexion","action":"login"}),
         )
         .await;
-    let secure = if state.tokens.secure_cookie {
-        "; Secure"
-    } else {
-        ""
-    };
-    let mut response = (
-        StatusCode::OK,
-        Json(serde_json::json!({"detail": "Inicio de sesión correcto."})),
-    )
-        .into_response();
-    response.headers_mut().append(
-        SET_COOKIE,
-        format!(
-            "{}={access}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}{}",
-            state.tokens.access_cookie,
-            state.tokens.access_minutes * 60,
-            secure
-        )
-        .parse()
-        .map_err(|_| AppError::Internal)?,
-    );
-    response.headers_mut().append(
-        SET_COOKIE,
-        format!(
-            "{}={refresh}; Path=/api/auth/; HttpOnly; SameSite=Strict; Max-Age={}{}",
-            state.tokens.refresh_cookie,
-            state.tokens.refresh_days * 86_400,
-            secure
-        )
-        .parse()
-        .map_err(|_| AppError::Internal)?,
-    );
+    let mut response =
+        Json(serde_json::json!({"detail":"Inicio de sesión correcto."})).into_response();
+    if let Some(cookie) = new_cookie {
+        response
+            .headers_mut()
+            .append(SET_COOKIE, cookie.parse().map_err(|_| AppError::Internal)?);
+    }
     Ok(response)
 }
 
@@ -481,7 +448,11 @@ pub async fn me(
                 })
             })
         });
-    if query.optional && !headers.contains_key(AUTHORIZATION) && !session_cookie {
+    if query.optional
+        && !headers.contains_key(VERIFIED_HEADER)
+        && !headers.contains_key(AUTHORIZATION)
+        && !session_cookie
+    {
         return Ok((
             [(CACHE_CONTROL, "private, no-store")],
             Json(serde_json::Value::Null),
@@ -496,12 +467,13 @@ pub async fn me(
         .await?
         .ok_or(AppError::NotFound)?;
     let profile = ProfileView::from_row(row, &state.cipher)?;
+    let idle_expires_at: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT last_activity_at+($3::bigint * INTERVAL '1 second') FROM auth_tab_session WHERE session_key=$1 AND profile_id=$2").bind(&claims.session_key).bind(claims.profile_id).bind(IDLE_TIMEOUT_SECONDS).fetch_one(pool).await?;
     Ok((
         [(CACHE_CONTROL, "private, no-store")],
         Json(serde_json::json!({
             "id": profile.id, "user_id": claims.user_id, "email": profile.email,
             "full_name": profile.full_name(), "role": profile.role, "roles": profile.roles,
-            "session_role": claims.role, "status": profile.status, "profile": profile
+            "session_role": claims.role, "status": profile.status, "profile": profile, "idle_expires_at": idle_expires_at
         })),
     )
         .into_response())
@@ -511,150 +483,33 @@ pub async fn logout(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    if let Ok(claims) = authenticate(&state, &headers, "access")
-        .or_else(|_| authenticate(&state, &headers, "refresh"))
-        && let Some(pool) = &state.pool
-    {
+    if let Ok(claims) = authenticate(&state, &headers, "access") {
+        let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
         let mut tx = pool.begin().await?;
-        let current: Option<(Option<String>, String, String)> = sqlx::query_as(
-            "SELECT active_session_key,active_window_lookup,active_refresh_jti FROM accounts_userprofile WHERE id=$1 FOR UPDATE",
-        )
-        .bind(claims.profile_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if let Some((session, window, refresh_jti)) = current
-            && !claims.session_key.is_empty()
-            && session.as_deref() == Some(&claims.session_key)
-            && (claims.token_type != "refresh" || refresh_jti == claims.jti.to_string())
-        {
-            let lookup = state
-                .cipher
-                .blind_index(&format!("window:{}", window_id(&headers)?))?;
-            if window != lookup {
-                return Err(AppError::SessionWindowMismatch);
-            }
-            finalize_sessions(&mut tx, claims.profile_id).await?;
-            sqlx::query("UPDATE accounts_userprofile SET active_session_key=$1,active_refresh_jti='',active_window_lookup='',updated_date=NOW() WHERE id=$2")
-                .bind(Uuid::new_v4().simple().to_string()).bind(claims.profile_id).execute(&mut *tx).await?;
-            tx.commit().await?;
-            state
-                .events
-                .publish(
-                    "connections",
-                    serde_json::json!({"type":"conexion","action":"logout"}),
-                )
-                .await;
-        }
+        sqlx::query("UPDATE auth_tab_session SET revoked_at=clock_timestamp() WHERE session_key=$1 AND profile_id=$2 AND revoked_at IS NULL")
+            .bind(&claims.session_key).bind(claims.profile_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE conexiones_registroconexion SET estado_sesion='finalizada',fecha_cierre=clock_timestamp(),tiempo_sesion=GREATEST(0,EXTRACT(EPOCH FROM(clock_timestamp()-fecha_hora))::integer),updated_date=clock_timestamp() WHERE session_id=$1 AND profile_id=$2 AND estado_sesion='activa'")
+            .bind(&claims.session_key).bind(claims.profile_id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        state
+            .events
+            .publish(
+                "connections",
+                serde_json::json!({"type":"conexion","action":"logout"}),
+            )
+            .await;
     }
-    let secure = if state.tokens.secure_cookie {
-        "; Secure"
-    } else {
-        ""
-    };
-    let mut response = (
-        StatusCode::OK,
-        Json(serde_json::json!({"detail": "Sesión cerrada."})),
-    )
-        .into_response();
-    response.headers_mut().append(
-        SET_COOKIE,
-        format!(
-            "{}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0{secure}",
-            state.tokens.access_cookie
-        )
-        .parse()
-        .map_err(|_| AppError::Internal)?,
-    );
-    response.headers_mut().append(
-        SET_COOKIE,
-        format!(
-            "{}=; Path=/api/auth/; HttpOnly; SameSite=Strict; Max-Age=0{secure}",
-            state.tokens.refresh_cookie
-        )
-        .parse()
-        .map_err(|_| AppError::Internal)?,
-    );
-    Ok(response)
+    // This browser credential is also used by other tabs; logout revokes only this row.
+    Ok(Json(serde_json::json!({"detail":"Sesión cerrada."})).into_response())
 }
 
 pub async fn refresh(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let claims = authenticate(&state, &headers, "refresh")?;
-    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let mut tx = pool.begin().await?;
-    sqlx::query("SELECT id FROM accounts_userprofile WHERE id=$1 FOR UPDATE")
-        .bind(claims.profile_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-    let current: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT p.active_session_key,p.active_refresh_jti,COALESCE(NULLIF(p.session_role,''),p.role) FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active",
-    ).bind(claims.profile_id).fetch_optional(&mut *tx).await?;
-    let (session, refresh_jti, role) = current.ok_or(AppError::Unauthorized)?;
-    if claims.session_key.is_empty()
-        || session != claims.session_key
-        || refresh_jti != claims.jti.to_string()
-    {
-        return Err(AppError::Unauthorized);
-    }
-    let access = state.tokens.issue(
-        claims.user_id,
-        claims.profile_id,
-        &role,
-        "access",
-        state.tokens.access_minutes,
-        &claims.session_key,
-    )?;
-    let rotated = state.tokens.issue(
-        claims.user_id,
-        claims.profile_id,
-        &role,
-        "refresh",
-        state.tokens.refresh_days * 24 * 60,
-        &claims.session_key,
-    )?;
-    let next_jti = state.tokens.decode(&rotated, "refresh")?.jti.to_string();
-    let rotated_once = sqlx::query("UPDATE accounts_userprofile SET active_refresh_jti=$1 WHERE id=$2 AND active_session_key=$3 AND active_refresh_jti=$4")
-        .bind(next_jti).bind(claims.profile_id).bind(&claims.session_key).bind(refresh_jti).execute(&mut *tx).await?;
-    if rotated_once.rows_affected() != 1 {
-        return Err(AppError::Unauthorized);
-    }
-    tx.commit().await?;
-    let secure = if state.tokens.secure_cookie {
-        "; Secure"
-    } else {
-        ""
-    };
-    let mut response = (
-        StatusCode::OK,
-        Json(serde_json::json!({"detail": "Token actualizado."})),
-    )
-        .into_response();
-    response.headers_mut().append(
-        SET_COOKIE,
-        format!(
-            "{}={access}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}{}",
-            state.tokens.access_cookie,
-            state.tokens.access_minutes * 60,
-            secure
-        )
-        .parse()
-        .map_err(|_| AppError::Internal)?,
-    );
-    response.headers_mut().append(
-        SET_COOKIE,
-        format!(
-            "{}={rotated}; Path=/api/auth/; HttpOnly; SameSite=Strict; Max-Age={}{}",
-            state.tokens.refresh_cookie,
-            state.tokens.refresh_days * 86_400,
-            secure
-        )
-        .parse()
-        .map_err(|_| AppError::Internal)?,
-    );
-    Ok(response)
+    authenticate(&state, &headers, "refresh")?;
+    // Browser credentials never contain a user/role and refresh never records activity.
+    Ok(Json(serde_json::json!({"detail":"Sesión comprobada."})).into_response())
 }
 
 pub async fn session_role(
@@ -665,7 +520,7 @@ pub async fn session_role(
     let claims = authenticate(&state, &headers, "access")?;
     let role = input.role.trim();
     if !matches!(role, "admin" | "instructor" | "alumno") {
-        return Err(AppError::Validation(format!("Rol no válido: {role}")));
+        return Err(AppError::Forbidden);
     }
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let mut tx = pool.begin().await?;
@@ -674,61 +529,143 @@ pub async fn session_role(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(AppError::Unauthorized)?;
-    let current: Option<(String, serde_json::Value)> =
-        sqlx::query_as("SELECT p.active_session_key,p.roles FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active")
-            .bind(claims.profile_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let (session, roles) = current.ok_or(AppError::Unauthorized)?;
-    if session != claims.session_key {
-        return Err(AppError::Unauthorized);
+    let changed = sqlx::query("UPDATE auth_tab_session s SET role=$1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE s.session_key=$2 AND s.profile_id=$3 AND p.id=s.profile_id AND s.revoked_at IS NULL AND s.last_activity_at>clock_timestamp()-($4::bigint * INTERVAL '1 second') AND s.expires_at>clock_timestamp() AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.roles ? $1 OR p.role=$1)")
+        .bind(role).bind(&claims.session_key).bind(claims.profile_id).bind(IDLE_TIMEOUT_SECONDS).execute(&mut *tx).await?;
+    if changed.rows_affected() != 1 {
+        return Err(if session_is_active(&state, &claims).await? {
+            AppError::Forbidden
+        } else {
+            AppError::Unauthorized
+        });
     }
-    if !roles
-        .as_array()
-        .is_some_and(|values| values.iter().any(|value| value.as_str() == Some(role)))
-    {
-        return Err(AppError::Forbidden);
-    }
-    sqlx::query(
-        "UPDATE accounts_userprofile SET session_role = $1, updated_date = NOW() WHERE id = $2",
-    )
-    .bind(role)
-    .bind(claims.profile_id)
-    .execute(&mut *tx)
-    .await?;
-    let access = state.tokens.issue(
-        claims.user_id,
-        claims.profile_id,
-        role,
-        "access",
-        state.tokens.access_minutes,
-        &claims.session_key,
-    )?;
     tx.commit().await?;
+    Ok(
+        Json(serde_json::json!({"detail":"Rol de sesión actualizado.","session_role":role}))
+            .into_response(),
+    )
+}
+
+const VERIFIED_HEADER: &str = "x-uasspain-verified-session";
+pub const IDLE_TIMEOUT_SECONDS: i64 = 900;
+
+fn context_cookie_name(state: &AppState) -> &'static str {
+    if state.tokens.secure_cookie {
+        "__Host-uasspain_context"
+    } else {
+        "uasspain_context"
+    }
+}
+
+fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get(COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .map(str::trim)
+        .find_map(|pair| {
+            pair.split_once('=')
+                .filter(|(key, _)| *key == name)
+                .map(|(_, value)| value)
+        })
+}
+
+fn browser_credential(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(Claims, Option<String>), AppError> {
+    if let Some(raw) = cookie(headers, context_cookie_name(state))
+        && let Ok(context) = state.tokens.decode(raw, "browser")
+    {
+        return Ok((context, None));
+    }
+    let raw = state.tokens.issue(
+        0,
+        Uuid::nil(),
+        "browser",
+        "browser",
+        state.tokens.refresh_days * 24 * 60,
+        &Uuid::new_v4().simple().to_string(),
+    )?;
+    let claims = state.tokens.decode(&raw, "browser")?;
     let secure = if state.tokens.secure_cookie {
         "; Secure"
     } else {
         ""
     };
-    let mut response = (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "detail": format!("Rol de sesión actualizado a {role}."), "session_role": role
-        })),
-    )
-        .into_response();
-    response.headers_mut().append(
-        SET_COOKIE,
-        format!(
-            "{}={access}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}{}",
-            state.tokens.access_cookie,
-            state.tokens.access_minutes * 60,
+    Ok((
+        claims,
+        Some(format!(
+            "{}={raw}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}{}",
+            context_cookie_name(state),
+            state.tokens.refresh_days * 86400,
             secure
-        )
-        .parse()
-        .map_err(|_| AppError::Internal)?,
-    );
+        )),
+    ))
+}
+
+pub async fn browser_context(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    window_id(&headers)?;
+    let (_, cookie) = browser_credential(&state, &headers)?;
+    if cookie.is_some() {
+        enforce_login_rate(&headers, "browser-context")?;
+    }
+    let mut response = Json(serde_json::json!({"detail":"Contexto preparado."})).into_response();
+    if let Some(cookie) = cookie {
+        response
+            .headers_mut()
+            .append(SET_COOKIE, cookie.parse().map_err(|_| AppError::Internal)?);
+    }
     Ok(response)
+}
+
+#[derive(FromRow)]
+struct TabSession {
+    profile_id: Uuid,
+    user_id: i32,
+    role: String,
+    session_key: String,
+    last_activity_at: chrono::DateTime<Utc>,
+    expires_at: chrono::DateTime<Utc>,
+    revoked_at: Option<chrono::DateTime<Utc>>,
+    server_now: chrono::DateTime<Utc>,
+}
+
+fn idle_expired(last: chrono::DateTime<Utc>, now: chrono::DateTime<Utc>) -> bool {
+    now.signed_duration_since(last) >= Duration::seconds(IDLE_TIMEOUT_SECONDS)
+}
+
+pub async fn activity(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    request: Request,
+) -> Result<Response, AppError> {
+    let claims = authenticate(&state, &headers, "access")?;
+    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+    if request.method() == axum::http::Method::POST {
+        if !crate::chat::origin_allowed(&headers) {
+            return Err(AppError::Forbidden);
+        }
+        // Two accepted updates/second per session, with no unbounded attacker-controlled map.
+        // The timestamp is exclusively the database clock, never supplied by the client.
+        let updated=sqlx::query("UPDATE auth_tab_session SET last_activity_at=clock_timestamp() WHERE session_key=$1 AND profile_id=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND last_activity_at>clock_timestamp()-($3::bigint * INTERVAL '1 second') AND last_activity_at<=clock_timestamp()-INTERVAL '500 milliseconds'")
+            .bind(&claims.session_key).bind(claims.profile_id).bind(IDLE_TIMEOUT_SECONDS).execute(pool).await?;
+        if updated.rows_affected() == 0 {
+            if !session_is_active(&state, &claims).await? {
+                return Err(AppError::SessionIdleExpired);
+            }
+            return Err(AppError::RateLimited);
+        }
+        sqlx::query("UPDATE conexiones_registroconexion SET ultima_actividad=clock_timestamp(),updated_date=clock_timestamp() WHERE session_id=$1 AND profile_id=$2 AND estado_sesion='activa'")
+            .bind(&claims.session_key).bind(claims.profile_id).execute(pool).await?;
+    }
+    let deadline:chrono::DateTime<Utc>=sqlx::query_scalar("SELECT last_activity_at+($3::bigint * INTERVAL '1 second') FROM auth_tab_session WHERE session_key=$1 AND profile_id=$2")
+        .bind(&claims.session_key).bind(claims.profile_id).bind(IDLE_TIMEOUT_SECONDS).fetch_one(pool).await?;
+    let remaining_ms:i64=sqlx::query_scalar("SELECT GREATEST(0,EXTRACT(EPOCH FROM(last_activity_at+($3::bigint * INTERVAL '1 second')-clock_timestamp()))*1000)::bigint FROM auth_tab_session WHERE session_key=$1 AND profile_id=$2").bind(&claims.session_key).bind(claims.profile_id).bind(IDLE_TIMEOUT_SECONDS).fetch_one(pool).await?;
+    Ok(([(CACHE_CONTROL,"private, no-store")],Json(serde_json::json!({"idle_expires_at":deadline,"remaining_ms":remaining_ms,"idle_timeout_seconds":IDLE_TIMEOUT_SECONDS}))).into_response())
 }
 
 #[derive(Clone)]
@@ -784,7 +721,8 @@ impl TokenService {
     }
 
     fn decode(&self, token: &str, token_type: &str) -> Result<Claims, AppError> {
-        let validation = Validation::new(Algorithm::HS256);
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.leeway = 0;
         let claims = decode::<Claims>(token, &self.decoding, &validation)
             .map_err(|_| AppError::Unauthorized)?
             .claims;
@@ -814,27 +752,13 @@ pub fn authenticate(
     headers: &HeaderMap,
     token_type: &str,
 ) -> Result<Claims, AppError> {
-    let bearer = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
-    let cookie_name = if token_type == "refresh" {
-        &state.tokens.refresh_cookie
-    } else {
-        &state.tokens.access_cookie
-    };
-    let cookie = headers
-        .get(COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|cookies| {
-            cookies
-                .split(';')
-                .map(str::trim)
-                .find_map(|cookie| cookie.strip_prefix(&format!("{cookie_name}=")))
-        });
-    state
-        .tokens
-        .decode(bearer.or(cookie).ok_or(AppError::Unauthorized)?, token_type)
+    // Only our middleware can install this short-lived signed authorization.
+    // External Bearer headers and cookies are never accepted as a user's identity.
+    let token = headers
+        .get(VERIFIED_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .ok_or(AppError::Unauthorized)?;
+    state.tokens.decode(token, token_type)
 }
 
 pub fn window_id(headers: &HeaderMap) -> Result<&str, AppError> {
@@ -852,33 +776,42 @@ pub async fn validate_active_session(
     mut request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
+    request.headers_mut().remove(VERIFIED_HEADER);
     let path = request.uri().path().to_owned();
-    // Browser WebSocket/image elements cannot add custom headers. Only these
-    // protected GET endpoints accept the non-token window binding in the URL.
     if request.method() == axum::http::Method::GET
         && (path.starts_with("/ws/") || path.starts_with("/api/media/"))
-        && let Some((_, id)) =
-            url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-                .find(|(k, _)| k == "window_id")
-        && let Ok(value) = id.parse()
     {
-        request.headers_mut().insert("x-uasspain-window-id", value);
+        let ids: Vec<_> =
+            url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+                .filter(|(key, _)| key == "window_id")
+                .collect();
+        if ids.len() == 1
+            && let Ok(value) = ids[0].1.parse()
+        {
+            request.headers_mut().insert("x-uasspain-window-id", value);
+        }
     }
     if matches!(
         path.as_str(),
-        "/" | "/api/health/live/" | "/api/health/ready/" | "/api/contact/" | "/api/contact/config/"
+        "/" | "/api/health/live/"
+            | "/api/health/ready/"
+            | "/api/contact/"
+            | "/api/contact/config/"
+            | "/ws/public-content/"
     ) || path.starts_with("/api/public/")
         || (matches!(
             *request.method(),
             axum::http::Method::GET | axum::http::Method::HEAD
-        ) && (path == "/api/courses"
+        ) && (path == "/api/services"
+            || path.starts_with("/api/services/")
+            || path == "/api/courses"
             || path.starts_with("/api/courses/")
             || path == "/api/blog/posts"
             || path.starts_with("/api/blog/posts/")))
         || matches!(
             path.as_str(),
-            "/api/auth/login/"
-                | "/api/auth/logout/"
+            "/api/auth/context/"
+                | "/api/auth/login/"
                 | "/api/auth/register/"
                 | "/api/auth/google/"
                 | "/api/auth/google/challenge/"
@@ -890,74 +823,76 @@ pub async fn validate_active_session(
     {
         return Ok(next.run(request).await);
     }
+    let Some(raw) = cookie(request.headers(), context_cookie_name(&state)) else {
+        if request.headers().contains_key(AUTHORIZATION)
+            || cookie(request.headers(), &state.tokens.access_cookie).is_some()
+            || cookie(request.headers(), &state.tokens.refresh_cookie).is_some()
+        {
+            return Err(AppError::Unauthorized);
+        }
+        return Ok(next.run(request).await);
+    };
+    let context = state.tokens.decode(raw, "browser")?;
+    let context_lookup = state
+        .cipher
+        .blind_index(&format!("context:{}", context.session_key))?;
+    let window_lookup = state
+        .cipher
+        .blind_index(&format!("window:{}", window_id(request.headers())?))?;
+    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+    let current:Option<TabSession>=sqlx::query_as("SELECT s.profile_id,u.id AS user_id,s.role,s.session_key,s.last_activity_at,s.expires_at,s.revoked_at,clock_timestamp() AS server_now FROM auth_tab_session s JOIN accounts_userprofile p ON p.id=s.profile_id JOIN auth_user u ON u.id=p.user_id WHERE s.context_lookup=$1 AND s.window_lookup=$2 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role=s.role OR p.roles ? s.role)")
+        .bind(context_lookup).bind(window_lookup).fetch_optional(pool).await?;
+    let session = current.ok_or(AppError::SessionWindowMismatch)?;
+    if session.revoked_at.is_some() || session.expires_at <= session.server_now {
+        return Err(AppError::Unauthorized);
+    }
+    if idle_expired(session.last_activity_at, session.server_now) {
+        return Err(AppError::SessionIdleExpired);
+    }
     let token_type = if path == "/api/auth/refresh/" {
         "refresh"
     } else {
         "access"
     };
-    let bearer = request
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
-    let cookie_name = if token_type == "refresh" {
-        &state.tokens.refresh_cookie
-    } else {
-        &state.tokens.access_cookie
-    };
-    let cookie = request
-        .headers()
-        .get(COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|cookies| {
-            cookies
-                .split(';')
-                .map(str::trim)
-                .find_map(|cookie| cookie.strip_prefix(&format!("{cookie_name}=")))
-        });
-    let Some(token) = bearer.or(cookie) else {
-        return Ok(next.run(request).await);
-    };
-    let claims = state.tokens.decode(token, token_type)?;
-    if claims.session_key.is_empty() {
-        return Err(AppError::Unauthorized);
+    let verified = state.tokens.issue(
+        i64::from(session.user_id),
+        session.profile_id,
+        &session.role,
+        token_type,
+        1,
+        &session.session_key,
+    )?;
+    request.headers_mut().insert(
+        VERIFIED_HEADER,
+        verified.parse().map_err(|_| AppError::Internal)?,
+    );
+    let claims = state.tokens.decode(&verified, token_type)?;
+    let mut authorization = tokio::time::interval(StdDuration::from_secs(1));
+    authorization.tick().await;
+    let operation = next.run(request);
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            response = &mut operation => return Ok(response),
+            _ = authorization.tick() => {
+                if !session_is_active(&state, &claims).await? {
+                    let idle: bool = sqlx::query_scalar("SELECT COALESCE((SELECT last_activity_at<=clock_timestamp()-($3::bigint * INTERVAL '1 second') FROM auth_tab_session WHERE session_key=$1 AND profile_id=$2),FALSE)")
+                        .bind(&claims.session_key).bind(claims.profile_id).bind(IDLE_TIMEOUT_SECONDS).fetch_one(pool).await?;
+                    // Drop the handler future, rolling back any uncommitted transaction.
+                    return Err(if idle { AppError::SessionIdleExpired } else { AppError::Unauthorized });
+                }
+            }
+        }
     }
-    let lookup = state
-        .cipher
-        .blind_index(&format!("window:{}", window_id(request.headers())?))?;
-    let current: Option<(String, Option<String>, String, serde_json::Value)> =
-        sqlx::query_as("SELECT p.active_window_lookup,p.active_session_key,p.role,p.roles FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active")
-            .bind(claims.profile_id)
-            .fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?)
-            .await?;
-    let (expected, session, role, roles) = current.ok_or(AppError::Unauthorized)?;
-    if expected != lookup {
-        return Err(AppError::SessionWindowMismatch);
-    }
-    if session.as_deref() != Some(&claims.session_key)
-        || !roles_from_json(&roles, &role).contains(&claims.role)
-    {
-        return Err(AppError::Unauthorized);
-    }
-    sqlx::query("UPDATE conexiones_registroconexion SET ultima_actividad=NOW(),updated_date=NOW() WHERE profile_id=$1 AND session_id=$2 AND estado_sesion='activa' AND (ultima_actividad IS NULL OR ultima_actividad < NOW()-INTERVAL '60 seconds')")
-        .bind(claims.profile_id).bind(&claims.session_key).execute(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
-    Ok(next.run(request).await)
 }
 
 pub async fn session_is_active(state: &AppState, claims: &Claims) -> Result<bool, AppError> {
-    if claims.session_key.is_empty() || claims.exp <= Utc::now().timestamp() as usize {
+    if claims.session_key.is_empty() {
         return Ok(false);
     }
-    let current: Option<(Option<String>, String, serde_json::Value)> = sqlx::query_as(
-        "SELECT p.active_session_key, p.role, p.roles FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active",
-    )
-    .bind(claims.profile_id)
-    .fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?)
-    .await?;
-    Ok(current.is_some_and(|(session, role, roles)| {
-        session.as_deref() == Some(&claims.session_key)
-            && roles_from_json(&roles, &role).contains(&claims.role)
-    }))
+    let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM auth_tab_session s JOIN accounts_userprofile p ON p.id=s.profile_id JOIN auth_user u ON u.id=p.user_id WHERE s.session_key=$1 AND s.profile_id=$2 AND s.role=$3 AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND s.last_activity_at>clock_timestamp()-($4::bigint * INTERVAL '1 second') AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role=s.role OR p.roles ? s.role))")
+        .bind(&claims.session_key).bind(claims.profile_id).bind(&claims.role).bind(IDLE_TIMEOUT_SECONDS).fetch_one(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
+    Ok(active)
 }
 
 async fn record_login(
@@ -969,7 +904,6 @@ async fn record_login(
     session_key: &str,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), AppError> {
-    finalize_sessions(tx, row.id).await?;
     let username = state.cipher.decrypt(&row.profile_username)?;
     let name = format!(
         "{} {}",
@@ -993,15 +927,6 @@ async fn record_login(
         .filter(|value| value.parse::<std::net::IpAddr>().is_ok());
     sqlx::query("INSERT INTO conexiones_registroconexion (id,created_date,updated_date,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion,fecha_cierre) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,NOW(),'correcto',$7,$8,NOW(),$9::inet,$7,$7,$7,$7,$7,$7,$10,$7,$11,$12,$13,'activa',NULL,NULL)")
         .bind(Uuid::new_v4()).bind(row.id).bind(state.cipher.encrypt(&username)?).bind(state.cipher.encrypt(&name)?).bind(state.cipher.encrypt(&email)?).bind(role).bind(&empty).bind(method).bind(ip).bind(state.cipher.encrypt(browser)?).bind(state.cipher.encrypt(os)?).bind(state.cipher.encrypt(device)?).bind(session_key).execute(&mut **tx).await?;
-    Ok(())
-}
-
-async fn finalize_sessions(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    profile_id: Uuid,
-) -> Result<(), AppError> {
-    sqlx::query("UPDATE conexiones_registroconexion SET estado_sesion='finalizada',fecha_cierre=NOW(),ultima_actividad=NOW(),tiempo_sesion=GREATEST(0,EXTRACT(EPOCH FROM (NOW()-fecha_hora))::integer),updated_date=NOW() WHERE profile_id=$1 AND estado_sesion='activa'")
-        .bind(profile_id).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -1057,6 +982,18 @@ pub(crate) fn enforce_login_rate(headers: &HeaderMap, email: &str) -> Result<(),
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .map_err(|_| AppError::Internal)?;
+    attempts.retain(|_, values| {
+        while values
+            .front()
+            .is_some_and(|seen| now.duration_since(*seen) >= StdDuration::from_secs(300))
+        {
+            values.pop_front();
+        }
+        !values.is_empty()
+    });
+    if attempts.len() >= 10_000 && !attempts.contains_key(&key) {
+        return Err(AppError::RateLimited);
+    }
     let bucket = attempts.entry(key).or_default();
     while bucket
         .front()
@@ -1115,6 +1052,69 @@ fn env_i64(name: &str, fallback: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oauth_proof_is_independent_in_each_tab() {
+        let state = crate::AppState::for_test();
+        let mut first = axum::http::HeaderMap::new();
+        let mut second = axum::http::HeaderMap::new();
+        first.insert(
+            "x-uasspain-window-id",
+            uuid::Uuid::new_v4().to_string().parse().unwrap(),
+        );
+        second.insert(
+            "x-uasspain-window-id",
+            uuid::Uuid::new_v4().to_string().parse().unwrap(),
+        );
+        let name = super::google_nonce_cookie(&first).unwrap();
+        assert_ne!(name, super::google_nonce_cookie(&second).unwrap());
+        let proof = state
+            .tokens
+            .issue(
+                0,
+                uuid::Uuid::nil(),
+                "google",
+                "google_nonce",
+                5,
+                "test-nonce",
+            )
+            .unwrap();
+        let cookies = format!("{name}={proof}");
+        first.insert(axum::http::header::COOKIE, cookies.parse().unwrap());
+        second.insert(axum::http::header::COOKIE, cookies.parse().unwrap());
+        assert!(super::google_proof(&state, &first).is_ok());
+        assert!(super::google_proof(&state, &second).is_err());
+    }
+    #[test]
+    fn idle_deadline_expires_at_exactly_900_seconds_without_grace() {
+        let last = chrono::DateTime::from_timestamp(1_000_000, 0).unwrap();
+        for seconds in [0, 840, 899] {
+            assert!(!super::idle_expired(
+                last,
+                last + chrono::Duration::seconds(seconds)
+            ));
+        }
+        assert!(!super::idle_expired(
+            last,
+            last + chrono::Duration::milliseconds(899999)
+        ));
+        for seconds in [900, 901, 1800] {
+            assert!(super::idle_expired(
+                last,
+                last + chrono::Duration::seconds(seconds)
+            ));
+        }
+        // New activity defines an independent deadline, not the creation time.
+        let renewed = last + chrono::Duration::seconds(899);
+        assert!(!super::idle_expired(
+            renewed,
+            last + chrono::Duration::seconds(900)
+        ));
+        assert!(super::idle_expired(
+            renewed,
+            last + chrono::Duration::seconds(1799)
+        ));
+    }
+
     #[test]
     fn window_binding_requires_a_canonical_random_uuid() {
         let mut headers = axum::http::HeaderMap::new();

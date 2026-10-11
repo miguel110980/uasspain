@@ -13,9 +13,14 @@ const upcoming = {
 };
 
 test.beforeEach(async ({ page }) => {
-  await page.route('**/api/auth/**', route => route.fulfill({
-    status: 401, contentType: 'application/json', body: JSON.stringify({ detail: 'Sin sesión' }),
-  }));
+  await page.route('**/api/auth/**', route => {
+    const url = new URL(route.request().url());
+    // Anonymous optional lookup is 200/null. A 401 represents an invalid
+    // credential and correctly opens login, so it cannot stand in for anonymity.
+    const anonymous = url.pathname === '/api/auth/me/' && url.searchParams.get('optional') === 'true';
+    return route.fulfill({ status: anonymous ? 200 : 401, contentType: 'application/json',
+      body: JSON.stringify(anonymous ? null : { detail: 'Sin sesión' }) });
+  });
   await page.route('**/api/courses', route => route.fulfill({
     contentType: 'application/json', body: JSON.stringify([upcoming, published]),
   }));

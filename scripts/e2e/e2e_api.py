@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -74,6 +75,13 @@ class Session:
             hdrs["Host"] = "localhost"
         if headers:
             hdrs.update(headers)
+        content_match = re.match(r"^/api/admin/(blog/posts|courses|services)/([^/]+)(?:/.*)?$", path)
+        if method in ("PATCH", "DELETE", "POST") and content_match and not any(key.lower() == "if-match" for key in hdrs):
+            status, collection = self.call("GET", "/api/admin/" + content_match.group(1))
+            if status == 200:
+                current = next((item for item in collection if item["id"] == content_match.group(2)), None)
+                if current:
+                    hdrs["If-Match"] = str(current["version"])
         data = None
         if raw_body is not None:
             data = raw_body
@@ -98,7 +106,7 @@ class Session:
 
     def access_cookie(self):
         for c in self.jar:
-            if c.name == "uasspain_access":
+            if c.name == "uasspain_context":
                 WINDOW_LOOKUPS[c.value] = self.window_id
                 return c.value
         return None
@@ -448,7 +456,7 @@ async def ws_collect(url, cookie, expect_n, timeout=6):
         url,
         **WS_CONNECT_OPTIONS,
         ssl=TLS_CONTEXT,
-        additional_headers={"Origin": ORIGIN, "Cookie": f"uasspain_access={cookie}", "X-UASSpain-Window-Id": WINDOW_LOOKUPS.get(cookie, "")},
+        additional_headers={"Origin": ORIGIN, "Cookie": f"uasspain_context={cookie}", "X-UASSpain-Window-Id": WINDOW_LOOKUPS.get(cookie, "")},
         open_timeout=8,
     ) as ws:
         deadline = time.time() + timeout
@@ -471,7 +479,7 @@ async def ws_expect_reject(url, cookie, origin):
             ssl=TLS_CONTEXT,
             additional_headers={
                 "Origin": origin,
-                "Cookie": f"uasspain_access={cookie}", "X-UASSpain-Window-Id": WINDOW_LOOKUPS.get(cookie, ""),
+                "Cookie": f"uasspain_context={cookie}", "X-UASSpain-Window-Id": WINDOW_LOOKUPS.get(cookie, ""),
             },
             open_timeout=8,
         ) as ws:
@@ -897,7 +905,7 @@ async def main():
                 ssl=TLS_CONTEXT,
                 additional_headers={
                     "Origin": ORIGIN,
-                    "Cookie": f"uasspain_access={alum.access_cookie()}", "X-UASSpain-Window-Id": alum.window_id,
+                    "Cookie": f"uasspain_context={alum.access_cookie()}", "X-UASSpain-Window-Id": alum.window_id,
                 },
                 open_timeout=8,
             ) as wsS,
@@ -907,7 +915,7 @@ async def main():
                 ssl=TLS_CONTEXT,
                 additional_headers={
                     "Origin": ORIGIN,
-                    "Cookie": f"uasspain_access={instr.access_cookie()}", "X-UASSpain-Window-Id": instr.window_id,
+                    "Cookie": f"uasspain_context={instr.access_cookie()}", "X-UASSpain-Window-Id": instr.window_id,
                 },
                 open_timeout=8,
             ) as wsI,
@@ -981,7 +989,7 @@ async def main():
     staff_room = "staff-" + "-".join(sorted([id_a, id_i]))
     staff_url = f"{WS_BASE}/ws/chat/{staff_room}/"
     async with websockets.connect(staff_url, **WS_CONNECT_OPTIONS, ssl=TLS_CONTEXT, additional_headers={
-        "Origin": ORIGIN, "Cookie": f"uasspain_access={instr.access_cookie()}", "X-UASSpain-Window-Id": instr.window_id
+        "Origin": ORIGIN, "Cookie": f"uasspain_context={instr.access_cookie()}", "X-UASSpain-Window-Id": instr.window_id
     }, open_timeout=8) as staff_socket:
         st, _ = admin.call("POST", "/api/mensajes-staff/", {
             "destinatario_id": id_i, "contenido": "Staff realtime E2E"
