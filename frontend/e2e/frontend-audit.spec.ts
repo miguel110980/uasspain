@@ -90,8 +90,12 @@ test('courses with the same name retain their own links without React key warnin
   page.on('console', message => { if (/same key|unique.*key/i.test(message.text())) warnings.push(message.text()); });
   const courses = fixture.courses.slice(0, 2).map(course => ({ ...course, name: 'Curso repetido', category: 'other', status: 'published' }));
   await page.route(url => url.pathname.startsWith('/api/'), route => {
-    const catalog = new URL(route.request().url()).pathname === '/api/courses';
-    return route.fulfill({ status: catalog ? 200 : 401, json: catalog ? courses : {} });
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/courses') return route.fulfill({ json: courses });
+    if (url.pathname === '/api/auth/me/' && url.searchParams.get('optional') === 'true') return route.fulfill({ json: null });
+    if (url.pathname === '/api/public/content/versions/') return route.fulfill({ json: { services:'1',posts:'1',courses:'1' } });
+    if (url.pathname === '/api/services') return route.fulfill({ json: [] });
+    return route.fulfill({ status: 401, json: {} });
   });
   for (const width of [320, 1440]) {
     await page.setViewportSize({ width, height: 900 });

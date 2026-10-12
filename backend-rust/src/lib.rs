@@ -30,6 +30,7 @@ pub mod registration;
 pub mod runtime_config;
 pub mod security;
 pub mod seo;
+mod service_images;
 pub mod services;
 pub mod system_status;
 pub mod uploads;

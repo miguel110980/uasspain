@@ -80,10 +80,23 @@ test('@concurrent-regression eight isolated panels, refresh burst, offline recov
   const contexts = await Promise.all(seed.fixtures.map(() => browser.newContext({ viewport: { width: 1440, height: 1000 } })));
   const pages = await Promise.all(contexts.map(c => c.newPage()));
   const errors: string[] = [], statuses: number[] = [];
+  const activityThrottles = pages.map(() => ({ rejected: 0, recovered: 0, pending: false }));
   try {
-    for (const page of pages) {
+    for (const [index, page] of pages.entries()) {
       page.on('pageerror', e => errors.push(e.message));
-      page.on('response', r => { if (new URL(r.url()).pathname.startsWith('/api/') && [403,409,429].includes(r.status()) || r.status() >= 500) statuses.push(r.status()); });
+      page.on('response', r => {
+        const path = new URL(r.url()).pathname;
+        // The activity endpoint intentionally accepts at most two updates per
+        // second. Network jitter can race that bound; the application has one
+        // bounded retry. Verify its real recovery instead of treating this
+        // documented protection as a login/resource failure.
+        if (path === '/api/auth/activity/' && r.request().method() === 'POST') {
+          const activity = activityThrottles[index];
+          if (r.status() === 429) { activity.rejected++; activity.pending = true; return; }
+          if (r.status() === 200 && activity.pending) { activity.recovered++; activity.pending = false; }
+        }
+        if (path.startsWith('/api/') && [403,409,429].includes(r.status()) || r.status() >= 500) statuses.push(r.status());
+      });
       await page.addInitScript(() => {
         const observed = window as Window & { auditSockets: WebSocket[] };
         observed.auditSockets = [];
@@ -128,8 +141,9 @@ test('@concurrent-regression eight isolated panels, refresh burst, offline recov
       expect(me.status()).toBe(200);
     }
     expect(errors).toEqual([]); expect(statuses).toEqual([]);
+    expect(activityThrottles.every(activity => !activity.pending && activity.recovered === activity.rejected)).toBe(true);
     mkdirSync('../.run/concurrency-audit', { recursive:true });
-    writeFileSync('../.run/concurrency-audit/browser-concurrency.json', JSON.stringify({ panels:8, sectionChangesPerPanel:100, warmSockets, finalSockets, refreshBurst:20, refreshCalls:refreshes, offlineSeconds:5, errors, statuses },null,2));
+    writeFileSync('../.run/concurrency-audit/browser-concurrency.json', JSON.stringify({ panels:8, sectionChangesPerPanel:100, warmSockets, finalSockets, refreshBurst:20, refreshCalls:refreshes, offlineSeconds:5, activityThrottles, errors, statuses },null,2));
   } finally { await Promise.all(contexts.map(c => c.close())); }
 });
 

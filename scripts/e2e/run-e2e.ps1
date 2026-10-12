@@ -2,7 +2,7 @@
 param(
     [switch]$Keep, [switch]$SkipBuild, [switch]$SkipBrowser, [switch]$FrontendOnly, [switch]$SecureBrowser,
     [switch]$PreserveVolumes,
-    [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'content', 'instructor', 'sessions', 'realtime', 'concurrent', 'private')]
+    [ValidateSet('all', 'panels', 'chat', 'presence', 'assignments', 'modals', 'courses', 'content', 'instructor', 'sessions', 'realtime', 'concurrent', 'private', 'admin-protection')]
     [string[]]$BrowserScope = @('all')
 )
 
@@ -12,8 +12,8 @@ $ComposeFile = Join-Path $Root 'docker-compose.e2e.yml'
 $ComposeArgs = @('-f', $ComposeFile)
 $PreviousBrowserOrigin = $env:E2E_BROWSER_ORIGIN
 if ($SecureBrowser) {
-    if ($BrowserScope -contains 'all') { $BrowserScope = @('sessions', 'realtime', 'presence', 'concurrent', 'private') }
-    if ($BrowserScope | Where-Object { $_ -notin @('sessions', 'realtime', 'presence', 'concurrent', 'private') }) {
+    if ($BrowserScope -contains 'all') { $BrowserScope = @('sessions', 'realtime', 'presence', 'concurrent', 'private', 'admin-protection') }
+    if ($BrowserScope | Where-Object { $_ -notin @('sessions', 'realtime', 'presence', 'concurrent', 'private', 'admin-protection') }) {
         throw 'SecureBrowser supports sessions, realtime, presence, concurrent and private scopes.'
     }
     $ComposeArgs += @('-f', (Join-Path $Root 'docker-compose.realtime-e2e.yml'))
@@ -251,6 +251,14 @@ try {
     & node (Join-Path $Root 'scripts/e2e/e2e-content.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de contenido E2E fallo' }
 
+    Write-Host '==> Validando proteccion de administradores en conexiones'
+    & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a proteccion de administradores fallo' }
+    & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'readiness previa a proteccion de administradores fallo' }
+    & node (Join-Path $Root 'scripts/e2e/e2e-admin-session-protection.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de proteccion de administradores fallo' }
+
     Write-Host '==> Validando accesos academicos, historicos y aislamiento de instructores'
     & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a accesos academicos E2E fallo' }
@@ -324,8 +332,9 @@ try {
         # Each group uses the unchanged production login limit. A backend restart
         # between groups isolates test traffic instead of weakening that limit.
         $BrowserGroups = @(
-            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@content-module|@instructor-access|@session-regression|@realtime-regression|@concurrent-regression|@private-channel-regression|@private-chat-measurement|staff-presence-video.spec|student-assignment.spec') },
+            @{ Key = 'panels'; Label = 'paneles y acceso'; Arguments = @('--grep-invert', '@panel-modals|@course-module|@content-module|@instructor-access|@session-regression|@realtime-regression|@concurrent-regression|@private-channel-regression|@private-chat-measurement|@admin-protection|staff-presence-video.spec|student-assignment.spec') },
             @{ Key = 'chat'; Label = 'chat bidireccional'; Arguments = @('panels.spec.ts', '--grep', 'chat messages appear bidirectionally') },
+            @{ Key = 'admin-protection'; Label = 'proteccion de administradores'; Arguments = @('admin-session-protection.spec.ts') },
             @{ Key = 'presence'; Label = 'presencia y videollamada'; Arguments = @('staff-presence-video.spec.ts') },
             @{ Key = 'assignments'; Label = 'asignación de alumnos'; Arguments = @('student-assignment.spec.ts') },
             @{ Key = 'modals'; Label = 'modales y datos'; Arguments = @('--grep', '@panel-modals') },
@@ -339,6 +348,51 @@ try {
         )
         # Invoke Node directly so Windows cmd does not interpret regex pipes.
         $PlaywrightCli = Join-Path $Root 'frontend/node_modules/@playwright/test/cli.js'
+        # Discover the selected panel cases, then isolate each specification.
+        # The broad group creates more browser contexts than the production
+        # limiter permits in one interval; no application limit is relaxed.
+        if ($BrowserScope -contains 'all' -or $BrowserScope -contains 'panels') {
+            $PanelGroup = $BrowserGroups | Where-Object { $_.Key -eq 'panels' }
+            Push-Location (Join-Path $Root 'frontend')
+            try {
+                $PanelArguments = $PanelGroup.Arguments
+                $ListedCases = (& node $PlaywrightCli test @PanelArguments --list --reporter=json) -join "`n"
+                if ($LASTEXITCODE -ne 0) { throw 'No se pudieron enumerar los casos de paneles' }
+                $PanelSuites = @(($ListedCases | ConvertFrom-Json).suites)
+                $PanelSpecs = @(($PanelSuites | ForEach-Object { $_.file }) | Sort-Object -Unique)
+                if (-not $PanelSpecs.Count) { throw 'El grupo de paneles no contiene casos' }
+                $PerSpecGroups = @($PanelSpecs | ForEach-Object {
+                    $Specification = $_
+                    if ([IO.Path]::GetFileName($Specification) -eq 'panels.spec.ts') {
+                        # These cases each create independent authenticated windows.
+                        # Even this single file exceeds the unchanged context budget.
+                        foreach ($Case in @($PanelSuites | Where-Object { $_.file -eq $Specification } | ForEach-Object { $_.specs })) {
+                            @{ Key = 'panels'; Label = $Case.title; Arguments = @($Specification, '--grep', ([regex]::Escape($Case.title) + '$')) + $PanelArguments }
+                        }
+                    } else {
+                        @{ Key = 'panels'; Label = [IO.Path]::GetFileName($Specification); Arguments = @($Specification) + $PanelArguments }
+                    }
+                })
+                $BrowserGroups = $PerSpecGroups + @($BrowserGroups | Where-Object { $_.Key -ne 'panels' })
+            } finally { Pop-Location }
+        }
+        if ($BrowserScope -contains 'all' -or $BrowserScope -contains 'concurrent') {
+            $ConcurrentGroup = $BrowserGroups | Where-Object { $_.Key -eq 'concurrent' }
+            Push-Location (Join-Path $Root 'frontend')
+            try {
+                $ConcurrentArguments = $ConcurrentGroup.Arguments
+                $ListedConcurrent = (& node $PlaywrightCli test @ConcurrentArguments --list --reporter=json) -join "`n"
+                if ($LASTEXITCODE -ne 0) { throw 'No se pudieron enumerar los casos de concurrencia' }
+                $ConcurrentCases = @(($ListedConcurrent | ConvertFrom-Json).suites | ForEach-Object { $_.specs })
+                if (-not $ConcurrentCases.Count) { throw 'El grupo de concurrencia no contiene casos' }
+                # The eight-window acceptance must start with a fresh context
+                # budget. Its own concurrency remains intact within one test.
+                $ConcurrentGroups = @($ConcurrentCases | ForEach-Object {
+                    @{ Key = 'concurrent'; Label = $_.title; Arguments = @('--grep', ([regex]::Escape($_.title) + '$')) }
+                })
+                $BrowserGroups = @($BrowserGroups | Where-Object { $_.Key -notin @('concurrent', 'private') }) + $ConcurrentGroups + @($BrowserGroups | Where-Object { $_.Key -eq 'private' })
+            } finally { Pop-Location }
+        }
         foreach ($BrowserGroup in $BrowserGroups | Where-Object { ($BrowserScope -contains 'all' -and $_.Key -ne 'chat') -or $BrowserScope -contains $_.Key }) {
             Write-Host "==> Preparando navegador: $($BrowserGroup.Label)"
             & $Docker compose @ComposeArgs restart backend-e2e | Out-Null

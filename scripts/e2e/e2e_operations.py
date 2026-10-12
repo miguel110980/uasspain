@@ -27,7 +27,7 @@ def load():
     def request(index):
         started = time.perf_counter()
         status, _ = Session("load").call("GET", "/api/resultados-examen/" if index % 2 else "/api/examenes/",
-            headers={"Cookie": f"uasspain_access={cookie}", "X-UASSpain-Window-Id": session.window_id}, timeout=10)
+            headers={"Cookie": f"uasspain_context={cookie}", "X-UASSpain-Window-Id": session.window_id}, timeout=10)
         return status, (time.perf_counter() - started) * 1000
     started = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=24) as workers:
@@ -76,7 +76,7 @@ def deadline(prepare):
         cookie = student.access_cookie()
         def submit(_):
             return Session("concurrent-submit").call("POST", "/api/resultados-examen/", payload,
-                headers={"Cookie": f"uasspain_access={cookie}", "X-UASSpain-Window-Id": student.window_id})
+                headers={"Cookie": f"uasspain_context={cookie}", "X-UASSpain-Window-Id": student.window_id})
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as workers:
             results = list(workers.map(submit, range(2)))
         assert all(status == 201 and result["nota"] == 10 and result["tiempo_empleado"] == 2400 for status, result in results)

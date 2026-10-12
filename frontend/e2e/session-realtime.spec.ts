@@ -95,11 +95,20 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
   const pages = await Promise.all(contexts.map(context => context.newPage()));
   const errors: string[] = [];
   const socketErrors: string[] = [];
+  const signals: object[] = [];
   const navigations: number[] = [0, 0, 0, 0];
   try {
     for (const [index, page] of pages.entries()) {
       page.on('pageerror', e => errors.push(e.message));
-      page.on('websocket', socket => socket.on('socketerror', error => socketErrors.push(error)));
+      page.on('websocket', socket => {
+        socket.on('socketerror', error => socketErrors.push(error));
+        if (socket.url().includes('/ws/videollamada/')) socket.on('framereceived', frame => {
+          const data = JSON.parse(String(frame.payload));
+          // Diagnostic metadata only: never record SDP, ICE credentials or cookies.
+          signals.push({ actor: index, call: new URL(socket.url()).pathname, type: data.type,
+            peer: data.peer_id, sender: data.sender_id, to: data.to });
+        });
+      });
       page.on('request', r => { if (r.isNavigationRequest() && r.frame() === page.mainFrame()) navigations[index]++; });
       await page.addInitScript(() => {
         const observed = window as ObservedWindow;
@@ -243,7 +252,12 @@ test('@realtime-regression bidirectional chats, broadcasts, read receipts, recon
     await instructor.getByRole('button', { name: 'Llamar a todos los alumnos', exact: true }).click();
     for (const page of [student, second]) await page.getByRole('button', { name: 'Unirse a la llamada', exact: true }).click();
     const media = async (page: Page, count: number) => {
-      await expect(dialog(page).locator('video')).toHaveCount(count + 1);
+      try { await expect(dialog(page).locator('video')).toHaveCount(count + 1); }
+      catch (error) {
+        const peers = await Promise.all(pages.map(p => p.evaluate(() => (window as ObservedWindow).auditPeers.map(peer => ({ connection: peer.connectionState, ice: peer.iceConnectionState, signaling: peer.signalingState })))));
+        console.log('MEDIA_DIAGNOSTIC=' + JSON.stringify({ actor: pages.indexOf(page), peers, signals, socketErrors }));
+        throw error;
+      }
       await expect.poll(() => page.evaluate(async () => {
         const reports = await Promise.all((window as ObservedWindow).auditPeers.filter(p => p.connectionState !== 'closed').map(p => p.getStats()));
         return reports.filter(report => ['audio', 'video'].every(kind => Array.from(report.values()).some(stat => stat.type === 'inbound-rtp' && stat.kind === kind && stat.bytesReceived > 0 && (kind !== 'video' || stat.framesDecoded > 0)))).length;

@@ -1,10 +1,10 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import contentService from '@/services/contentService';
-import { SERVICE_ICONS } from '@/lib/serviceIcons';
+import { serviceIcon } from '@/lib/serviceIcons';
 import { Link } from 'react-router-dom';
 import useScrollReveal from '@/hooks/useScrollReveal';
-import { Shield, ArrowRight } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 
 
 
@@ -14,11 +14,6 @@ function ServiceCard({ service }) {
       data-service-id={service.id}
       className="group relative p-8 glass-card hover:border-primary/30 transition-all duration-500 overflow-hidden"
     >
-      {/* Coord label */}
-      <div className="absolute top-4 right-4 text-[10px] font-mono text-primary/20 group-hover:text-primary/40 tracking-widest transition-colors">
-        {service.coord}
-      </div>
-
       {/* Hover glow */}
       <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-primary/5 via-transparent to-transparent pointer-events-none" />
 
@@ -49,7 +44,7 @@ function ServiceCard({ service }) {
 
 export default function ServicesSection() {
   const { data: managedServices = [], isError, refetch } = useQuery({ queryKey: ['public', 'services'], queryFn: contentService.publicServices, staleTime: 0 });
-  const services = managedServices.map(service => ({ ...service, icon: SERVICE_ICONS[service.icon] || Shield, desc: service.short_description, coord: service.coordinate, href: service.action_href || '/servicios/' + service.slug }));
+  const services = managedServices.map(service => ({ ...service, icon: serviceIcon(service.icon), desc: service.short_description, href: '/servicios/' + service.slug }));
   const { ref, isVisible } = useScrollReveal(0.05);
 
   return (
@@ -58,7 +53,7 @@ export default function ServicesSection() {
       {/* Subtle grid bg */}
       <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
         style={{
-          backgroundImage: `linear-gradient(hsl(186 100% 50%) 1px, transparent 1px), linear-gradient(90deg, hsl(186 100% 50%) 1px, transparent 1px)`,
+          backgroundImage: `linear-gradient(hsl(186 100% 50%) 1px, transparent 1px)`,
           backgroundSize: '60px 60px',
         }}
       />

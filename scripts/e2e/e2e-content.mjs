@@ -8,6 +8,7 @@ import { adminClient, apiClient, sql, backend, sleep } from './auth-fixtures.mjs
 const require=createRequire(new URL('../../frontend/package.json',import.meta.url));
 const WebSocket=require('ws');
 const origin=process.env.E2E_API_BASE||'http://127.0.0.1:8010';
+const mediaOrigin=origin==='https://localhost:8444'?origin:'http://127.0.0.1:8012';
 const allowedOrigin=process.env.E2E_API_BASE?new URL(origin).origin:'http://localhost:8010';
 const dir=process.env.CONTENT_AUDIT_DIR||'.run/content-management-20261011';
 const admin=await adminClient();const instructor=apiClient();const student=apiClient();const anonymous=apiClient();
@@ -38,12 +39,20 @@ const original=JSON.parse(baseline);let observer;let completed=false;
 try{
  gate('services_original_seven_published',original.length===7&&original.every((s,i)=>s.status==='published'&&s.sort_order===i&&s.presentation.layout.length>0&&s.description.length>0));
  gate('services_original_import_ids_unique',new Set(original.map(s=>s.id)).size===7&&new Set(original.map(s=>s.slug)).size===7);
- const publicList=await anonymous.call('/api/services');gate('public_services_exclude_private_fields',publicList.status===200&&publicList.body.length===7&&publicList.body.every(s=>!('created_by' in s)&&!('image_path' in s)&&!('presentation' in s)));
+ const publicList=await anonymous.call('/api/services');gate('public_services_exclude_private_fields',publicList.status===200&&publicList.body.length===7&&publicList.body.every(s=>!('created_by' in s)&&!('image_path' in s)&&!('presentation' in s)&&!('coordinate' in s)&&!('action_href' in s)));
  for(const service of original){const detail=await anonymous.call('/api/services/'+service.slug);assert.deepEqual(detail.body.presentation,service.presentation);gate('preserve_original_'+service.slug,detail.status===200&&detail.body.title===service.title&&detail.body.description===service.description&&detail.body.seo.title===service.seo.title);}
  observer=await openSocket();await wait(()=>observer.events.some(e=>e.type==='content_snapshot'));
  gate('public_socket_snapshot_contains_only_versions',observer.events[0].type==='content_snapshot'&&Object.keys(observer.events[0].versions).sort().join(',')==='courses,posts,services'&&Object.values(observer.events[0].versions).every(v=>typeof v==='string'));
  const suffix=randomUUID().replaceAll('-','');const draft=await create('services',{title:'TEMP Service '+suffix,slug:'temp-service-'+suffix,short_description:'TEMP synthetic summary',description:'TEMP synthetic full description',status:'draft',sort_order:100001});
  const second=await create('services',{title:'TEMP Second '+suffix,slug:'temp-second-'+suffix,status:'draft',sort_order:100002});
+ const generated=await create('services',{title:'TEMP Fumigación Agrícola '+suffix,icon:'Sprout'});
+ gate('service_generates_normalized_slug',generated.slug==='temp-fumigacion-agricola-'+suffix&&generated.icon==='Sprout'&&!('coordinate' in generated)&&!('action_href' in generated));
+ const changedSlug='temp-renamed-'+suffix;
+ gate('service_slug_can_change',(await update('services',generated.id,{slug:changedSlug,status:'published'})).status===200);
+ gate('service_old_route_preserved',(await anonymous.call('/api/services/'+generated.slug)).body.slug===changedSlug&&(await anonymous.call('/api/services/'+changedSlug)).body.id===generated.id);
+ gate('service_alias_collision_rejected',(await admin.call('/api/admin/services','POST',{title:'TEMP alias collision',slug:generated.slug})).status===409);
+ gate('service_alias_hidden_when_unpublished',(await update('services',generated.id,{status:'draft'})).status===200&&(await anonymous.call('/api/services/'+generated.slug)).status===404&&(await anonymous.call('/api/services/'+changedSlug)).status===404);
+ for(const payload of [{coordinate:'40 N'},{action_href:'/admin'},{slug:'../admin'},{slug:'%2e%2e'},{slug:'a/b'},{description:'<img onerror=x>'},{seo:{title:'<script>'}},{sort_order:0.5},{sort_order:2147483648},{presentation:{layout:[{tag:'Link',props:{to:'/admin'},children:['Admin']}]}}])gate('reject_service_retired_or_hostile_'+Object.keys(payload)[0],(await update('services',second.id,payload)).status===400);
  gate('draft_service_private',!(await anonymous.call('/api/services')).body.some(s=>s.id===draft.id)&&(await anonymous.call('/api/services/'+draft.slug)).status===404);
  for(const [label,client,status] of [['instructor',instructor,403],['student',student,403],['anonymous',anonymous,401]]){
   gate(label+'_service_read_admin_denied',(await client.call('/api/admin/services')).status===status);
@@ -87,15 +96,18 @@ try{
  gate('image_magic_and_decoder_reject_fake_upload',invalidImage.status===400&&Number(sql('SELECT COUNT(*) FROM content_image_resources'))===beforeResources);
  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');
  gate('image_upload_requires_admin',(await upload(instructor,draft.id,png,'pixel.png','image/png',(await get('services',draft.id)).version)).status===403);
- const image=await upload(admin,draft.id,png,'pixel.png','image/png',(await get('services',draft.id)).version);
+ for(const [name,mime] of [['pixel.svg','image/svg+xml'],['../pixel.png','image/png'],['pixel.png','text/html'],['pixel.exe','image/png']])gate('service_unsafe_image_rejected_'+name,(await upload(admin,draft.id,png,name,mime,(await get('services',draft.id)).version)).status===400);
+ const image=await upload(admin,draft.id,Buffer.concat([png,Buffer.from('SECRET_METADATA')]),'pixel.png','image/png',(await get('services',draft.id)).version);
  if(image.status===200){paths.push(image.body.image_path);resourceIds.push(image.body.image_resource_id);}
- gate('image_upload_stored_and_registered',image.status===200&&image.body.image_resource_id&&Number(sql(`SELECT size_bytes FROM content_image_resources WHERE id='${image.body.image_resource_id}'`))===png.length);
+ const savedImage=await fetch(mediaOrigin+image.body.image_url);const savedBytes=Buffer.from(await savedImage.arrayBuffer());
+ gate('image_upload_stored_and_registered',image.status===200&&image.body.image_resource_id&&savedImage.status===200&&Number(sql(`SELECT size_bytes FROM content_image_resources WHERE id='${image.body.image_resource_id}'`))===savedBytes.length);
+ gate('service_image_metadata_removed',!savedBytes.includes(Buffer.from('SECRET_METADATA')));
  gate('image_resource_picker_lists_verified_image',(await admin.call('/api/admin/content/images')).body.some(r=>r.id===image.body.image_resource_id&&r.url===image.body.image_url));
  gate('resource_picker_requires_admin',(await instructor.call('/api/admin/content/images')).status===403);
  gate('image_reuse_has_foreign_key',(await update('services',second.id,{image_url:image.body.image_url})).body.image_resource_id===image.body.image_resource_id);
  gate('unknown_media_resource_rejected',(await update('services',second.id,{image_url:'/media/services/nonexistent.png'})).status===400);
  const deletion=await admin.call('/api/admin/services/'+draft.id,'DELETE',undefined,{'If-Match':String((await get('services',draft.id)).version)});gate('service_delete_hides_admin_public',deletion.status===204&&!(await admin.call('/api/admin/services')).body.some(s=>s.id===draft.id)&&(await anonymous.call('/api/services/'+draft.slug)).status===404);
- gate('reused_image_survives_original_service_removal',(await fetch(origin+image.body.image_url)).status===200);
+ gate('reused_image_survives_original_service_removal',(await fetch(mediaOrigin+image.body.image_url)).status===200);
  gate('deleted_service_retains_tombstone',sql(`SELECT status FROM services WHERE id='${draft.id}'`)==='deleted');
  gate('deleted_slug_cannot_be_recreated',(await admin.call('/api/admin/services','POST',{title:'TEMP resurrection',slug:draft.slug})).status===409);
  gate('original_services_untouched',sql("SELECT jsonb_agg(to_jsonb(s) ORDER BY sort_order,id) FROM services s WHERE id IN ("+original.map(s=>"'"+s.id+"'").join(',')+")")===baseline);

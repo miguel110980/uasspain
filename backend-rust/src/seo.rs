@@ -100,20 +100,137 @@ pub async fn service_body(
 ) -> Result<Html<String>, AppError> {
     let Json(service) = crate::services::public_detail(State(state), Path(slug)).await?;
     let mut html = "<main class=\"public-content\">".to_owned();
-    if let Some(nodes) = service["presentation"]["layout"].as_array() {
-        for node in nodes {
-            html.push_str(&service_node(node, &service, 0));
-        }
-    } else {
-        html.push_str(&format!("<section class=\"pt-28 px-6 pb-16\"><h1 class=\"font-heading text-4xl\">{}</h1><p>{}</p><p class=\"whitespace-pre-wrap\">{}</p></section>",escape(text(&service,"title")),escape(text(&service,"short_description")),escape(text(&service,"description"))));
-    }
+    html.push_str(&service_template(&service));
     html.push_str("</main>");
     Ok(Html(html))
+}
+
+fn service_nodes<'a>(node: &'a Value, tag: &str, depth: usize) -> Vec<&'a Value> {
+    if depth > 30 {
+        return Vec::new();
+    }
+    let node_tag = text(node, "tag");
+    let mut found = if node_tag == tag || node_tag.strip_prefix("motion.") == Some(tag) {
+        vec![node]
+    } else {
+        Vec::new()
+    };
+    if let Some(children) = node.as_array().or_else(|| node["children"].as_array()) {
+        for child in children {
+            found.extend(service_nodes(child, tag, depth + 1));
+        }
+    }
+    found
+}
+
+fn service_template(service: &Value) -> String {
+    // Use the same fixed scene/sections for imported and future records. Layout
+    // data supplies only headings, cards and an optional call-to-action.
+    let layout = &service["presentation"]["layout"];
+    let title = service_nodes(layout, "h1", 0)
+        .first()
+        .map(|n| service_node(&n["children"], service, 0));
+    let title = if text(service, "title") == text(&service["presentation"], "original_title") {
+        title.unwrap_or_else(|| escape(text(service, "title")))
+    } else {
+        escape(text(service, "title"))
+    };
+    let sections = layout.as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let content: Vec<_> = sections
+        .iter()
+        .filter(|n| {
+            text(n, "tag") == "section"
+                && service_nodes(n, "h1", 0).is_empty()
+                && !text(&n["props"], "className").contains("py-16 bg-card")
+        })
+        .collect();
+    let cards: Vec<_> = content
+        .iter()
+        .flat_map(|n| service_nodes(n, "div", 0))
+        .filter(|n| {
+            text(&n["props"], "className")
+                .split_whitespace()
+                .any(|c| c == "glass-card")
+        })
+        .collect();
+    let content_value = Value::Array(content.iter().map(|v| (*v).clone()).collect());
+    let cards_after_intro = service_nodes(&content_value, "div", 0)
+        .iter()
+        .any(|n| text(&n["props"], "className") == "grid md:grid-cols-2 gap-8");
+    let heading = service_nodes(&content_value,"h2",0).first().map(|n| format!("<h2 class=\"font-heading text-3xl md:text-4xl font-bold text-foreground tracking-tight mb-6\">{}</h2>",service_node(&n["children"],service,0))).unwrap_or_default();
+    let description = text(service, "description")
+        .replace("\r\n", "\n")
+        .split("\n\n")
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| {
+            format!(
+                "<p class=\"text-muted-foreground leading-relaxed whitespace-pre-wrap\">{}</p>",
+                escape(p)
+            )
+        })
+        .collect::<String>();
+    let summary = if text(service, "short_description").is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<p class=\"text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed\">{}</p>",
+            escape(text(service, "short_description"))
+        )
+    };
+    let grid = if cards.is_empty() || cards_after_intro {
+        ""
+    } else {
+        "grid lg:grid-cols-2 gap-16 items-start"
+    };
+    let intro_class = if cards_after_intro {
+        "max-w-3xl mx-auto text-center mb-16"
+    } else {
+        ""
+    };
+    let cards_class = if cards_after_intro {
+        "grid md:grid-cols-2 gap-8"
+    } else {
+        "space-y-8"
+    };
+    let cards_html = cards
+        .iter()
+        .map(|card| service_node(card, service, 0))
+        .collect::<String>();
+    let mut html = format!(
+        "<section data-service-template=\"hero\" class=\"relative min-h-[55vh] flex items-center justify-center overflow-hidden bg-background pt-24\"><div class=\"absolute inset-0 pointer-events-none\" aria-hidden=\"true\"><div class=\"absolute inset-0 bg-gradient-to-b from-background/60 via-background/40 to-background\"></div><div class=\"absolute inset-0 scanline opacity-10\"></div><div class=\"absolute w-[600px] h-[600px] border border-primary/5 rounded-full left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2\"></div></div><div class=\"relative z-10 max-w-7xl mx-auto px-6 text-center flex flex-col items-center\"><a href=\"/#servicios\" class=\"inline-flex items-center gap-2 mb-8 text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors\">Volver a Servicios</a><div class=\"inline-flex items-center gap-2 mb-6 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest\">{}</div><h1 class=\"font-heading text-4xl sm:text-5xl md:text-6xl font-bold text-foreground tracking-tight mb-6\">{title}</h1>{summary}</div></section><section data-service-template=\"content\" class=\"py-20 md:py-24 bg-background\"><div class=\"max-w-7xl mx-auto px-6\"><div class=\"{grid}\"><div class=\"{intro_class}\">{heading}<div class=\"space-y-4\">{description}</div></div><div class=\"{cards_class}\">{cards_html}</div></div>",
+        escape(text(service, "title"))
+    );
+    for section in content.iter().skip(1) {
+        html.push_str("<div class=\"mt-16\">");
+        for tag in ["h2", "p"] {
+            for node in service_nodes(section, tag, 0) {
+                html.push_str(&service_node(node, service, 0));
+            }
+        }
+        html.push_str("</div>");
+    }
+    html.push_str("</div></section>");
+    for cta in sections
+        .iter()
+        .filter(|n| text(&n["props"], "className").contains("py-16 bg-card"))
+    {
+        html.push_str(&service_node(cta, service, 0));
+    }
+    if !text(service, "image_url").is_empty() {
+        html.push_str(&format!("<div class=\"max-w-7xl mx-auto px-6 pb-16\"><img src=\"{}\" alt=\"{}\" class=\"w-full max-h-[600px] object-cover\"></div>",escape(text(service,"image_url")),escape(text(service,"title"))));
+    }
+    html
 }
 
 fn service_node(node: &Value, service: &Value, depth: usize) -> String {
     if depth > 30 {
         return String::new();
+    }
+    if let Some(nodes) = node.as_array() {
+        return nodes
+            .iter()
+            .map(|n| service_node(n, service, depth + 1))
+            .collect();
     }
     if let Some(value) = node.as_str() {
         let presentation = &service["presentation"];
@@ -148,6 +265,12 @@ fn service_node(node: &Value, service: &Value, depth: usize) -> String {
         _ => return String::new(),
     };
     let props = &node["props"];
+    if tag == "a" && !crate::services::public_link(text(props, "to")) {
+        return String::new();
+    }
+    if text(props, "className").contains("w-px h-full") {
+        return String::new();
+    }
     let class = escape(text(props, "className"));
     let href = if tag == "a" {
         format!(" href=\"{}\"", escape(text(props, "to")))
@@ -382,5 +505,34 @@ mod tests {
             super::service_node(&serde_json::json!("Second original"), &service, 0),
             "&lt;Second edit&gt;"
         );
+    }
+
+    #[test]
+    fn common_service_template_keeps_all_original_information_cards() {
+        let seed = include_str!("../migrations/0021_managed_services.sql");
+        let records: Vec<_> = seed.split("'{\"layout\":").skip(1).collect();
+        assert_eq!(records.len(), 7);
+        for record in records {
+            let data = format!(
+                "{{\"layout\":{}",
+                record.split_once("','published'").unwrap().0
+            );
+            let presentation: serde_json::Value = serde_json::from_str(&data).unwrap();
+            let service = serde_json::json!({
+                "title": presentation["original_title"],
+                "description": presentation["original_description"],
+                "short_description": presentation["original_summary"],
+                "presentation": presentation
+            });
+            let html = super::service_template(&service);
+            for tag in ["h3", "li"] {
+                for node in super::service_nodes(&service["presentation"]["layout"], tag, 0) {
+                    assert!(html.contains(&super::service_node(node, &service, 0)));
+                }
+            }
+            assert!(html.contains("data-service-template=\"hero\""));
+            assert!(html.contains("data-service-template=\"content\""));
+            assert!(!html.contains("w-px h-full"));
+        }
     }
 }

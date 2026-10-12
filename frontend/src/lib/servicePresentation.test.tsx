@@ -1,4 +1,5 @@
 import React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, test } from 'vitest';
 import { ServicePresentation } from './servicePresentation';
@@ -12,8 +13,9 @@ test('Windows line endings preserve separate imported paragraphs and extra edite
       { tag: 'p', props: {}, children: ['Second original paragraph'] },
     ] },
   } as ManagedService;
-  const html = renderToStaticMarkup(<ServicePresentation service={service} />);
-  expect(html).toContain('<p>First edited paragraph</p><p>Second edited paragraph</p>');
+  const html = renderToStaticMarkup(<MemoryRouter><ServicePresentation service={service} /></MemoryRouter>);
+  expect(html).toContain('First edited paragraph</p><p');
+  expect(html).toContain('Second edited paragraph');
   expect(html.match(/<p\b/g)).toHaveLength(3);
   expect(html).toContain('Additional paragraph');
 });

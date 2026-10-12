@@ -55,7 +55,9 @@ export function apiClient(windowId = randomUUID(), cookies = {}) {
   };
 }
 export async function adminClient() {
-  const client = apiClient();
+  return loginFixtureAdministrator(apiClient());
+}
+export async function loginFixtureAdministrator(client) {
   check((await client.call('/api/auth/login/', 'POST', { email: 'e2e-admin@test.local', password: process.env.E2E_ADMIN_PASSWORD || 'E2eAdmin_2026!' })).status === 200, 'Fixture administrator login'); // pragma: allowlist secret - isolated fixture
   return client;
 }

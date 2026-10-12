@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { adminClient, backend, check, sleep, sql, uuid } from './auth-fixtures.mjs';
+import { adminClient, backend, check, loginFixtureAdministrator, sleep, sql, uuid } from './auth-fixtures.mjs';
 
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const admin = await adminClient();
@@ -54,8 +54,15 @@ async function restore(job, role) {
   check(Boolean(available), 'Replicated recovery point is available');
   const response = await call('restore/', 'POST', { origin: server.id, filename: available.filename, confirmed: true, confirmation_text: 'RESTAURAR' });
   check(response.status === 202, 'Isolated restore queued');
+  let reauthenticatedAfterRestore = false;
   for (let attempt = 0; attempt < 300; attempt++) {
-    const state = (await call('restore-status/?restore_id=' + response.body.restore_id)).body;
+    const result = await call('restore-status/?restore_id=' + response.body.restore_id);
+    if (result.status === 401 && !reauthenticatedAfterRestore) {
+      await loginFixtureAdministrator(admin);
+      reauthenticatedAfterRestore = true;
+      continue;
+    }
+    const state = result.body;
     if (state.state === 'done') { check(state.checksum_verified, 'Restore verified'); return; }
     check(state.state !== 'failed', 'Restore must recover real PostgreSQL data');
     await sleep(200);

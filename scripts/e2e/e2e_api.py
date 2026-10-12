@@ -150,11 +150,21 @@ def do_restore(sess, payload, tries=4):
     rid = (resp or {}).get("restore_id")
     if not rid:
         return 500, {"error": "sin restore_id"}
+    reauthenticated = False
     for _ in range(150):
         time.sleep(2)
         stt, data = sess.call(
             "GET", f"/api/backups/restore-status/?restore_id={rid}", timeout=30
         )
+        # A historical snapshot may contain this tab's revoked session or
+        # predate its login. Authenticate the isolated fixture again instead of
+        # expecting restoration to resurrect a revoked session.
+        if stt == 401 and not reauthenticated:
+            ok, _ = login(sess, ADMIN_EMAIL, ADMIN_PASSWORD)
+            if not ok:
+                return 401, {"error": "no se pudo autenticar el fixture tras restaurar"}
+            reauthenticated = True
+            continue
         if (
             stt == 200
             and isinstance(data, dict)

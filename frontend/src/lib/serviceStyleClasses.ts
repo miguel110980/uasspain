@@ -3,8 +3,6 @@ export const serviceStyleClasses = [
   "absolute inset-0 bg-gradient-to-b from-background/60 via-background/40 to-background",
   "absolute inset-0 pointer-events-none",
   "absolute inset-0 scanline opacity-10",
-  "absolute top-0 left-1/4 w-px h-full bg-gradient-to-b from-transparent via-primary/8 to-transparent",
-  "absolute top-0 right-1/4 w-px h-full bg-gradient-to-b from-transparent via-primary/5 to-transparent",
   "absolute w-[600px] h-[600px] border border-primary/5 rounded-full left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
   "flex items-start gap-3",
   "font-heading text-2xl md:text-3xl font-bold text-foreground mb-4",

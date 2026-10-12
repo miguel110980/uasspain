@@ -5,7 +5,20 @@ const gate = (condition, name) => { check(condition, name); passed++; console.lo
 const ids = [];
 let admin;
 try {
-  admin = await adminClient();
+  const authenticated = await adminClient();
+  // These course regressions exercise content changes, not a missing version.
+  // Obtain the committed version just as the editor does; the content suite
+  // separately checks rejected stale and missing If-Match requests.
+  admin = { ...authenticated, async call(path, method = 'GET', body, headers = {}) {
+    const match = path.match(/^\/api\/admin\/courses\/([0-9a-f-]{36})$/);
+    if (match && ['PATCH', 'DELETE'].includes(method)) {
+      const list = await authenticated.call('/api/admin/courses');
+      check(list.status === 200, 'Current isolated course versions');
+      const record = list.body.find(item => item.id === match[1]);
+      if (record) headers = { ...headers, 'If-Match': String(record.version) };
+    }
+    return authenticated.call(path, method, body, headers);
+  } };
   const suffix = randomUUID();
   const payload = { name: `  Curso seguro ${suffix}  `, description: '  Texto\0 seguro\nSegunda línea  ', category: 'other', modality: 'presencial_online', duration: '  3 semanas (24 horas)  ', status: 'upcoming', sections: [{ title: 'Tema B', body: 'Contenido B' }, { title: 'Tema A', body: 'Contenido A' }] };
   const created = await admin.call('/api/admin/courses', 'POST', payload);
@@ -26,10 +39,12 @@ try {
     const detail = await apiClient().call(`/api/courses/${course.slug}`);
     gate(changed.status === 200 && changed.body.slug === course.slug && detail.body.modality === modality && sql(`SELECT modality FROM courses WHERE id='${id}'`) === modality, `modality_${modality}_update_persists`);
   }
-  for (const [name, patch] of Object.entries({ empty_name: {name:'   '}, empty_description:{description:' \0 '}, modality:{modality:'hibrido'}, duration:{duration:'x'.repeat(121)}, duration_type:{duration:5}, status:{status:'draft'}, topic:{sections:[{title:'\0 '}]}, topics_type:{sections:{title:'bad'}} })) {
+  for (const [name, patch] of Object.entries({ empty_name: {name:'   '}, empty_description:{description:' \0 '}, modality:{modality:'hibrido'}, duration:{duration:'x'.repeat(121)}, duration_type:{duration:5}, status:{status:'invalid_status'}, topic:{sections:[{title:'\0 '}]}, topics_type:{sections:{title:'bad'}} })) {
     gate((await admin.call(`/api/admin/courses/${id}`, 'PATCH', patch)).status === 400, `invalid_${name}_denied`);
   }
   const missingModality = { ...payload }; delete missingModality.modality;
+  gate((await admin.call(`/api/admin/courses/${id}`, 'PATCH', { status: 'draft' })).status === 200 && (await apiClient().call(`/api/courses/${course.slug}`)).status === 404 && sql(`SELECT status FROM courses WHERE id='${id}'`) === 'draft', 'draft_is_saved_and_not_public');
+  gate((await admin.call(`/api/admin/courses/${id}`, 'PATCH', { status: 'upcoming' })).status === 200, 'upcoming_restored_after_draft');
   gate((await admin.call('/api/admin/courses', 'POST', missingModality)).status === 400, 'missing_modality_denied');
   const missingCategory = { ...payload }; delete missingCategory.category;
   gate((await admin.call('/api/admin/courses', 'POST', missingCategory)).status === 400, 'missing_category_denied');
@@ -77,7 +92,7 @@ try {
   gate((await admin.call(`/api/admin/courses/${id}`, 'PATCH', {status:'upcoming'})).status === 200, 'unpublish');
   const reverted = await anonymous.call(`/api/courses/${course.slug}`);
   gate(reverted.status === 200 && reverted.body.content_available === false && reverted.body.description === '' && reverted.body.sections.length === 0, 'unpublish_keeps_page_without_full_content');
-  gate((await admin.call(`/api/admin/courses/${id}`, 'DELETE')).status === 204 && sql(`SELECT COUNT(*) FROM course_sections WHERE course_id='${id}'`) === '0', 'delete_cascades_topics');
+  gate((await admin.call(`/api/admin/courses/${id}`, 'DELETE')).status === 204 && sql(`SELECT status FROM courses WHERE id='${id}'`) === 'deleted' && sql(`SELECT COUNT(*) FROM course_sections WHERE course_id='${id}'`) === '1' && (await anonymous.call(`/api/courses/${course.slug}`)).status === 404 && !(await admin.call('/api/admin/courses')).body.some(item => item.id === id), 'delete_hides_course_and_preserves_historical_topic');
 } finally {
   if (admin) for (const id of ids) await admin.call(`/api/admin/courses/${id}`, 'DELETE');
 }

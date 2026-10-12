@@ -43,7 +43,7 @@ test('all roles share accurate presence; staff and student calls are isolated an
     await expect(nav(instructor).getByRole('button', { name: 'Usuarios', exact: true })).toHaveCount(0);
     await nav(instructor).getByRole('button', { name: 'Conexiones activas', exact: true }).click();
     const presence = instructor.getByRole('region', { name: 'Conexiones activas', exact: true });
-    for (const name of ['E2E Admin', 'E2E Instructor', 'E2E Alumno']) await expect(presence.getByRole('cell', { name, exact: true })).toBeVisible();
+    for (const name of ['E2E Admin', 'E2E Instructor', 'E2E Alumno']) await expect(presence.getByRole('cell', { name, exact: true }).first()).toBeVisible();
     const onlineResponse = await instructor.request.get('/api/registros-conexion/activas/', { headers: i.headers });
     expect(onlineResponse.status()).toBe(200);
     for (const session of await onlineResponse.json()) {
@@ -53,6 +53,8 @@ test('all roles share accurate presence; staff and student calls are isolated an
     }
     // Presence never grants permission to manage an administrator's session.
     const administratorSession = (await onlineResponse.json()).find(row => row.profile_id === a.profile.id);
+    const administratorSessionCount = (await onlineResponse.json()).filter(row => row.profile_id === a.profile.id).length;
+    await expect(presence.getByRole('cell', { name: 'E2E Admin', exact: true })).toHaveCount(administratorSessionCount);
     expect((await instructor.request.patch(`/api/registros-conexion/${administratorSession.id}/`, {
       headers: i.headers, data: { estado_sesion: 'finalizada' },
     })).status()).toBe(403);
@@ -61,11 +63,12 @@ test('all roles share accurate presence; staff and student calls are isolated an
     const contact = instructor.getByRole('button').filter({ has: instructor.getByText('E2E Admin', { exact: true }) });
     await expect(contact.locator('[title="Conectado"]')).toBeVisible();
     await contact.click();
-    await instructor.getByPlaceholder('Escribe un mensaje...').filter({ visible: true }).fill('Presencia y chat verificados');
+    const presenceMessage = `Presencia y chat verificados ${Date.now()}`;
+    await instructor.getByPlaceholder('Escribe un mensaje...').filter({ visible: true }).fill(presenceMessage);
     await instructor.getByRole('button', { name: 'Enviar mensaje', exact: true }).filter({ visible: true }).click();
     await nav(admin).getByRole('button', { name: 'Chat', exact: true }).click();
     await admin.getByRole('button').filter({ has: admin.getByText('E2E Instructor', { exact: true }) }).click();
-    await expect(admin.getByText('Presencia y chat verificados', { exact: true })).toBeVisible();
+    await expect(admin.getByText(presenceMessage, { exact: true })).toBeVisible();
 
     await nav(instructor).getByRole('button', { name: 'Videollamada', exact: true }).click();
     await expect(instructor.getByRole('region', { name: 'Videollamadas con alumnos' }).getByText('E2E Instructor', { exact: true })).toHaveCount(0);
@@ -122,12 +125,14 @@ test('all roles share accurate presence; staff and student calls are isolated an
     await expect(dialog(admin).locator('video')).toHaveCount(2);
     await dialog(admin).getByRole('button', { name: 'Colgar', exact: true }).click();
     await expect(dialog(instructor)).toHaveCount(0);
-    // Logout is immediately reflected by both shared presence and the chat badge.
+    // Logout removes this window, while independently authenticated windows
+    // remain online. The setup/API fixture may hold another legitimate session.
     expect((await admin.request.post('/api/auth/logout/', { headers: a.headers, data: {} })).status()).toBe(200);
+    expect((await admin.request.get('/api/auth/me/', { headers: a.headers })).status()).toBe(401);
     await nav(instructor).getByRole('button', { name: 'Chat', exact: true }).click();
-    await expect(contact.locator('[title="Desconectado"]')).toBeVisible();
+    await expect(contact.locator(`[title="${administratorSessionCount > 1 ? 'Conectado' : 'Desconectado'}"]`)).toBeVisible();
     await nav(instructor).getByRole('button', { name: 'Conexiones activas', exact: true }).click();
-    await expect(presence.getByRole('cell', { name: 'E2E Admin', exact: true })).toHaveCount(0);
+    await expect(presence.getByRole('cell', { name: 'E2E Admin', exact: true })).toHaveCount(administratorSessionCount - 1);
   } finally {
     await Promise.all(contexts.map(context => context.close()));
   }

@@ -43,8 +43,6 @@ export default function Nosotros() {
       <section className="relative min-h-[50vh] flex items-center justify-center overflow-hidden bg-background pt-24">
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute inset-0 scanline opacity-10" />
-          <div className="absolute top-0 left-1/4 w-px h-full bg-gradient-to-b from-transparent via-primary/8 to-transparent" />
-          <div className="absolute top-0 right-1/4 w-px h-full bg-gradient-to-b from-transparent via-primary/5 to-transparent" />
           <div className="absolute w-[600px] h-[600px] border border-primary/5 rounded-full left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
         </div>
         <div className="relative z-10 max-w-7xl mx-auto px-6 text-center">

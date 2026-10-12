@@ -83,7 +83,7 @@ export type CourseInput = Omit<Partial<Course>, 'sections'> & { sections?: Parti
 export type ServiceNode = string | { tag: string; props: Record<string, unknown>; children: ServiceNode[] };
 export interface ManagedService {
   id: string; version: number; title: string; slug: string; short_description: string; description: string;
-  icon: string; coordinate: string; image_url: string; action_href: string; status: ContentStatus; sort_order: number;
+  icon: string; image_url: string; status: ContentStatus; sort_order: number;
   created_at?: string; updated_at?: string;
   presentation: { layout?: ServiceNode[]; original_title?: string; original_summary?: string; original_description?: string };
   seo: { title?: string; description?: string; keywords?: string };

@@ -881,7 +881,7 @@ fn normalize_slug(value: &str) -> Result<String, AppError> {
     }
     Ok(slug)
 }
-fn slugify(value: &str) -> String {
+pub(crate) fn slugify(value: &str) -> String {
     let mut out = String::new();
     let mut dash = false;
     for ch in value.trim().to_lowercase().chars() {

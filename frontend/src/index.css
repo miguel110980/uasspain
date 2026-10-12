@@ -385,6 +385,7 @@
     min(calc((100svh - var(--hero-canvas-height)) / 2),
       calc(100svh - var(--hero-canvas-width) * 0.2892466 - var(--hero-title-size) * 2 - var(--hero-copy-tail) - var(--hero-cue-clear))));
   position: relative;
+  isolation: isolate;
   width: 100%;
   min-height: 100vh;
   min-height: 100svh;
@@ -396,79 +397,64 @@
   height: var(--hero-canvas-height);
   transform: translateX(-50%);
 }
-.hero-art {
-  width: var(--hero-photo-width);
-  background-color: hsl(var(--background));
-}
-/* Extend only the photograph's outside edges. The aircraft, photo canvas and HUD
-   keep their original dimensions and positions, including on short viewports. */
-.hero-photo-extension {
+/* One continuous photo behind the native canvas prevents fractional seams.
+   Cover preserves landscape proportions; the central aircraft and HUD stay put. */
+.hero-background, .hero-background-images, .hero-background-shade {
   position: absolute;
-  top: var(--hero-canvas-top);
-  width: max(0px, calc((100% - var(--hero-photo-width)) / 2 + 1px));
-  height: var(--hero-canvas-height);
-  overflow: hidden;
+  inset: 0;
   pointer-events: none;
 }
-.hero-photo-extension::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image: var(--hero-photo);
-  /* At most the outer 300 of the source photo's 1672 pixels. Wider extensions
-     stretch this landscape strip, so they never repeat any part of the drone. */
-  background-size: max(var(--hero-photo-width), calc(100% * 5.573334)) 100%;
-  background-repeat: no-repeat;
-  transform: scaleX(-1);
-  opacity: 0.55;
-}
-.dark .hero-photo-extension::before { opacity: 0.65; }
-.light .hero-photo-extension::before { opacity: 1; }
-.hero-photo-extension::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to bottom, hsl(var(--background) / 0.45), hsl(var(--background) / 0.15), hsl(var(--background)));
-}
-.light .hero-photo-extension::after { background: linear-gradient(to bottom, transparent 65%, hsl(var(--background))); }
-.hero-photo-extension-left { left: 0; }
-.hero-photo-extension-right { right: 0; }
-.hero-photo-extension-left::before { background-position: left top; }
-.hero-photo-extension-right::before { background-position: right top; }
-.hero-photo-extension-top,
-.hero-photo-extension-top-left,
-.hero-photo-extension-top-right { top: 0; height: var(--hero-canvas-top); }
-.hero-photo-extension-top {
+.hero-background { z-index: 0; }
+.hero-background-images { opacity: 0.55; }
+.dark .hero-background-images { opacity: 0.65; }
+.light .hero-background-images { opacity: 1; }
+.hero-panorama { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.hero-art {
   width: var(--hero-photo-width);
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: hsl(var(--background));
+  mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
 }
-.hero-photo-extension-top-left { left: 0; }
-.hero-photo-extension-top-right { right: 0; }
-.hero-photo-extension-top-left::before,
-.hero-photo-extension-top-right::before {
-  background-size: max(var(--hero-photo-width), calc(100% * 5.573334)) max(var(--hero-canvas-height), calc(100% * 9.41));
-  transform: scale(-1, -1);
-}
-.hero-photo-extension-top-left::before { background-position: left top; }
-.hero-photo-extension-top-right::before { background-position: right top; }
-.hero-photo-extension-top::before {
-  /* Use only the first 100 of 941 source pixels above the photo: sky only. */
-  background-size: var(--hero-photo-width) max(var(--hero-canvas-height), calc(100% * 9.41));
-  background-position: center top;
+.hero-sky {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: var(--hero-canvas-top);
+  overflow: hidden;
   transform: scaleY(-1);
 }
-.hero-photo-extension-top::after,
-.hero-photo-extension-top-left::after,
-.hero-photo-extension-top-right::after { background: hsl(var(--background) / 0.45); }
-.light .hero-photo-extension-top::after,
-.light .hero-photo-extension-top-left::after,
-.light .hero-photo-extension-top-right::after { background: none; }
-.hero-radar-layer { top: 0; bottom: 0; left: 50%; width: var(--hero-canvas-width); transform: translateX(-50%); }
-/* Keep the photo's occlusion mask in its original position while centering the HUD. */
-.hero-radar-mask-desktop { transform: translateY(var(--hero-canvas-top)); }
-.hero-actions a { width: 100%; max-width: 100%; }
+.hero-sky img {
+  width: 100%;
+  height: max(var(--hero-canvas-height), calc(var(--hero-canvas-top) * 9.41));
+  object-fit: cover;
+  object-position: center top;
+}
+.hero-background-shade {
+  background: linear-gradient(to bottom,
+    hsl(var(--background) / 0.45) var(--hero-canvas-top),
+    hsl(var(--background) / 0.15) calc(var(--hero-canvas-top) + var(--hero-canvas-height) * 0.5),
+    hsl(var(--background)) calc(var(--hero-canvas-top) + var(--hero-canvas-height)));
+}
+.light .hero-background-shade {
+  background: linear-gradient(to bottom,
+    transparent calc(var(--hero-canvas-top) + var(--hero-canvas-height) * 0.65),
+    hsl(var(--background)) calc(var(--hero-canvas-top) + var(--hero-canvas-height)));
+}
+.hero-radar-layer { z-index: 1; top: 0; bottom: 0; left: 50%; width: var(--hero-canvas-width); transform: translateX(-50%); }
+.hero-drone-layer {
+  position: absolute;
+  z-index: 2;
+  top: var(--hero-canvas-top);
+  left: 50%;
+  width: var(--hero-photo-width);
+  height: var(--hero-canvas-height);
+  transform: translateX(-50%);
+  pointer-events: none;
+  /* Flatten photo + tint before clipping, so each child does not independently
+     antialias the same contour. This preserves the original photo at the edge. */
+  filter: opacity(1);
+  clip-path: url(#hero-drone-clip);
+}
+.hero-drone-surface { position: relative; width: 100%; height: 100%; background-color: hsl(var(--background)); }
+.hero-scroll { z-index: 10; }
+.hero-actions a { width: 100%; max-width: 100%; white-space: nowrap; }
 @media (min-width: 640px), (max-height: 500px) and (min-width: 480px) {
   .hero-actions a { width: 220px; }
 }
@@ -579,7 +565,8 @@
   .hero-radar-sweep { animation: none; }
 }
 
-.light .hero-image { opacity: 1; }
+.light .hero-image,
+.light .hero-drone-image { opacity: 1; }
 .light .hero-shade { background: linear-gradient(to bottom, transparent 65%, hsl(var(--background))); }
 .light .text-glow-cyan { text-shadow: none; color: hsl(var(--brand-cyan-text)); background: none; }
 .light [class*="backdrop-blur"] { backdrop-filter: none; -webkit-backdrop-filter: none; }

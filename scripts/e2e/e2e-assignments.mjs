@@ -47,6 +47,15 @@ try {
   gate((await assign(recipients[0].client, recipients[0].id, [students[0].id])).status === 403, 'foreign_student_cannot_be_claimed');
   const unavailable = recipients[1].id;
   for (const status of ['pendiente', 'bloqueado', 'rechazado']) {
+    if (status === 'bloqueado') {
+      // This candidate has both INSTRUCTOR and ADMIN. Blocking must now fail
+      // without changing its current state or its assignment permissions.
+      const before = sql(`SELECT to_jsonb(p)::text FROM accounts_userprofile p WHERE id='${uuid(unavailable)}'`);
+      gate((await admin.call(`/api/profiles/${unavailable}/`, 'PATCH', { status })).status === 403
+        && sql(`SELECT to_jsonb(p)::text FROM accounts_userprofile p WHERE id='${uuid(unavailable)}'`) === before,
+      'multirole_administrator_block_denied_without_mutation');
+      continue;
+    }
     check((await admin.call(`/api/profiles/${unavailable}/`, 'PATCH', { status })).status === 200, 'Candidate fixture state');
     gate(!(await teacher.call('/api/profiles/instructores/')).body.some(row => row.id === unavailable) && (await assign(teacher, unavailable, [students[0].id])).status === 400, `${status}_instructor_not_assignable`);
   }

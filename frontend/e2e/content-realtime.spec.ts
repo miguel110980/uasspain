@@ -10,6 +10,7 @@ test('services, publications and courses synchronize across independent browsers
   const visitor = await publicContext.newPage();
   const blog = await publicContext.newPage();
   const catalog = await publicContext.newPage();
+  const detail = await publicContext.newPage();
   const secondTab = await page.context().newPage();
   const titles = `TEMP_${randomUUID().replaceAll('-', '')}`;
   const created: { kind: 'services' | 'posts' | 'courses'; id: string; slug?: string }[] = [];
@@ -51,7 +52,12 @@ test('services, publications and courses synchronize across independent browsers
     console.log('CONTENT_BROWSER_STEP=create');
     const form = page.getByRole('form', { name: 'Nuevo servicio', exact: true });
     await form.getByLabel('Título', { exact: true }).fill(titles + ' service');
-    await form.getByLabel('Slug', { exact: true }).fill('temp-' + titles.toLowerCase().replaceAll('_', '-'));
+    await expect(form.getByLabel('Slug', { exact: true })).toHaveValue('');
+    await expect(form.getByLabel('Coordenada', { exact: true })).toHaveCount(0);
+    await expect(form.getByLabel('Enlace de acción', { exact: true })).toHaveCount(0);
+    await form.getByLabel('Buscar iconos', { exact: true }).fill('cultivos');
+    await form.getByRole('button', { name: 'Análisis de cultivos', exact: true }).click();
+    await expect(form.getByRole('button', { name: 'Análisis de cultivos', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await form.getByLabel('Descripción corta', { exact: true }).fill('TEMP public summary');
     await form.getByLabel('Descripción completa', { exact: true }).fill('TEMP full service description');
     await form.getByLabel('Orden', { exact: true }).fill('100001');
@@ -60,11 +66,33 @@ test('services, publications and courses synchronize across independent browsers
     const responsePromise = page.waitForResponse(response => response.url().endsWith('/api/admin/services') && response.request().method() === 'POST', { timeout: 15000 });
     await form.getByRole('button', { name: 'Guardar servicio', exact: true }).click();
     const response = await responsePromise; expect(response.status()).toBe(201); const service = await response.json(); created.push({ kind: 'services', id: service.id, slug: service.slug });
+    expect(service.slug).toBe(titles.toLowerCase().replaceAll('_', '-') + '-service');
+    expect(service.icon).toBe('Sprout');
     await expect(secondTab.getByRole('article').filter({ hasText: titles + ' service' })).toBeVisible({ timeout: 5000 });
     await expect(visitor.locator('[data-service-id="' + service.id + '"]')).toHaveCount(0);
     const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: titles + ' service', exact: true }) });
     await card.getByRole('button', { name: 'Publicar', exact: true }).click();
     await expect(visitor.locator('[data-service-id="' + service.id + '"]')).toBeAttached({ timeout: 5000 });
+    await detail.goto('/servicios/' + service.slug);
+    await expect(detail.locator('[data-service-template="hero"] h1')).toHaveText(titles + ' service');
+    await expect(detail.locator('[data-service-template="content"]')).toContainText('TEMP full service description');
+    await expect(detail.locator('[data-service-icon="Sprout"]')).toBeAttached();
+    await expect(detail.locator('meta[name="robots"]')).toHaveAttribute('content', /index, follow/);
+    const detailOrigin = await detail.evaluate(() => performance.timeOrigin);
+    await card.getByRole('button', { name: 'Editar', exact: true }).click();
+    const editForm = page.getByRole('form', { name: 'Editar servicio', exact: true });
+    await expect(editForm.getByRole('button', { name: 'Análisis de cultivos', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await editForm.getByLabel('Buscar iconos', { exact: true }).fill('precisión');
+    await editForm.getByRole('button', { name: 'Agricultura de precisión', exact: true }).click();
+    await editForm.getByLabel('Imagen', { exact: true }).setInputFiles({ name: 'fixture.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') });
+    await editForm.getByRole('button', { name: 'Guardar servicio', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Servicio guardado correctamente.' })).toBeVisible();
+    const edited = await current('services', service.id);
+    expect(edited.icon).toBe('Tractor'); expect(edited.image_url).toMatch(/^\/media\//);
+    await expect(detail.locator('[data-service-icon="Tractor"]')).toBeAttached({ timeout: 5000 });
+    await expect(detail.getByRole('img', { name: titles + ' service', exact: true })).toHaveAttribute('src', edited.image_url);
+    await expect.poll(() => detail.getByRole('img', { name: titles + ' service', exact: true }).evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+    expect(await detail.evaluate(() => performance.timeOrigin)).toBe(detailOrigin);
     const scrollBefore = await visitor.evaluate(() => scrollY);
     await patch('services', service.id, { title: titles + ' updated', short_description: 'TEMP changed summary' });
     await expect(visitor.locator('[data-service-id="' + service.id + '"]')).toContainText(titles + ' updated', { timeout: 5000 });
@@ -72,8 +100,17 @@ test('services, publications and courses synchronize across independent browsers
     await expect(secondTab.getByRole('article').filter({ hasText: titles + ' updated' })).toBeVisible({ timeout: 5000 });
     await patch('services', service.id, { status: 'draft' });
     await expect(visitor.locator('[data-service-id="' + service.id + '"]')).toHaveCount(0, { timeout: 5000 });
+    await expect(detail.getByRole('heading', { name: 'Servicio no disponible', exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(detail.locator('meta[name="robots"]')).toHaveAttribute('content', 'noindex, nofollow');
     await patch('services', service.id, { status: 'published' });
     await expect(visitor.locator('[data-service-id="' + service.id + '"]')).toBeAttached({ timeout: 5000 });
+    await expect(detail.locator('[data-service-template="hero"] h1')).toHaveText(titles + ' updated', { timeout: 5000 });
+    const renamedSlug = service.slug + '-renamed';
+    await patch('services', service.id, { slug: renamedSlug });
+    await expect(detail).toHaveURL(new RegExp('/servicios/' + renamedSlug + '$'));
+    await detail.goto('/servicios/' + service.slug);
+    await expect(detail).toHaveURL(new RegExp('/servicios/' + renamedSlug + '$'));
+    await expect(detail.locator('[data-service-template="content"]')).toContainText('TEMP full service description');
 
     console.log('CONTENT_BROWSER_STEP=posts-courses');
     for (const [kind, data, observer, changed] of [
@@ -97,12 +134,27 @@ test('services, publications and courses synchronize across independent browsers
     expect(await Promise.all([visitor, blog, catalog].map(target => target.evaluate(() => performance.timeOrigin)))).toEqual(documentOrigins);
     expect(socketFrames.some(event => event?.type === 'content_changed')).toBe(true);
 
-    for (const theme of ['light', 'dark']) for (const width of [320, 390, 768, 1440]) {
+    for (const theme of ['light', 'dark']) for (const width of [320, 390, 768, 1024, 1366, 1920, 2560, 3840]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.evaluate(t => { document.documentElement.classList.toggle('dark', t === 'dark'); document.documentElement.style.colorScheme = t; }, theme);
+      await detail.setViewportSize({ width, height: 900 });
+      await detail.evaluate(t => { document.documentElement.classList.remove('light', 'dark'); document.documentElement.classList.add(t); document.documentElement.style.colorScheme = t; }, theme);
+      const header = await detail.locator('[data-service-template="hero"]').evaluate(hero => {
+        const back = hero.querySelector('a[href="/#servicios"]')!.getBoundingClientRect();
+        const badge = hero.querySelector('[data-service-icon]')!.parentElement!.getBoundingClientRect();
+        const title = hero.querySelector('h1')!.getBoundingClientRect();
+        return { gap: badge.top - back.bottom, backCenter: back.x + back.width / 2,
+          badgeCenter: badge.x + badge.width / 2, titleCenter: title.x + title.width / 2 };
+      });
+      expect(header.gap).toBeGreaterThanOrEqual(31);
+      expect(header.gap).toBeLessThanOrEqual(33);
+      expect(Math.abs(header.backCenter - header.titleCenter)).toBeLessThan(1);
+      expect(Math.abs(header.badgeCenter - header.titleCenter)).toBeLessThan(1);
+      await page.evaluate(t => { document.documentElement.classList.remove('light', 'dark'); document.documentElement.classList.add(t); document.documentElement.style.colorScheme = t; }, theme);
       await expect(page.getByLabel('Título', { exact: true })).toBeAttached();
       if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) console.log('OVERFLOW_DIAG=' + JSON.stringify(await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, elements: Array.from(document.querySelectorAll('body *')).filter(node => node.getBoundingClientRect().right > innerWidth + 1).slice(-12).map(node => ({ tag: node.tagName, className: node.className, right: node.getBoundingClientRect().right, width: node.getBoundingClientRect().width })) }))));
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), { timeout: 3000, message: `No horizontal overflow at ${width}px in ${theme}` }).toBe(true);
+      await expect(page.getByLabel('Buscar iconos', { exact: true })).toBeAttached();
+      await page.screenshot({ path: test.info().outputPath(`services-admin-${theme}-${width}.png`), fullPage: true });
     }
     await page.setViewportSize({ width: 1440, height: 900 });
     await nav(page).getByRole('button', { name: 'Servicios', exact: true }).click();
@@ -113,6 +165,7 @@ test('services, publications and courses synchronize across independent browsers
     await expect(secondTab.getByRole('article').filter({ hasText: titles + ' offline recovery' })).toHaveCount(0, { timeout: 5000 });
     await expect(visitor.locator('[data-service-id="' + service.id + '"]')).toHaveCount(0, { timeout: 5000 });
     await expect(visitor.locator('[data-service-id]')).toHaveCount(7);
+    await expect(detail.getByRole('heading', { name: 'Servicio no disponible', exact: true })).toBeVisible({ timeout: 5000 });
     const administrator = await page.request.get('/api/auth/me/', { headers: await headers() }); expect(administrator.status()).toBe(200); expect((await administrator.json()).session_role).toBe('admin');
   } finally {
     await publicContext.setOffline(false);

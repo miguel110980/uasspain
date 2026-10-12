@@ -1,10 +1,11 @@
 import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { Radio, Eye, LogOut, Ban, History, Loader2, Wifi } from 'lucide-react';
+import { Radio, Loader2, Wifi } from 'lucide-react';
 import authService from '@/services/authService';
 import conexionesService from '@/services/conexionesService';
 import ConexionesDetailModal from '@/components/admin/ConexionesDetailModal';
+import LiveConnectionActions, { canManageLiveSession } from '@/components/admin/LiveConnectionActions';
 import { rolBadgeClass } from '@/lib/adminActivity';
 import { useRefreshableLoad } from '@/hooks/useRefreshableLoad';
 
@@ -60,6 +61,7 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
   const activas = records.filter((r) => r.estado_sesion === 'activa');
 
   const finalizarSesion = async (id) => {
+    if (!records.some(record => record.id === id && canManageLiveSession(record, readOnly))) return;
     if (!window.confirm('¿Finalizar esta sesión del usuario?')) return;
     setActionLoading((p) => ({ ...p, [id]: true }));
     try {
@@ -77,6 +79,7 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
   const finalizarTodas = async (usuario) => {
     if (!window.confirm(`¿Finalizar TODAS las sesiones activas de "${usuario}"?`)) return;
     const sesiones = activas.filter((r) => (r.usuario || r.email) === usuario);
+    if (!sesiones.length || sesiones.some(record => !canManageLiveSession(record, readOnly))) return;
     setActionLoading((p) => ({ ...p, [`all-${usuario}`]: true }));
     try {
       await conexionesService.registros.bulkUpdate(
@@ -89,13 +92,11 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
   };
 
   const bloquearUsuario = async (record) => {
+    if (!canManageLiveSession(record, readOnly) || !record.profile_id) return;
     if (!window.confirm(`¿Bloquear al usuario "${record.nombre_completo || record.usuario}"?`)) return;
     setActionLoading((p) => ({ ...p, [`blk-${record.id}`]: true }));
     try {
-      const profiles = await authService.filterProfiles({ email: record.email });
-      if (profiles.length > 0) {
-        await authService.updateProfile(profiles[0].id, { status: 'bloqueado' });
-      }
+      await authService.updateProfile(record.profile_id, { status: 'bloqueado' });
       window.alert('Usuario bloqueado correctamente.');
     } catch {
       window.alert('No se pudo bloquear al usuario.');
@@ -177,24 +178,9 @@ export default function AdminConexionesTiempoReal({ readOnly = false, title = 'C
                       {actionLoading[r.id] ? (
                         <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
                       ) : (
-                        <>
-                          <button aria-label="Ver detalles" onClick={() => setModalRecord(r)} title="Ver detalles" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded transition-all">
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
-                          {!readOnly && (
-                            <>
-                              <button aria-label="Finalizar sesión" onClick={() => finalizarSesion(r.id)} title="Finalizar sesión" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-warning hover:border-warning-border hover:bg-warning-soft rounded transition-all">
-                                <LogOut className="w-3.5 h-3.5" />
-                              </button>
-                              <button aria-label="Finalizar todas" onClick={() => finalizarTodas(r.usuario || r.email)} title="Finalizar todas" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-warning hover:border-warning-border hover:bg-warning-soft rounded transition-all">
-                                <History className="w-3.5 h-3.5" />
-                              </button>
-                              <button aria-label="Bloquear usuario" onClick={() => bloquearUsuario(r)} title="Bloquear usuario" className="w-7 h-7 flex items-center justify-center border border-border-subtle text-danger hover:border-danger-border hover:bg-danger-soft rounded transition-all">
-                                <Ban className="w-3.5 h-3.5" />
-                              </button>
-                            </>
-                          )}
-                        </>
+                        <LiveConnectionActions record={r} readOnly={readOnly}
+                          onDetails={() => setModalRecord(r)} onFinish={() => finalizarSesion(r.id)}
+                          onFinishAll={() => finalizarTodas(r.usuario || r.email)} onBlock={() => bloquearUsuario(r)} />
                       )}
                     </div>
                   </td>

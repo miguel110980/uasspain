@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { adminClient, apiClient, check, sleep, sql, uuid } from './auth-fixtures.mjs';
+import { adminClient, apiClient, check, loginFixtureAdministrator, sleep, sql, uuid } from './auth-fixtures.mjs';
 
 let passed = 0;
 const gate = (condition, name) => { check(condition, name); passed++; console.log(`PASS | backup_${name}`); };
@@ -96,8 +96,15 @@ gate((await call('restore/', 'POST', { origin: 'local', job_id: full.id, confirm
 const restore = await call('restore/', 'POST', { origin: 'local', job_id: full.id, confirmed: true, confirmation_text: 'RESTAURAR' });
 gate(restore.status === 202, 'restore_is_queued');
 let restored;
+let reauthenticatedAfterRestore = false;
 for (let attempt = 0; attempt < 180; attempt++) {
   const result = await call(`restore-status/?restore_id=${restore.body.restore_id}`);
+  // Restoring historical data can revoke the current fixture session.
+  if (result.status === 401 && !reauthenticatedAfterRestore) {
+    await loginFixtureAdministrator(admin);
+    reauthenticatedAfterRestore = true;
+    continue;
+  }
   if (result.body?.state === 'done' || result.body?.state === 'failed') { restored = result.body; break; }
   await sleep(300);
 }

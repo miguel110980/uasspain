@@ -58,4 +58,16 @@ describe('canonical hero background', () => {
     expect(picture('light')).not.toMatch(/\/images\/hero[_-](?!claro)/);
     expect(picture('light')).not.toContain('prefers-color-scheme');
   });
+
+  it('lets the browser reuse the preloaded image for the continuous landscape, sky and drone layers', () => {
+    const hero = renderToStaticMarkup(<MemoryRouter><HeroSection /></MemoryRouter>);
+    const images = [...hero.matchAll(/<img\b[^>]*>/g)].map(match => match[0]);
+    expect(images).toHaveLength(4);
+    for (const attribute of ['src', 'srcSet', 'sizes']) {
+      const values = images.map(image => image.match(new RegExp(`${attribute}="([^"]+)"`))?.[1]);
+      expect(values.every(Boolean)).toBe(true);
+      expect(new Set(values).size).toBe(1);
+    }
+    expect(hero).not.toContain('--hero-photo:');
+  });
 });

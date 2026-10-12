@@ -163,7 +163,7 @@ export default function AdminSeguridad() {
         )}
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* IPs sospechosas */}
         <div className="glass-card p-5">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1 flex items-center gap-2">

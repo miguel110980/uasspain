@@ -3,14 +3,15 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Edit3, Eye, EyeOff, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
 import contentService, { type ManagedService, type ServiceInput, type ServiceNode } from '@/services/contentService';
 import { ServicePresentation } from '@/lib/servicePresentation';
-import { SERVICE_ICONS } from '@/lib/serviceIcons';
+import ServiceIconSelector from '@/components/admin/ServiceIconSelector';
+import { validateServiceInput } from '@/lib/serviceValidation';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 
-const empty = (): ServiceInput => ({ title: '', slug: '', short_description: '', description: '', icon: 'Shield', coordinate: '', image_url: '', action_href: '', status: 'draft', sort_order: 0, presentation: {}, seo: {} });
+const empty = (): ServiceInput => ({ title: '', slug: '', short_description: '', description: '', icon: 'Shield', image_url: '', status: 'draft', sort_order: 0, presentation: {}, seo: {} });
 const field = 'w-full min-w-0 mt-2 bg-surface-muted border border-border rounded px-3 py-2 text-sm focus-visible:outline-primary';
 const errorText = (error: unknown) => (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'No se pudo completar la operación. Vuelve a intentarlo.';
 function textNodes(nodes: ServiceNode[], prefix = ''): { path: string; value: string }[] {
-  return nodes.flatMap((node, i) => { const path = prefix ? `${prefix}.${i}` : String(i); return typeof node === 'string' ? (node.trim() ? [{ path, value: node }] : []) : textNodes(node.children, path); });
+  return nodes.flatMap((node, i) => { const path = prefix ? `${prefix}.${i}` : String(i); return typeof node === 'string' ? (node.trim() || node === '' ? [{ path, value: node }] : []) : textNodes(node.children, path); });
 }
 function changeText(nodes: ServiceNode[], path: number[], text: string): ServiceNode[] {
   return nodes.map((node, index) => index !== path[0] ? node : path.length === 1 ? text : typeof node === 'string' ? node : { ...node, children: changeText(node.children, path.slice(1), text) });
@@ -31,8 +32,8 @@ export default function AdminServicios({ active = true }: { active?: boolean }) 
   const [pendingDelete, setPendingDelete] = useState<ManagedService | null>(null);
   const reset = () => { setForm(empty()); setEditing(null); setFile(null); setPreview(false); };
   const edit = (service: ManagedService) => {
-    const { title, slug, short_description, description, icon, coordinate, image_url, action_href, status, sort_order, presentation, seo } = service;
-    setEditing(service); setForm({ title, slug, short_description, description, icon, coordinate, image_url, action_href, status, sort_order, presentation: structuredClone(presentation), seo: { ...seo } }); setFile(null); setError(''); setNotice('');
+    const { title, slug, short_description, description, icon, image_url, status, sort_order, presentation, seo } = service;
+    setEditing(service); setForm({ title, slug, short_description, description, icon, image_url, status, sort_order, presentation: structuredClone(presentation), seo: { ...seo } }); setFile(null); setError(''); setNotice('');
   };
   const run = async (action: () => Promise<void>) => {
     if (lock.current) return; lock.current = true; setBusy(true); setError(''); setNotice('');
@@ -42,7 +43,9 @@ export default function AdminServicios({ active = true }: { active?: boolean }) 
   };
   const save = (event: React.FormEvent) => {
     event.preventDefault(); void run(async () => {
-      const input = { ...form, action_href: form.action_href || `/servicios/${form.slug}` };
+      const validation = validateServiceInput(form);
+      if (validation) { setError(validation); return; }
+      const input = { ...form, slug: form.slug?.trim() || undefined };
       let saved = editing ? await contentService.updateService(editing.id, input, editing.version) : await contentService.createService(input);
       // Keep the committed record in the form if a subsequent upload fails;
       // retrying never creates a second service or repeats a stale update.
@@ -67,17 +70,18 @@ export default function AdminServicios({ active = true }: { active?: boolean }) 
     <form onSubmit={save} aria-label={editing ? 'Editar servicio' : 'Nuevo servicio'} className="glass-card p-5 space-y-4">
       <div className="flex flex-wrap justify-between gap-2"><h3 className="font-heading font-bold min-w-0 max-w-full break-words">{editing ? `Editar ${editing.title}` : 'Nuevo servicio'}</h3><button type="button" disabled={busy} onClick={reset} className="text-sm text-primary"><Plus className="inline w-4 h-4" />Nuevo servicio</button></div>
       <fieldset disabled={busy} className="space-y-4 min-w-0">
-        <div className="grid md:grid-cols-2 gap-4"><label className="text-sm">Título<input required maxLength={180} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={field} /></label><label className="text-sm">Slug<input required pattern="[a-z0-9]+(-[a-z0-9]+)*" maxLength={180} value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value, action_href: form.action_href === `/servicios/${form.slug}` ? `/servicios/${e.target.value}` : form.action_href })} className={field} /></label></div>
+        <div className="grid md:grid-cols-2 gap-4"><label className="text-sm">Título<input required maxLength={180} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={field} /></label><label className="text-sm">Slug<input pattern="[a-zA-Z0-9À-ÿ ]+(-[a-zA-Z0-9À-ÿ ]+)*" maxLength={180} value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} placeholder="Automático desde el título" className={field} /></label></div>
         <label className="block text-sm">Descripción corta<textarea maxLength={600} rows={3} value={form.short_description} onChange={e => setForm({ ...form, short_description: e.target.value })} className={field} /></label>
         <label className="block text-sm">Descripción completa<textarea maxLength={100000} rows={6} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className={field} /></label>
-        <div className="grid md:grid-cols-3 gap-4"><label className="text-sm">Icono<select value={form.icon} onChange={e => setForm({ ...form, icon: e.target.value })} className={field}>{Object.keys(SERVICE_ICONS).map(icon => <option key={icon}>{icon}</option>)}</select></label><label className="text-sm">Coordenada<input maxLength={80} value={form.coordinate} onChange={e => setForm({ ...form, coordinate: e.target.value })} className={field} /></label><label className="text-sm">Orden<input type="number" min={0} max={2147483647} value={form.sort_order} onChange={e => setForm({ ...form, sort_order: Number(e.target.value) })} className={field} /></label></div>
-        <label className="block text-sm">Enlace de acción<input maxLength={600} value={form.action_href} onChange={e => setForm({ ...form, action_href: e.target.value })} placeholder={`/servicios/${form.slug || 'slug'}`} className={field} /></label>
+        <ServiceIconSelector value={form.icon || 'Shield'} onChange={icon => setForm({ ...form, icon })} />
+        <label className="block text-sm">Orden<input type="number" required min={0} max={2147483647} step={1} value={form.sort_order} onChange={e => setForm({ ...form, sort_order: Number(e.target.value) })} className={field} /></label>
         <div className="grid md:grid-cols-2 gap-4"><label className="text-sm">Estado<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as 'draft' | 'published' })} className={field}><option value="draft">Borrador</option><option value="published">Publicado</option></select></label><label className="text-sm">Imagen<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={e => { const selected = e.target.files?.[0]; if (selected && (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(selected.type) || selected.size === 0 || selected.size > 10 * 1024 * 1024)) { setError('Selecciona una imagen válida de hasta 10 MB.'); e.target.value = ''; return; } setFile(selected || null); }} className={field} /></label></div>
         <label className="block text-sm">Reutilizar imagen<select value={form.image_url} onChange={e => { setForm({ ...form, image_url: e.target.value }); setFile(null); }} className={field}><option value="">Sin imagen</option>{[...new Set([...resources, form.image_url].filter(Boolean))].map(url => <option key={url} value={url}>{url}</option>)}</select></label>
         {form.image_url && <img src={form.image_url} alt="Imagen actual del servicio" className="max-h-40 max-w-full object-contain" />}
         <details><summary className="cursor-pointer text-sm">Contenido complementario y SEO</summary><div className="space-y-4 mt-4">
           {(['title', 'description', 'keywords'] as const).map(key => <label key={key} className="block text-sm">SEO {key}<input maxLength={600} value={form.seo?.[key] || ''} onChange={e => setForm({ ...form, seo: { ...form.seo, [key]: e.target.value } })} className={field} /></label>)}
-          {textNodes(form.presentation?.layout || []).map(({ path, value }, index) => <label key={path} className="block text-sm">Texto complementario {index + 1}<textarea rows={2} value={value} onChange={e => setForm({ ...form, presentation: { ...form.presentation, layout: changeText(form.presentation?.layout || [], path.split('.').map(Number), e.target.value) } })} className={field} /></label>)}
+          {textNodes(form.presentation?.layout || []).map(({ path, value }, index) => <label key={path} className="block text-sm">Texto complementario {index + 1}<textarea maxLength={100000} rows={2} value={value} onChange={e => setForm({ ...form, presentation: { ...form.presentation, layout: changeText(form.presentation?.layout || [], path.split('.').map(Number), e.target.value) } })} className={field} /></label>)}
+          <button type="button" className="text-sm text-primary" onClick={() => setForm({ ...form, presentation: { ...form.presentation, layout: [...(form.presentation?.layout?.length ? form.presentation.layout : [{ tag: 'section', props: {}, children: [] }]), { tag: 'section', props: {}, children: [{ tag: 'h2', props: {}, children: [''] }, { tag: 'p', props: {}, children: [''] }] }] } })}>Añadir bloque informativo</button>
         </div></details>
       </fieldset>
       <div className="flex flex-wrap gap-3"><button disabled={busy || changed} className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-xs font-bold uppercase rounded disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}Guardar servicio</button><button type="button" onClick={() => setPreview(!preview)} className="px-4 py-2 border border-border rounded text-sm"><Eye className="inline w-4 h-4 mr-2" />Vista previa</button></div>

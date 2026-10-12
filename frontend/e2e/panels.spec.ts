@@ -146,8 +146,8 @@ test('student cannot enter administration', async ({ page }) => {
   expect(response.status()).toBe(403);
 });
 
-test('chat messages appear bidirectionally without a page reload', async ({ browser }) => {
-  const contexts = await Promise.all([0, 1].map(() => browser.newContext({ baseURL: 'http://127.0.0.1:8011' })));
+test('chat messages appear bidirectionally without a page reload', async ({ browser }, testInfo) => {
+  const contexts = await Promise.all([0, 1].map(() => browser.newContext({ baseURL: testInfo.project.use.baseURL, ignoreHTTPSErrors: testInfo.project.use.ignoreHTTPSErrors })));
   try {
     const instructor = await contexts[0].newPage();
     const student = await contexts[1].newPage();
@@ -169,10 +169,10 @@ test('chat messages appear bidirectionally without a page reload', async ({ brow
   } finally { await Promise.all(contexts.map(context => context.close())); }
 });
 
-test('three participants exchange real WebRTC media and release devices on hangup', async ({ browser }) => {
+test('three participants exchange real WebRTC media and release devices on hangup', async ({ browser }, testInfo) => {
   test.setTimeout(120_000);
   const contexts = await Promise.all([0, 1, 2].map(() => browser.newContext({
-    baseURL: 'http://127.0.0.1:8011', permissions: ['camera', 'microphone'],
+    baseURL: testInfo.project.use.baseURL, ignoreHTTPSErrors: testInfo.project.use.ignoreHTTPSErrors, permissions: ['camera', 'microphone'],
   })));
   try {
     const pages = await Promise.all(contexts.map(context => context.newPage()));

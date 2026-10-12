@@ -4,27 +4,43 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { X509Certificate, createHash } from 'node:crypto';
+import https from 'node:https';
+import http from 'node:http';
 import fixture from './ui-fixtures.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const origin = process.env.UI_AUDIT_ORIGIN || 'https://localhost';
 const folder = path.resolve(process.env.UI_AUDIT_REPORT || path.join(root, '..', '.run', 'frontend-ui-audit'));
 const engine = process.env.UI_AUDIT_BROWSER || 'chromium';
-const widths = (process.env.UI_AUDIT_WIDTHS || '320,390,768,1280,1440,2560').split(',').map(Number);
+const widths = (process.env.UI_AUDIT_WIDTHS || '320,375,390,768,1024,1366,1440,1920,2560,3840').split(',').map(Number);
 const roles = (process.env.UI_AUDIT_ROLES || 'public,admin,instructor,alumno').split(',');
 const live = process.env.UI_AUDIT_LIVE === 'true';
 const seed = live ? await (await import('../../scripts/e2e/concurrent-fixtures.mjs')).concurrentFixtures(8) : null;
 const report = { origin, engine, widths, liveBackend: live, screens: [], errors: [], warnings: [], failures: [], writesIntercepted: 0 };
 await mkdir(folder, { recursive: true });
 const app = await readFile(path.join(root, 'src', 'App.tsx'), 'utf8');
+const ca = await readFile(path.join(root, '..', '.secrets/tls/ca.crt'));
+// Public service routes are managed in PostgreSQL, rather than declared one
+// by one in App. Read only their published metadata for complete route coverage.
+const services = await new Promise((resolve, reject) => {
+  const transport = new URL(origin).protocol === 'https:' ? https : http;
+  const request = transport.get(origin + '/api/services', { ca, timeout: 15000 }, response => {
+    let body = ''; response.on('data', chunk => { body += chunk; });
+    response.on('end', () => { try { assert.equal(response.statusCode, 200); resolve(JSON.parse(body)); } catch (error) { reject(error); } });
+  });
+  request.on('error', reject); request.on('timeout', () => request.destroy(new Error('Public catalog timeout')));
+});
 const publicRoutes = [...app.matchAll(/<Route path="([^"]+)"/g)].map(m => m[1])
-  .filter(route => !route.includes('*') && !['/admin', '/instructor', '/alumno', '/elegir-panel'].includes(route));
+  .filter(route => !route.includes('*') && !route.includes(':') && !['/admin', '/instructor', '/alumno', '/elegir-panel', '/restablecer-contrasena'].includes(route));
 const courses = live ? (await seed.admin.call('/api/courses')).body : fixture.courses;
-publicRoutes.push(...courses.map(course => '/formacion/' + course.slug), '/ruta-inexistente-' + 'x'.repeat(120));
-const browser = await ({ chromium, firefox, webkit })[engine].launch();
+publicRoutes.push(...services.map(service => '/servicios/' + encodeURIComponent(service.slug)), ...courses.map(course => '/formacion/' + course.slug.split('/').map(encodeURIComponent).join('/')), '/ruta-inexistente-' + 'x'.repeat(120));
+const cert = new X509Certificate(await readFile(path.join(root, '..', '.secrets/tls/edge.crt')));
+const pin = createHash('sha256').update(cert.publicKey.export({ type: 'spki', format: 'der' })).digest('base64');
+const browser = await ({ chromium, firefox, webkit })[engine].launch(engine === 'chromium' ? { args: ['--ignore-certificate-errors-spki-list=' + pin] } : {});
 
 async function setup(role) {
-  const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  const context = await browser.newContext({ ignoreHTTPSErrors: false, viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   const page = await context.newPage();
   page.on('pageerror', error => report.errors.push({ role, message: error.message }));
   page.on('console', message => { if (message.type() === 'warning') report.warnings.push({ role, message: message.text() }); });
@@ -44,7 +60,14 @@ async function setup(role) {
       return route.fulfill({ status: p.includes('refresh') ? 401 : 200, json: { detail: 'Respuesta sintética' } });
     }
     let data = [];
-    if (p === '/api/courses' || p === '/api/admin/courses') data = fixture.courses;
+    if (p === '/api/public/content/versions/') data = { services: '1', posts: '1', courses: '1' };
+    else if (p === '/api/services' || p === '/api/admin/services') data = services;
+    else if (p.startsWith('/api/services/')) {
+      data = services.find(service => service.slug === decodeURIComponent(p.slice('/api/services/'.length)));
+      if (!data) return route.fulfill({ status: 404, json: { detail: 'Servicio no encontrado' } });
+    }
+    else if (p === '/api/admin/content-images') data = [];
+    else if (p === '/api/courses' || p === '/api/admin/courses') data = fixture.courses;
     else if (p.startsWith('/api/courses/')) {
       data = fixture.courses.find(course => course.slug === decodeURIComponent(p.slice('/api/courses/'.length)));
       if (!data) return route.fulfill({ status: 404, json: { detail: 'Curso no encontrado' } });

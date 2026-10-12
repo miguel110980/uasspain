@@ -129,6 +129,8 @@ pub struct DeleteManyQuery {
 
 #[derive(Debug, FromRow, Serialize)]
 pub struct AccessLogRecord {
+    #[sqlx(default)]
+    can_manage_session: bool,
     id: Uuid,
     profile_id: Option<Uuid>,
     usuario: String,
@@ -361,8 +363,9 @@ pub async fn list_access_logs(
 ) -> Result<Json<Vec<AccessLogRecord>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin", "instructor"])?;
-    let rows = sqlx::query_as::<_, AccessLogRecord>("SELECT id,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,host(direccion_ip)::text AS direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion::integer,fecha_cierre,created_date FROM conexiones_registroconexion WHERE ($1::text IS NULL OR rol=$1) AND ($2::text IS NULL OR estado_acceso=$2) AND ($3::text IS NULL OR estado_sesion=$3) AND ($5='admin' OR profile_id=$6 OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=profile_id AND p.assigned_instructor_id=$6)) AND ($7::uuid IS NULL OR profile_id=$7) ORDER BY fecha_hora DESC NULLS LAST,created_date DESC LIMIT $4")
+    let mut rows = sqlx::query_as::<_, AccessLogRecord>("SELECT id,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,host(direccion_ip)::text AS direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion::integer,fecha_cierre,created_date FROM conexiones_registroconexion WHERE ($1::text IS NULL OR rol=$1) AND ($2::text IS NULL OR estado_acceso=$2) AND ($3::text IS NULL OR estado_sesion=$3) AND ($5='admin' OR profile_id=$6 OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=profile_id AND p.assigned_instructor_id=$6)) AND ($7::uuid IS NULL OR profile_id=$7) ORDER BY fecha_hora DESC NULLS LAST,created_date DESC LIMIT $4")
         .bind(query.rol).bind(query.estado_acceso).bind(query.estado_sesion).bind(query.limit.unwrap_or(200).clamp(1,500)).bind(&claims.role).bind(claims.profile_id).bind(query.profile_id).fetch_all(pool(&state)?).await?;
+    annotate_session_permissions(pool(&state)?, &mut rows, &claims).await?;
     decrypt_access_logs(rows, &state)
 }
 
@@ -375,7 +378,9 @@ pub async fn access_log_detail(
     require_role(&claims, &["admin", "instructor"])?;
     let row = sqlx::query_as::<_, AccessLogRecord>("SELECT id,profile_id,usuario,nombre_completo,email,rol,fecha_hora,estado_acceso,motivo_fallo,metodo_autenticacion,ultima_actividad,host(direccion_ip)::text AS direccion_ip,pais,ciudad,region,isp,hostname,zona_horaria,navegador,version_navegador,sistema_operativo,tipo_dispositivo,session_id,estado_sesion,tiempo_sesion::integer,fecha_cierre,created_date FROM conexiones_registroconexion WHERE id=$1 AND ($2='admin' OR profile_id=$3 OR EXISTS (SELECT 1 FROM accounts_userprofile p WHERE p.id=profile_id AND p.assigned_instructor_id=$3))")
         .bind(id).bind(&claims.role).bind(claims.profile_id).fetch_optional(pool(&state)?).await?.ok_or(AppError::NotFound)?;
-    let row = decrypt_access_logs(vec![row], &state)?
+    let mut rows = vec![row];
+    annotate_session_permissions(pool(&state)?, &mut rows, &claims).await?;
+    let row = decrypt_access_logs(rows, &state)?
         .0
         .pop()
         .ok_or(AppError::Internal)?;
@@ -391,7 +396,10 @@ pub async fn update_access_log(
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin"])?;
     validate_session_state(input.estado_sesion.as_deref())?;
-    let row = update_access_row(pool(&state)?, id, &input).await?;
+    let mut tx = pool(&state)?.begin().await?;
+    protect_session_targets(&mut tx, &[id]).await?;
+    let row = update_access_row(&mut *tx, id, &input).await?;
+    tx.commit().await?;
     let row = decrypt_access_logs(vec![row], &state)?
         .0
         .pop()
@@ -418,6 +426,16 @@ pub async fn bulk_update_access_logs(
     }
     let mut tx = pool(&state)?.begin().await?;
     let mut rows = Vec::with_capacity(input.items.len());
+    let ids = input
+        .items
+        .iter()
+        .map(|item| {
+            item.id
+                .ok_or_else(|| AppError::Validation("id es obligatorio.".into()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // Authorize and lock every target before making any changes in the batch.
+    protect_session_targets(&mut tx, &ids).await?;
     for item in &input.items {
         validate_session_state(item.estado_sesion.as_deref())?;
         let id = item
@@ -1209,6 +1227,50 @@ fn message(value: &str) -> Result<&str, AppError> {
     }
     Ok(value)
 }
+async fn annotate_session_permissions(
+    pool: &sqlx::PgPool,
+    rows: &mut [AccessLogRecord],
+    claims: &Claims,
+) -> Result<(), AppError> {
+    let ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+    let permissions = sqlx::query_as::<_, (Uuid, bool)>("SELECT r.id, COALESCE(p.role<>'admin' AND NOT (p.roles ? 'admin') AND (s.id IS NULL OR s.profile_id=p.id), FALSE) FROM conexiones_registroconexion r LEFT JOIN accounts_userprofile p ON p.id=r.profile_id LEFT JOIN auth_tab_session s ON s.session_key=r.session_id WHERE r.id=ANY($1)")
+        .bind(&ids).fetch_all(pool).await?;
+    for row in rows {
+        row.can_manage_session = claims.role == "admin"
+            && permissions
+                .iter()
+                .any(|(id, allowed)| *id == row.id && *allowed);
+    }
+    Ok(())
+}
+
+async fn protect_session_targets(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    ids: &[Uuid],
+) -> Result<(), AppError> {
+    // Lock real profiles first, in the same order as profile administration.
+    // Resolve both the access-log identity and the actual tab-session owner.
+    let profiles = sqlx::query_as::<_, (Uuid, String, Value)>("SELECT id,role,roles FROM accounts_userprofile WHERE id IN (SELECT profile_id FROM conexiones_registroconexion WHERE id=ANY($1) UNION SELECT s.profile_id FROM auth_tab_session s JOIN conexiones_registroconexion r ON r.session_id=s.session_key WHERE r.id=ANY($1)) ORDER BY id FOR UPDATE")
+        .bind(ids).fetch_all(&mut **tx).await?;
+    let targets = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<Uuid>)>("SELECT r.id,r.profile_id,s.profile_id FROM conexiones_registroconexion r LEFT JOIN auth_tab_session s ON s.session_key=r.session_id WHERE r.id=ANY($1) ORDER BY r.id FOR UPDATE OF r")
+        .bind(ids).fetch_all(&mut **tx).await?;
+    if ids.iter().any(|id| !targets.iter().any(|row| row.0 == *id)) {
+        return Err(AppError::NotFound);
+    }
+    if profiles
+        .iter()
+        .any(|(_, role, roles)| crate::users::is_administrator(role, roles))
+        || targets.iter().any(|(_, profile, owner)| {
+            profile.is_none()
+                || owner.is_some_and(|id| Some(id) != *profile)
+                || !profiles.iter().any(|(id, _, _)| Some(*id) == *profile)
+        })
+    {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
 async fn update_access_row<'e, E>(
     executor: E,
     id: Uuid,

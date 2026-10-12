@@ -1,16 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, ChevronDown, Shield, Cpu, Globe } from 'lucide-react';
-import { IMAGES } from '@/lib/images';
+import { HERO_IMAGE } from '@/lib/images';
 
 const badges = [
   { icon: Shield, text: 'Certificado AESA' },
   { icon: Cpu, text: 'Tecnología RTK' },
   { icon: Globe, text: 'Cobertura Nacional' },
 ];
-
-// All responsive variants belong to the same existing photo, in both themes.
-const heroImage = IMAGES.hero.replace('hero_', 'hero-').replace('.webp', '');
 
 // Every HUD element uses this same circular coordinate system. Angles are
 // measured clockwise from the right-hand axis, in SVG user units.
@@ -25,9 +22,9 @@ const RADAR_SIDE_TRACK_RADIUS = RADAR_TRACK_RADIUS - RADAR_SIDE_TRACK_OFFSET;
 // inset side rail. Its angle follows its radius instead of shortening the arc.
 const RADAR_ACCENT_LENGTH = RADAR_TRACK_RADIUS * 16 * Math.PI / 180;
 const RADAR_SWEEP_ANGLE = -63;
-// Crop only the mask's coordinate viewport, matching the existing photo canvas.
-// The mask scales by width and stays at the photo's top, independently of the HUD.
-const PHOTO_MASK_WIDTH = 941 * 1395 / 1127;
+// Foreground silhouette in the original photograph's 1672 x 941 coordinates.
+// Include the camera, landing legs and blurred propellers, not just the fuselage.
+const DRONE_OUTLINE = 'M594 224L596 209Q609 199 625 209L631 227L708 227Q711 214 738 205L789 192Q826 187 846 198L872 207L878 198L881 185Q895 176 909 185L916 216L1039 224L1041 213Q1057 201 1072 212L1075 245L1067 252L1062 284L1048 285L1052 253L923 257L917 277L906 294L897 296L891 312L880 313L874 301L823 304L814 314L801 320L785 322L765 319L751 315L742 306L741 286L748 276L750 266L737 259L732 253L632 250L628 252L625 302L613 304L606 278L601 253L594 247Z';
 const radarPoint = (radius: number, angle: number) => {
   const radians = angle * Math.PI / 180;
   return { x: RADAR_CENTER_X + radius * Math.cos(radians), y: RADAR_CENTER_Y + radius * Math.sin(radians) };
@@ -83,17 +80,20 @@ const radarNodes = [
 export default function HeroSection() {
   return (
     <section id="inicio" className="hero-shell relative w-full overflow-hidden bg-background">
-      <div className="hero-stage" style={{ '--hero-photo': `url("${IMAGES.hero}")` } as React.CSSProperties}>
-        <div className="hero-photo-extension hero-photo-extension-left" aria-hidden="true" />
-        <div className="hero-photo-extension hero-photo-extension-right" aria-hidden="true" />
-        <div className="hero-photo-extension hero-photo-extension-top-left" aria-hidden="true" />
-        <div className="hero-photo-extension hero-photo-extension-top-right" aria-hidden="true" />
-        <div className="hero-photo-extension hero-photo-extension-top" aria-hidden="true" />
-        <div className="hero-art absolute">
-          <picture>
-            <img src={IMAGES.hero} srcSet={`${heroImage}-640.webp 640w, ${heroImage}-1280.webp 1280w, ${heroImage}-1672.webp 1672w`} sizes="(max-width: 767px) min(201vw, 976px), min(143.6vw, 2004px)" width={1672} height={941} alt="Drone aéreo profesional" fetchPriority="high" className="hero-image w-full h-full object-contain opacity-55 dark:opacity-65" />
-          </picture>
-          <div className="hero-shade absolute inset-0 bg-gradient-to-b from-background/45 via-background/15 to-background" />
+      <div className="hero-stage">
+        <div className="hero-background">
+          <div className="hero-background-images">
+            <img {...HERO_IMAGE} width={1672} height={941} alt="" fetchPriority="high" className="hero-panorama" />
+            <div className="hero-sky" aria-hidden="true">
+              <img {...HERO_IMAGE} width={1672} height={941} alt="" fetchPriority="high" />
+            </div>
+            <div className="hero-art absolute">
+              <picture>
+                <img {...HERO_IMAGE} width={1672} height={941} alt="Drone aéreo profesional" fetchPriority="high" className="hero-image w-full h-full object-contain" />
+              </picture>
+            </div>
+          </div>
+          <div className="hero-background-shade" aria-hidden="true" />
         </div>
 
         <div className="hero-radar-layer absolute pointer-events-none select-none" aria-hidden="true">
@@ -116,16 +116,8 @@ export default function HeroSection() {
                 <stop offset="0.16" stopColor="currentColor" stopOpacity="0.45" />
                 <stop offset="1" stopColor="currentColor" stopOpacity="0" />
               </radialGradient>
-              {/* Occlude the overlay with the silhouette in the existing photo's coordinates. */}
-              <path id="hero-drone-silhouette" d="M593 222l7-36q19-12 40 0l8 31 149-7q22-20 57-18l26 9 6-20q21-12 35 3l4 39 120-8 3-32q19-8 33 7l2 50-14 11-4 31-11-24-115-11-22 14-12 23-50 1 3 32-38 13-38-18-4-32-35-28-95-8-12 37-14-6v-34z" />
-              <mask id="hero-radar-drone-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%">
-                <rect width="100%" height="100%" fill="white" />
-                <svg className="hero-radar-mask-desktop" width="100%" height="100%" viewBox={`${(1672 - PHOTO_MASK_WIDTH) / 2} 0 ${PHOTO_MASK_WIDTH} 941`} preserveAspectRatio="xMidYMin meet">
-                  <use href="#hero-drone-silhouette" fill="black" />
-                </svg>
-              </mask>
             </defs>
-            <g mask="url(#hero-radar-drone-mask)">
+            <g>
               <svg className="hero-radar-dial" width="100%" height="100%" viewBox="0 0 1395 1127" preserveAspectRatio="xMidYMid meet">
                 <g stroke="currentColor" strokeWidth="1.2">
                   {radarRings.map(({ radius, opacity, dots, width }) => (
@@ -166,6 +158,25 @@ export default function HeroSection() {
               </svg>
             </g>
           </svg>
+        </div>
+
+        {/* An opaque foreground composition preserves the photograph's original
+            tint while physically covering every radar effect beneath the drone. */}
+        <div className="hero-drone-layer" aria-hidden="true">
+          <svg className="hero-drone-coordinates absolute inset-0 w-full h-full" viewBox="0 0 1672 941" preserveAspectRatio="xMidYMid meet" focusable="false">
+            <defs>
+              <clipPath id="hero-drone-clip" clipPathUnits="objectBoundingBox">
+                <path className="hero-drone-outline" transform="scale(0.000598086124401914 0.001062699256110521)" d={DRONE_OUTLINE} />
+                <ellipse transform="scale(0.000598086124401914 0.001062699256110521)" cx="610" cy="201" rx="151" ry="23" />
+                <ellipse transform="scale(0.000598086124401914 0.001062699256110521)" cx="898" cy="181" rx="134" ry="21" />
+                <ellipse transform="scale(0.000598086124401914 0.001062699256110521)" cx="1058" cy="209" rx="145" ry="20" />
+              </clipPath>
+            </defs>
+          </svg>
+            <div className="hero-drone-surface">
+              <img {...HERO_IMAGE} width={1672} height={941} alt="" fetchPriority="high" className="hero-drone-image w-full h-full object-contain opacity-55 dark:opacity-65" />
+              <div className="hero-shade absolute inset-0 bg-gradient-to-b from-background/45 via-background/15 to-background" />
+            </div>
         </div>
 
         <div className="hero-content relative z-10 w-full mx-auto flex flex-col items-center text-center">

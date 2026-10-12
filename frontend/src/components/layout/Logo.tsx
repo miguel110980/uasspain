@@ -54,6 +54,7 @@ export default function Logo({ size = 'md', withTagline = true, to = '/', classN
           sizes={size === 'footer' ? '48px' : size === 'header' ? '(max-width: 767px) 56px, 104px' : '152px'}
           width={256}
           height={171}
+          loading={size === 'footer' ? 'lazy' : 'eager'}
           alt="UASSPAIN"
           className={`${s.img} w-auto object-contain relative z-10`}
         />

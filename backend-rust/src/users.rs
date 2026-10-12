@@ -261,6 +261,9 @@ pub async fn update(
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(AppError::NotFound)?;
+    // Check the locked, persisted roles before accepting a role replacement.
+    // A forged PATCH cannot demote and block an administrator in one request.
+    protect_administrator_from_block(&current.role, &current.roles, input.status.as_deref())?;
     match claims.role.as_str() {
         "alumno" if id == claims.profile_id => {
             input.status = None;
@@ -438,6 +441,24 @@ pub async fn update(
     }
     tx.commit().await?;
     detail(State(state), headers, Path(id)).await
+}
+
+pub(crate) fn is_administrator(role: &str, roles: &serde_json::Value) -> bool {
+    role == "admin"
+        || roles
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value == "admin"))
+}
+
+fn protect_administrator_from_block(
+    role: &str,
+    roles: &serde_json::Value,
+    status: Option<&str>,
+) -> Result<(), AppError> {
+    if status == Some("bloqueado") && is_administrator(role, roles) {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
 }
 
 pub async fn delete(
@@ -653,6 +674,26 @@ pub fn require_admin(role: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::{normalize_role_change, require_admin};
+    #[test]
+    fn blocking_checks_persisted_administrator_roles() {
+        for (role, roles, protected) in [
+            ("admin", serde_json::json!([]), true),
+            (
+                "instructor",
+                serde_json::json!(["instructor", "admin"]),
+                true,
+            ),
+            ("alumno", serde_json::json!(["alumno"]), false),
+            ("instructor", serde_json::json!(["instructor"]), false),
+        ] {
+            assert_eq!(
+                super::protect_administrator_from_block(role, &roles, Some("bloqueado")).is_err(),
+                protected
+            );
+            assert!(super::protect_administrator_from_block(role, &roles, Some("activo")).is_ok());
+            assert!(super::protect_administrator_from_block(role, &roles, None).is_ok());
+        }
+    }
     #[test]
     fn two_factor_override_distinguishes_omitted_inherited_and_explicit() {
         for (body, expected) in [

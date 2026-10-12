@@ -18,6 +18,7 @@ services:
     tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     volumes:
       - ./scripts/e2e/realtime-nginx.conf:/etc/nginx/realtime-e2e.conf:ro
+      - e2e_media:/media_data:ro
       - ./.secrets/tls/edge.crt:/run/test-tls/cert:ro
       - ./.secrets/tls/edge.key:/run/test-tls/key:ro
     ports: ['127.0.0.1:8444:8443']
