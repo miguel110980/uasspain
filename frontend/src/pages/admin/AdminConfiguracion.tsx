@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import authService from '@/services/authService';
 import RuntimeIntegrationForm from '@/components/admin/RuntimeIntegrationForm';
+import MailIntegrationForm from '@/components/admin/MailIntegrationForm';
 import type { SystemStatusResponse } from '@/api/systemStatus';
 import { websocketServiceStatus } from '@/lib/systemStatus';
 
@@ -65,9 +66,10 @@ export default function AdminConfiguracion() {
         { label: 'Cabeceras CSP / HSTS', value: 'Activas vía Rust + Nginx' },
       ],
       smtp: [
-        { label: 'Servidor SMTP', value: smtp.host || 'No configurado' },
-        { label: 'Estado', value: smtp.configured ? 'Configurado' : 'Sin credenciales', estado: smtp.configured ? 'ok' : 'warning' },
-        { label: 'Impacto en 2FA', value: smtp.configured ? 'Los códigos de acceso pueden enviarse por email' : '2FA no enviará correos hasta configurar SMTP', estado: smtp.configured ? 'ok' : 'warning' },
+        { label: 'Canal activo', value: status.mail?.api_exclusive ? 'Postmark API' : 'SMTP' },
+        { label: 'Servidor SMTP conservado', value: smtp.host || 'No configurado' },
+        { label: 'Estado del correo', value: status.mail?.api_exclusive ? (status.mail.api_sender_verified ? 'API verificada' : 'API pendiente de verificación') : smtp.configured ? 'SMTP configurado' : 'Sin transporte SMTP configurado', estado: (status.mail?.api_exclusive ? status.mail.api_sender_verified : smtp.configured) ? 'ok' : 'warning' },
+        { label: 'Impacto en 2FA', value: 'Activarlo exige comprobar el canal de correo seleccionado.' },
       ],
       roles: [
         { label: 'Administradores', value: users.admin == null ? 'N/D' : String(users.admin) },
@@ -97,7 +99,7 @@ export default function AdminConfiguracion() {
   }
 
   return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5 min-w-0 w-full">
       <div>
         <h2 className="font-heading text-xl font-bold text-foreground flex items-center gap-2">
           <Settings className="w-5 h-5 text-primary" /> Configuración del sistema
@@ -105,7 +107,7 @@ export default function AdminConfiguracion() {
         <p className="text-xs text-muted-foreground mt-1">Estado real del backend, integraciones y seguridad.</p>
       </div>
 
-      <div className="grid lg:grid-cols-4 gap-4">
+      <div className="grid lg:grid-cols-4 gap-4 min-w-0">
         <div className="lg:col-span-1 space-y-1">
           {SECCIONES.map((s) => (
             <button
@@ -120,7 +122,7 @@ export default function AdminConfiguracion() {
           ))}
         </div>
 
-        <div className="lg:col-span-3 glass-card p-6">
+        <div className="lg:col-span-3 glass-card p-6 min-w-0">
           {!status && <p role="alert">No se pudo consultar el estado del sistema.</p>}
           <ul className="space-y-4">
             {detalle.map((item) => (
@@ -132,7 +134,8 @@ export default function AdminConfiguracion() {
               </li>
             ))}
           </ul>
-          {(activa === 'smtp' || activa === 'integraciones') && <RuntimeIntegrationForm kind={activa === 'smtp' ? 'smtp' : 'google'} onSaved={() => { void authService.getSystemStatus().then(setStatus).catch(() => setStatus(null)); }} />}
+          {activa === 'smtp' && <MailIntegrationForm onSaved={() => { void authService.getSystemStatus().then(setStatus).catch(() => setStatus(null)); }} />}
+          {activa === 'integraciones' && <RuntimeIntegrationForm kind="google" onSaved={() => { void authService.getSystemStatus().then(setStatus).catch(() => setStatus(null)); }} />}
         </div>
       </div>
     </motion.div>

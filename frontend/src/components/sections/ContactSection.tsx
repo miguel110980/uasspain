@@ -50,7 +50,9 @@ export default function ContactSection({ skipReveal = false }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [sending, setSending] = useState(false);
   const submitInFlight = useRef(false);
+  const contactRequest = useRef<{ id: string; payload: string } | null>(null);
   const [sent, setSent] = useState(false);
+  const [deliveryNotice, setDeliveryNotice] = useState('');
   const [error, setError] = useState('');
   const [mapStatus, setMapStatus] = useState('loading');
 
@@ -102,10 +104,15 @@ export default function ContactSection({ skipReveal = false }) {
     submitInFlight.current = true;
     setSending(true);
     try {
-      await sendContactMessage(payload);
+      const fingerprint = JSON.stringify(payload);
+      if (contactRequest.current?.payload !== fingerprint) contactRequest.current = { id: crypto.randomUUID(), payload: fingerprint };
+      const result = await sendContactMessage({ ...payload, request_id: contactRequest.current.id });
+      setDeliveryNotice(result.state === 'UNKNOWN' ? 'Consulta registrada. Estamos comprobando el envío; no es necesario repetirla.' : result.delivery_accepted ? 'Consulta aceptada para su envío. Te contactaremos pronto.' : 'Consulta registrada y pendiente de envío. Te contactaremos pronto.');
       setSent(true);
       setForm(EMPTY_FORM);
+      contactRequest.current = null;
     } catch (err) {
+      if (['FAILED', 'EXPIRED'].includes(err?.response?.data?.state)) contactRequest.current = null;
       setError(extractErrorMessage(err, 'Error al enviar. Inténtalo de nuevo más tarde.'));
     } finally {
       submitInFlight.current = false;
@@ -232,7 +239,7 @@ export default function ContactSection({ skipReveal = false }) {
               </div>
 
               {sent && (
-                <p role="status" className="text-sm text-primary font-mono text-center">✓ Mensaje enviado correctamente. Te contactaremos pronto.</p>
+                <p role="status" className="text-sm text-primary font-mono text-center">{deliveryNotice}</p>
               )}
               {error && (
                 <p role="alert" className="text-sm text-destructive font-mono text-center">{error}</p>

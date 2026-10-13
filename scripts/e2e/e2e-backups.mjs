@@ -12,7 +12,7 @@ const remote = execFileSync('docker', ['compose', '-f', 'docker-compose.e2e.yml'
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
 const call = (path, method, body) => admin.call('/api/backups/' + path, method, body);
 for (const server of (await call('servers/')).body) check((await call(`servers/${uuid(server.id)}/`, 'DELETE')).status === 204, 'Isolated destination reset');
-const history = async () => (await call('history/?limit=100')).body;
+const history = async () => (await call('inventory/?limit=100')).body;
 const finish = async id => {
   for (let attempt = 0; attempt < 300; attempt++) {
     const job = (await history()).find(row => row.id === id);
@@ -78,7 +78,7 @@ const second = await call('create/', 'POST', { type: 'automatic', background: tr
 const incremental = await finish(uuid(second.body.job_id));
 gate(incremental.job_type === 'incremental' && incremental.status === 'completed' && incremental.parent_backup_id === full.id && incremental.base_full_id === full.id && incremental.chain_index === 1, 'automatic_strategy_preserves_incremental_chain');
 gate((await call(`${full.id}/`, 'DELETE', { confirmed: true })).status === 400, 'required_chain_base_cannot_be_deleted');
-const firstPage = (await call('history/?limit=1&offset=0')).body, nextPage = (await call('history/?limit=1&offset=1')).body;
+const firstPage = (await call('inventory/?limit=1&offset=0')).body, nextPage = (await call('inventory/?limit=1&offset=1')).body;
 gate(firstPage.length === 1 && nextPage.length === 1 && firstPage[0].id !== nextPage[0].id, 'history_pagination');
 // Exercise a real unavailable mandatory destination without changing its saved
 // configuration: server permissions change outside UASSpain.
@@ -93,6 +93,8 @@ try {
 sql(`UPDATE backups_backupjob SET created_date=NOW()-INTERVAL '20 days' WHERE id='${full.id}'`);
 gate((await call('retention/', 'POST', {})).status === 200 && sql(`SELECT count(*) FROM backups_backupjob WHERE id='${full.id}'`) === '1', 'retention_keeps_ancestors_needed_by_live_chain');
 gate((await call('restore/', 'POST', { origin: 'local', job_id: full.id, confirmed: true })).status === 400, 'restore_requires_reinforced_confirmation');
+const preservedCatalog = sql("SELECT jsonb_agg(jsonb_build_object('id',id,'checksum',checksum,'parent',parent_backup_id,'base',base_full_id,'manifest',manifest_checksum) ORDER BY id) FROM backups_backupjob WHERE checksum<>''");
+const preservedAudits = sql("SELECT COALESCE(jsonb_agg(id ORDER BY id),'[]') FROM core_auditlog");
 const restore = await call('restore/', 'POST', { origin: 'local', job_id: full.id, confirmed: true, confirmation_text: 'RESTAURAR' });
 gate(restore.status === 202, 'restore_is_queued');
 let restored;
@@ -110,6 +112,12 @@ for (let attempt = 0; attempt < 180; attempt++) {
 }
 if (restored?.state !== 'done') console.error('Restore E2E result:', JSON.stringify(restored));
 gate(restored?.state === 'done' && restored.checksum_verified === true, 'real_restore_validates_and_recovers_postgres');
+const originalCatalog = JSON.parse(preservedCatalog);
+const afterCatalog = JSON.parse(sql("SELECT jsonb_agg(jsonb_build_object('id',id,'checksum',checksum,'parent',parent_backup_id,'base',base_full_id,'manifest',manifest_checksum) ORDER BY id) FROM backups_backupjob WHERE checksum<>''"));
+gate(originalCatalog.every(original => afterCatalog.some(current => JSON.stringify(current) === JSON.stringify(original))), 'restore_preserves_all_artifact_identities_and_chains');
+const afterAudits = JSON.parse(sql("SELECT COALESCE(jsonb_agg(id ORDER BY id),'[]') FROM core_auditlog"));
+gate(JSON.parse(preservedAudits).every(id => afterAudits.includes(id)), 'restore_preserves_protected_audit_entries');
+gate(sql(`SELECT count(*) FROM backups_backupjob WHERE id='${uuid(restored.safety_backup_id)}' AND verified AND restore_tested AND restore_test_result LIKE 'success:%'`) === '1', 'preventive_backup_was_recovered_before_destructive_restore');
 gate(sql(migrationFingerprintSql) === migrationFingerprint, 'restored_database_matches_migrations');
 gate(Number(sql("SELECT count(*) FROM core_auditlog WHERE action LIKE 'backup_%'")) >= 5, 'operations_are_audited');
 // An internal safety dump has no recovery manifest. It must not replace the

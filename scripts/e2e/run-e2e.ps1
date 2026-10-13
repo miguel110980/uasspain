@@ -219,6 +219,14 @@ try {
         }
     }
 
+    Write-Host '==> Validando configuracion de correo y cola cifrada con fixtures aislados'
+    & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a correo E2E fallo' }
+    & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'readiness previa a correo E2E fallo' }
+    & node (Join-Path $Root 'scripts/e2e/e2e-mail-system.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite interna de correo E2E fallo' }
+
     Write-Host '==> Validando alcance de paneles, asignaciones y contadores contra PostgreSQL'
     & node (Join-Path $Root 'scripts/e2e/e2e-panels.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La suite de alcance de paneles E2E fallo' }
@@ -238,6 +246,14 @@ try {
     Write-Host '==> Validando deltas de datos/media y restauracion full e incremental'
     & node (Join-Path $Root 'scripts/e2e/e2e-backup-deltas.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'La restauracion de deltas de backups E2E fallo' }
+
+    Write-Host '==> Validando inventario independiente, historial y ocho combinaciones de destinos'
+    & $Docker compose @ComposeArgs restart backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'reinicio previo a inventario E2E fallo' }
+    & $Docker compose @ComposeArgs up -d --wait --wait-timeout 60 backend-e2e | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'readiness previa a inventario E2E fallo' }
+    & node (Join-Path $Root 'scripts/e2e/e2e-backup-inventory.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'La suite de inventario de backups E2E fallo' }
 
     Write-Host '==> Validando cursos, temario transaccional y permisos contra PostgreSQL'
     & $Docker compose @ComposeArgs restart backend-e2e | Out-Null

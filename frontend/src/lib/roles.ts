@@ -28,7 +28,7 @@ export function profileHasAdmin(source) {
 }
 
 /** Estados que impiden acceder a los paneles. */
-export const BLOCKED_STATUSES = ['pendiente', 'rechazado', 'bloqueado'];
+export const BLOCKED_STATUSES = ['pendiente', 'rechazado', 'bloqueado', 'baja'];
 
 /** @param {string | null | undefined} status */
 export function isBlockedStatus(status) {

@@ -165,6 +165,9 @@ async fn run_migrations(pool: &PgPool) -> Result<(), AppError> {
         sqlx::query("REVOKE INSERT, UPDATE, DELETE ON public._sqlx_migrations FROM uasspain_app")
             .execute(pool)
             .await?;
+        sqlx::query("REVOKE UPDATE, DELETE ON public.account_lifecycle_event, public.infrastructure_evidence FROM uasspain_app")
+            .execute(pool)
+            .await?;
     }
     Ok(())
 }
@@ -261,6 +264,19 @@ pub async fn ensure_bootstrap_admin(pool: &PgPool, cipher: &FieldCipher) -> Resu
     .await?;
     if let Some((profile_id, user_id)) = existing {
         let mut tx = pool.begin().await?;
+        crate::account_lifecycle::lock(&mut tx).await?;
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM accounts_userprofile WHERE id=$1 FOR UPDATE")
+                .bind(profile_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if status == "baja" {
+            tx.rollback().await?;
+            tracing::warn!(
+                "bootstrap account remains deactivated; authorised reactivation is required"
+            );
+            return Ok(());
+        }
         sqlx::query(
             "UPDATE auth_user SET is_superuser=TRUE,is_staff=TRUE,is_active=TRUE WHERE id=$1",
         )

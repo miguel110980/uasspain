@@ -3,6 +3,9 @@ import { adminClient, check } from '../../scripts/e2e/auth-fixtures.mjs';
 
 test('simplified backups: wizard, schedule, real copy, history and reinforced restore', async ({ page }) => {
   test.setTimeout(180_000);
+  const consoleErrors: string[] = [];
+  page.on('pageerror', error => consoleErrors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
   // Only the labelled isolated Compose installation is used by these fixtures.
   const admin = await adminClient();
   for (const server of (await admin.call('/api/backups/servers/')).body) check((await admin.call(`/api/backups/servers/${server.id}/`, 'DELETE')).status === 204, 'Fixture cleanup');
@@ -28,7 +31,7 @@ test('simplified backups: wizard, schedule, real copy, history and reinforced re
   await dialog.getByRole('button', { name: 'Guardar', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(local.getByRole('status')).toHaveText('Destino guardado. Prueba la conexión antes de activarlo.');
-  await local.getByRole('button', { name: 'Probar conexión' }).click();
+  await local.getByRole('button', { name: 'Comprobar conexión' }).click();
   await expect(local.getByRole('status')).toHaveText('Conexión correcta.');
   // The controlled switch changes only after the server confirms activation.
   await local.getByRole('checkbox', { name: 'Activo: Servidor local' }).click();
@@ -71,20 +74,41 @@ test('simplified backups: wizard, schedule, real copy, history and reinforced re
   const creation = page.getByRole('dialog', { name: 'Crear copia ahora', exact: true });
   await creation.getByRole('combobox', { name: 'Tipo de esta copia', exact: true }).selectOption('full');
   const fullRequest = page.waitForRequest(request => request.url().endsWith('/api/backups/create/') && request.method() === 'POST');
+  const fullResponse = page.waitForResponse(response => response.url().endsWith('/api/backups/create/') && response.request().method() === 'POST');
   await creation.getByRole('button', { name: 'Confirmar creación' }).click();
   expect((await fullRequest).postDataJSON().type).toBe('full');
-  const history = page.getByRole('region', { name: 'Historial y restauración', exact: true });
-  const newest = history.getByRole('article').first();
+  const history = page.getByRole('region', { name: 'Historial de copias', exact: true });
+  const inventory = page.getByRole('region', { name: 'Copias de seguridad almacenadas', exact: true });
+  const createdFull = await (await fullResponse).json();
+  const newest = inventory.locator(`[data-backup-id="${createdFull.job_id}"]`);
   await expect(newest.getByText('Correcta', { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(history.getByRole('button', { name: /Validar copia|Comprobar recuperación|Restaurar/ })).toHaveCount(0);
+  const selected = await newest.getAttribute('data-backup-id');
+  const verifyRequest = page.waitForRequest(request => request.url().endsWith('/api/backups/verify/') && request.method() === 'POST');
+  await newest.getByRole('button', { name: 'Validar copia' }).click();
+  expect((await verifyRequest).postDataJSON()).toEqual({ job_id: selected, origin: 'local' });
+  await expect(page.getByRole('status').filter({ hasText: 'Integridad, descifrado y formato comprobados.' })).toBeVisible();
+  const drillRequest = page.waitForRequest(request => request.url().endsWith('/api/backups/restore-test/') && request.method() === 'POST');
+  await newest.getByRole('button', { name: 'Comprobar recuperación' }).click();
+  expect((await drillRequest).postDataJSON()).toEqual({ job_id: selected, origin: 'local' });
+  await expect(page.getByRole('status').filter({ hasText: 'Recuperación comprobada en una base de prueba.' })).toBeVisible({ timeout: 60_000 });
   await expect(newest.getByText('Completa', { exact: false }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Crear copia ahora', exact: true }).click();
   await creation.getByRole('combobox', { name: 'Tipo de esta copia', exact: true }).selectOption('incremental');
   const incrementalRequest = page.waitForRequest(request => request.url().endsWith('/api/backups/create/') && request.method() === 'POST');
+  const incrementalResponse = page.waitForResponse(response => response.url().endsWith('/api/backups/create/') && response.request().method() === 'POST');
   await creation.getByRole('button', { name: 'Confirmar creación' }).click();
   expect((await incrementalRequest).postDataJSON().type).toBe('incremental');
-  await expect(newest.getByText('Incremental', { exact: false }).first()).toBeVisible({ timeout: 60_000 });
-  await expect(newest.getByText('Correcta', { exact: true })).toBeVisible({ timeout: 60_000 });
-  await newest.getByRole('button', { name: 'Restaurar', exact: true }).click();
+  const createdIncremental = await (await incrementalResponse).json();
+  const incremental = inventory.locator(`[data-backup-id="${createdIncremental.job_id}"]`);
+  await expect(incremental.getByText('Incremental', { exact: false }).first()).toBeVisible({ timeout: 60_000 });
+  await expect(incremental.getByText('Correcta', { exact: true })).toBeVisible({ timeout: 60_000 });
+  const older = inventory.locator(`[data-backup-id="${selected}"]`);
+  const olderRequest = page.waitForRequest(request => request.url().endsWith('/api/backups/verify/') && request.method() === 'POST');
+  await older.getByRole('button', { name: 'Validar copia' }).click();
+  expect((await olderRequest).postDataJSON()).toEqual({ job_id: selected, origin: 'local' });
+  await expect(page.getByRole('status').filter({ hasText: 'Integridad, descifrado y formato comprobados.' })).toBeVisible();
+  await incremental.getByRole('button', { name: 'Restaurar', exact: true }).click();
   const restore = page.getByRole('dialog', { name: 'Restaurar copia de seguridad', exact: true });
   await expect(restore.getByRole('button', { name: 'Restaurar definitivamente' })).toBeDisabled();
   await restore.getByRole('checkbox').check();
@@ -92,14 +116,36 @@ test('simplified backups: wizard, schedule, real copy, history and reinforced re
   await expect(restore.getByRole('button', { name: 'Restaurar definitivamente' })).toBeEnabled();
   await page.keyboard.press('Escape');
   await expect(restore).toHaveCount(0);
+  if (await inventory.getByRole('button', { name: 'Siguiente', exact: true }).isEnabled()) {
+    const firstPage = await inventory.locator('[data-backup-id]').first().getAttribute('data-backup-id');
+    await inventory.getByRole('button', { name: 'Siguiente', exact: true }).click();
+    await expect(inventory.getByText(/Página 2/)).toBeVisible();
+    await expect.poll(() => inventory.locator('[data-backup-id]').first().getAttribute('data-backup-id')).not.toBe(firstPage);
+    await inventory.getByRole('button', { name: 'Anterior', exact: true }).click();
+    await expect.poll(() => inventory.locator('[data-backup-id]').first().getAttribute('data-backup-id')).toBe(firstPage);
+  }
+  const idsBeforeClear = await inventory.locator('[data-backup-id]').evaluateAll(rows => rows.map(row => row.getAttribute('data-backup-id')));
+  await history.getByRole('button', { name: 'Limpiar historial', exact: true }).click();
+  const clear = page.getByRole('dialog', { name: 'Limpiar historial de copias' });
+  await clear.getByRole('button', { name: 'Cancelar' }).click();
+  await history.getByRole('button', { name: 'Limpiar historial', exact: true }).click();
+  const clearResponse = page.waitForResponse(response => response.url().endsWith('/api/backups/history/clear/') && response.request().method() === 'POST');
+  await clear.getByRole('button', { name: 'Confirmar limpieza' }).click();
+  expect((await clearResponse).status()).toBe(200);
+  await expect(page.getByRole('status').filter({ hasText: 'Historial visible limpiado. Las copias se conservan.' })).toBeVisible();
+  expect(await inventory.locator('[data-backup-id]').evaluateAll(rows => rows.map(row => row.getAttribute('data-backup-id')))).toEqual(idsBeforeClear);
+  await page.reload();
+  await page.locator('aside:visible nav').getByRole('button', { name: 'Backups', exact: true }).click();
+  await expect.poll(() => inventory.locator('[data-backup-id]').evaluateAll(rows => rows.map(row => row.getAttribute('data-backup-id')))).toEqual(idsBeforeClear);
   for (const theme of ['light', 'dark']) {
     await page.evaluate(value => { document.documentElement.classList.toggle('dark', value === 'dark'); }, theme);
-    for (const width of [320, 768, 1440]) {
+    for (const width of [320, 375, 768, 1024, 1440, 1920]) {
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       await expect(local.getByRole('button', { name: 'Configurar' })).toBeVisible();
     }
   }
   await page.screenshot({ path: test.info().outputPath('backups-simplified.png'), fullPage: true });
+  expect(consoleErrors).toEqual([]);
   console.log('BACKUP_SIMPLE_UI=PASS BACKUP_DESTINATIONS_UI=PASS BACKUP_WIZARD=PASS BACKUP_ADVANCED_OPTIONS=PASS BACKUP_SCHEDULE_UI=PASS BACKUP_HISTORY_UI=PASS BACKUP_RESTORE_UI=PASS RESPONSIVE=PASS ACCESSIBILITY=PASS');
 });

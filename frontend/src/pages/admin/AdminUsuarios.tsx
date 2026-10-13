@@ -20,6 +20,7 @@ const ROLES = ['alumno', 'instructor', 'admin'];
 const STATUSES = ['pendiente', 'activo', 'bloqueado', 'rechazado'];
 
 const STATUS_STYLE = {
+  baja: 'text-danger bg-danger-soft border-danger-border',
   pendiente: 'text-info bg-info-soft border-info-border',
   activo: 'text-success bg-success-soft border-success-border',
   bloqueado: 'text-warning bg-warning-soft border-warning-border',
@@ -49,6 +50,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [historical, setHistorical] = useState(false);
   const [fRole, setFRole] = useState('todos');
   const [fStatus, setFStatus] = useState('todos');
   const [actionLoading, setActionLoading] = useState({});
@@ -66,7 +68,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
     if (!silent) setLoading(true);
     try {
       const { values, failed } = await loadResources({
-        Alumnos: () => authService.listProfiles('-created_date', scopeRole === 'alumno' ? 10_000 : 500, scopeRole ? { role: scopeRole } : {}),
+        Alumnos: () => authService.listProfiles('-created_date', scopeRole === 'alumno' ? 10_000 : 500, { ...(scopeRole ? { role: scopeRole } : {}), ...(historical ? { status: 'baja' } : {}) }),
         Instructores: () => allowInstructorAssignment ? authService.listInstructors() : Promise.resolve([]),
         Totales: () => scopeRole === 'alumno' ? authService.dashboardCounts() : Promise.resolve(null),
       });
@@ -91,7 +93,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
     const onFocus = () => { void load(true); };
     window.addEventListener('focus', onFocus);
     return () => { unsubscribe(); window.removeEventListener('focus', onFocus); loadVersion.current++; };
-  }, [allowInstructorAssignment, scopeRole]);
+  }, [allowInstructorAssignment, scopeRole, historical]);
 
   const assignInstructor = async (student, instructorId: string) => {
     if (!instructorId || instructorId === String(student.assigned_instructor_id) || pendingAssignments.current.has(student.id)) return;
@@ -236,6 +238,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
       </div>
 
       {/* Filters */}
+      {assignmentOwnerId && <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={historical} onChange={event => { setHistorical(event.target.checked); setFStatus('todos'); }} />Alumnos históricos dados de baja (sin asignación nueva)</label>}
       <div className="flex flex-col md:flex-row gap-3">
         <div className="flex items-center gap-2 px-3 h-10 flex-1 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30">
           <Search className="w-4 h-4 text-muted-foreground/60" />
@@ -338,7 +341,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
                           aria-label={`Instructor de ${`${p.nombre} ${p.apellidos}`.trim() || p.username}`}
                           aria-describedby={assignmentErrors[p.id] ? `assignment-error-${p.id}` : undefined}
                           value={p.assigned_instructor_id || ''}
-                          disabled={Boolean(actionLoading[p.id]) || loading || Boolean(loadError) || instructors.length === 0 || !assignmentOwnerId || profileHasAdmin(p) || profileHasInstructor(p)}
+                          disabled={historical || p.status === 'baja' || Boolean(actionLoading[p.id]) || loading || Boolean(loadError) || instructors.length === 0 || !assignmentOwnerId || profileHasAdmin(p) || profileHasInstructor(p)}
                           onChange={event => void assignInstructor(p, event.target.value)}
                           className="w-full h-10 px-2 bg-card border border-border-subtle rounded-md text-xs text-foreground focus-visible:outline-primary disabled:opacity-60"
                         >

@@ -1,17 +1,14 @@
-use crate::{
-    AppState,
-    error::AppError,
-    runtime_config::{SmtpConfig, validate_smtp},
+#[cfg(test)]
+use crate::runtime_config::SmtpConfig;
+use crate::{AppState, error::AppError};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
 };
-use axum::{Json, extract::State, http::HeaderMap};
-use lettre::{
-    Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
-    message::{Mailbox, header::ContentType},
-    transport::smtp::{
-        authentication::Credentials,
-        client::{Certificate, Tls, TlsParameters},
-    },
-};
+use lettre::Address;
+#[cfg(test)]
+use lettre::{Message, message::Mailbox};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -35,8 +32,21 @@ pub fn mailbox() -> Result<String, AppError> {
     address(&email).map_err(|_| AppError::Unavailable)?;
     Ok(email)
 }
-pub async fn public_config() -> Result<Json<Value>, AppError> {
-    Ok(Json(json!({"email":mailbox()?})))
+pub async fn public_config(State(state): State<Arc<AppState>>) -> Result<Json<Value>, AppError> {
+    let email = if crate::mail_config::api_exclusive(&state).await? {
+        crate::mail_config::api_config(&state, false)
+            .await?
+            .contact_recipient
+    } else {
+        let (config, _) = crate::runtime_config::smtp(&state).await?;
+        if config.contact_recipient.is_empty() {
+            mailbox()?
+        } else {
+            config.contact_recipient
+        }
+    };
+    address(&email).map_err(|_| AppError::Unavailable)?;
+    Ok(Json(json!({"email":email})))
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +62,8 @@ pub struct ContactWrite {
     mensaje: String,
     #[serde(default)]
     website: String,
+    #[serde(default)]
+    request_id: Option<uuid::Uuid>,
 }
 fn address(value: &str) -> Result<Address, AppError> {
     if value.is_empty()
@@ -87,20 +99,24 @@ impl ContactWrite {
         )
     }
 
+    #[cfg(test)]
+    fn envelope(&self, from: &str, recipient: &str) -> crate::mail_provider::Envelope {
+        crate::mail_provider::Envelope {
+            from: from.into(),
+            from_name: "UASSpain".into(),
+            to: recipient.into(),
+            reply_to: Some(self.email.clone()),
+            subject: format!("Consulta UASSpain: {}", self.asunto.trim()),
+            body: self.text_body(),
+            smtp: None,
+        }
+    }
+    #[cfg(test)]
     fn postmark_payload(&self, from: &str, recipient: &str) -> Result<Value, AppError> {
         self.validate()?;
-        if address(from).map_err(|_| AppError::Unavailable)?.domain() != "uasspain.com" {
-            return Err(AppError::Unavailable);
-        }
-        address(recipient).map_err(|_| AppError::Unavailable)?;
-        Ok(json!({
-            "From": from, "To": recipient, "ReplyTo": self.email,
-            "Subject": format!("Consulta UASSpain: {}", self.asunto.trim()),
-            "TextBody": self.text_body(), "MessageStream": "outbound",
-            "Tag": "uasspain-contact", "TrackOpens": false, "TrackLinks": "None"
-        }))
+        self.envelope(from, recipient)
+            .postmark_payload(uuid::Uuid::new_v4())
     }
-
     fn validate(&self) -> Result<(), AppError> {
         address(&self.email)?;
         if !header_text(&self.nombre, 1, 120)
@@ -126,26 +142,10 @@ impl ContactWrite {
         }
         Ok(())
     }
+    #[cfg(test)]
     fn message(&self, config: &SmtpConfig, recipient: &str) -> Result<Message, AppError> {
         self.validate()?;
-        let mut from: Mailbox = config
-            .from_email
-            .parse()
-            .map_err(|_| AppError::Unavailable)?;
-        if !config.from_name.is_empty() {
-            from.name = Some(config.from_name.clone());
-        }
-        Message::builder()
-            .from(from)
-            .to(Mailbox::new(None, address(recipient)?))
-            .reply_to(Mailbox::new(
-                Some(self.nombre.trim().to_owned()),
-                address(&self.email)?,
-            ))
-            .subject(format!("Consulta UASSpain: {}", self.asunto.trim()))
-            .header(ContentType::TEXT_PLAIN)
-            .body(self.text_body())
-            .map_err(|_| AppError::Internal)
+        self.envelope(&config.from_email, recipient).message()
     }
 }
 
@@ -190,37 +190,11 @@ fn limit(headers: &HeaderMap) -> Result<(), AppError> {
         .map_err(|_| AppError::Internal)?
         .check(ip, Instant::now())
 }
-fn configuration(recipient: &str) -> Result<(SmtpConfig, String, String), AppError> {
-    let value = |name: &str| std::env::var(name).unwrap_or_default();
-    let password = std::env::var("CONTACT_SMTP_PASSWORD_FILE")
-        .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_owned())
-        .or_else(|| std::env::var("CONTACT_SMTP_PASSWORD").ok())
-        .filter(|s| !s.is_empty())
-        .ok_or(AppError::Unavailable)?;
-    let config = SmtpConfig {
-        enabled: true,
-        host: value("CONTACT_SMTP_HOST"),
-        port: value("CONTACT_SMTP_PORT").parse().unwrap_or(587),
-        security: std::env::var("CONTACT_SMTP_SECURITY").unwrap_or_else(|_| "STARTTLS".into()),
-        username: value("CONTACT_SMTP_USER"),
-        from_email: std::env::var("CONTACT_SMTP_FROM")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| recipient.into()),
-        from_name: "UASSpain".into(),
-        timeout_seconds: 15,
-        ..Default::default()
-    };
-    validate_smtp(&config).map_err(|_| AppError::Unavailable)?;
-    Ok((config, password, value("CONTACT_SMTP_CA_FILE")))
-}
 pub async fn send(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(input): Json<ContactWrite>,
-) -> Result<Json<Value>, AppError> {
+) -> Result<(StatusCode, Json<Value>), AppError> {
     if !crate::chat::origin_allowed(&headers) {
         return Err(AppError::Forbidden);
     }
@@ -240,99 +214,123 @@ pub async fn send(
             ));
         }
     }
-    let recipient = mailbox()?;
-    if let Some(token) = postmark_token()? {
-        let from = std::env::var("POSTMARK_FROM").map_err(|_| AppError::Unavailable)?;
-        let payload = input.postmark_payload(&from, &recipient)?;
-        postmark_request("https://api.postmarkapp.com/email", &token, &payload).await?;
-        return Ok(Json(
-            json!({"detail":"Consulta enviada a UASSpain.","delivery_accepted":true}),
+    let recipient = if crate::mail_config::api_exclusive(&state).await? {
+        crate::mail_config::api_config(&state, false)
+            .await?
+            .contact_recipient
+    } else {
+        let (config, _) = crate::runtime_config::smtp(&state).await?;
+        if config.contact_recipient.is_empty() {
+            mailbox()?
+        } else {
+            config.contact_recipient
+        }
+    };
+    let mut tx = state
+        .pool
+        .as_ref()
+        .ok_or(AppError::Unavailable)?
+        .begin()
+        .await?;
+    let request_id = input.request_id.unwrap_or_else(uuid::Uuid::new_v4);
+    if request_id.is_nil() {
+        return Err(AppError::Validation(
+            "Identificador de solicitud no válido.".into(),
         ));
     }
-    let (config, password, ca_file) = configuration(&recipient)?;
-    let message = input.message(&config, &recipient)?;
-    let mut tls = TlsParameters::builder(config.host.clone());
-    if !ca_file.is_empty() {
-        let ca = std::fs::read(ca_file).map_err(|_| AppError::Unavailable)?;
-        tls = tls
-            .add_root_certificate(Certificate::from_pem(&ca).map_err(|_| AppError::Unavailable)?);
+    let idempotency = state.cipher.blind_index(&format!(
+        "contact:{request_id}:{}",
+        input.email.to_ascii_lowercase()
+    ))?;
+    let id = crate::mail_queue::enqueue(
+        &state,
+        &mut tx,
+        crate::mail_queue::MailRequest {
+            to: &recipient,
+            reply_to: Some(&input.email),
+            subject: &format!("Consulta UASSpain: {}", input.asunto.trim()),
+            body: &input.text_body(),
+            options: crate::mail_queue::QueueOptions {
+                kind: "contact",
+                ttl: chrono::Duration::hours(24),
+                validity: json!({}),
+                idempotency: Some(&idempotency),
+            },
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    let result = crate::mail_queue::process_id(&state, id).await?;
+    if matches!(result, Some(crate::mail_provider::Outcome::Failed(_))) {
+        return Ok(rejected_contact(id, "FAILED"));
     }
-    let tls = tls.build().map_err(|_| AppError::Unavailable)?;
-    let transport = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.host)
-        .port(config.port)
-        .tls(if config.security == "TLS" {
-            Tls::Wrapper(tls)
-        } else {
-            Tls::Required(tls)
-        })
-        .timeout(Some(Duration::from_secs(config.timeout_seconds)))
-        .credentials(Credentials::new(config.username, password))
-        .build();
-    transport.send(message).await.map_err(|_| {
-        tracing::warn!("Corporate contact SMTP delivery failed");
-        AppError::Unavailable
-    })?;
-    // DEV_EMAIL is deliberately irrelevant: a contact succeeds only after the
-    // configured corporate transport accepts it. No customer content is logged.
-    Ok(Json(
-        json!({"detail":"Consulta enviada a UASSpain.","delivery_accepted":true,"smtp_accepted":true}),
+    let (mut status, provider): (String, String) =
+        sqlx::query_as("SELECT state,provider FROM mail_outbox WHERE id=$1")
+            .bind(id)
+            .fetch_one(state.pool.as_ref().ok_or(AppError::Unavailable)?)
+            .await?;
+    for _ in 0..125 {
+        if status != "PROCESSING" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        status = sqlx::query_scalar("SELECT state FROM mail_outbox WHERE id=$1")
+            .bind(id)
+            .fetch_one(state.pool.as_ref().ok_or(AppError::Unavailable)?)
+            .await?;
+    }
+    let accepted = status == "ACCEPTED" || status == "DELIVERED";
+    if status == "FAILED" || status == "EXPIRED" {
+        return Ok(rejected_contact(id, &status));
+    }
+    let detail = if accepted {
+        "Consulta aceptada para su envio por el proveedor de correo."
+    } else if status == "UNKNOWN" {
+        "Consulta registrada. Estamos comprobando el envio; no es necesario repetirla."
+    } else {
+        "Consulta registrada y pendiente de envio."
+    };
+    Ok((
+        StatusCode::OK,
+        Json(
+            json!({"detail":detail,"internally_accepted":true,"delivery_accepted":accepted,"smtp_accepted":accepted&&provider=="smtp","state":status,"message_id":id}),
+        ),
     ))
 }
 
-fn postmark_token() -> Result<Option<String>, AppError> {
-    let token = match std::env::var("POSTMARK_SERVER_TOKEN_FILE") {
-        Ok(path) => std::fs::read_to_string(path).map_err(|_| AppError::Unavailable)?,
-        Err(_) => std::env::var("POSTMARK_SERVER_TOKEN").unwrap_or_default(),
-    };
-    let token = token.trim();
-    if token.is_empty() {
-        return Ok(None);
-    }
-    // Test-mode credentials cannot represent real delivery, even in DEV_EMAIL.
-    if token == "POSTMARK_API_TEST" {
-        return Err(AppError::Unavailable);
-    }
-    Ok(Some(token.to_owned()))
+fn rejected_contact(id: uuid::Uuid, state: &str) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(
+            json!({"detail":"La consulta no se ha enviado. Puedes reintentar más tarde.","code":"service_unavailable","state":state,"message_id":id,"internally_accepted":false,"delivery_accepted":false,"correlation_id":uuid::Uuid::new_v4()}),
+        ),
+    )
 }
 
+#[cfg(test)]
 async fn postmark_request(endpoint: &str, token: &str, payload: &Value) -> Result<(), AppError> {
-    let mut header =
-        reqwest::header::HeaderValue::from_str(token).map_err(|_| AppError::Unavailable)?;
-    header.set_sensitive(true);
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+    let from: Mailbox = payload["From"]
+        .as_str()
+        .ok_or(AppError::Unavailable)?
+        .parse()
         .map_err(|_| AppError::Unavailable)?;
-    let mut response = client
-        .post(endpoint)
-        .header("X-Postmark-Server-Token", header)
-        .header("Accept", "application/json")
-        .json(payload)
-        .send()
-        .await
-        .map_err(|_| AppError::Unavailable)?;
-    if !response.status().is_success() {
-        return Err(AppError::Unavailable);
+    let envelope = crate::mail_provider::Envelope {
+        from: from.email.to_string(),
+        from_name: from.name.unwrap_or_default(),
+        to: payload["To"].as_str().unwrap_or_default().into(),
+        reply_to: payload["ReplyTo"].as_str().map(str::to_owned),
+        subject: payload["Subject"].as_str().unwrap_or_default().into(),
+        body: payload["TextBody"].as_str().unwrap_or_default().into(),
+        smtp: None,
+    };
+    if matches!(
+        crate::mail_provider::postmark_at(endpoint, &envelope, token, uuid::Uuid::new_v4()).await,
+        crate::mail_provider::Outcome::Accepted(Some(_))
+    ) {
+        Ok(())
+    } else {
+        Err(AppError::Unavailable)
     }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| AppError::Unavailable)? {
-        if body.len() + chunk.len() > 65536 {
-            return Err(AppError::Unavailable);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    let value: Value = serde_json::from_slice(&body).map_err(|_| AppError::Unavailable)?;
-    if value["ErrorCode"].as_u64() != Some(0)
-        || value["MessageID"]
-            .as_str()
-            .and_then(|id| uuid::Uuid::parse_str(id).ok())
-            .is_none_or(|id| id.is_nil())
-        || value["To"].as_str() != payload["To"].as_str()
-    {
-        return Err(AppError::Unavailable);
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -348,6 +346,7 @@ mod tests {
             asunto: "Consulta técnica".into(),
             mensaje: "Primera línea\nSegunda línea".into(),
             website: "".into(),
+            request_id: None,
         }
     }
     #[test]
@@ -411,7 +410,12 @@ mod tests {
         let payload = input
             .postmark_payload("info@uasspain.com", "info@uasspain.com")
             .unwrap();
-        assert_eq!(payload["From"], "info@uasspain.com");
+        assert!(
+            payload["From"]
+                .as_str()
+                .unwrap()
+                .contains("info@uasspain.com")
+        );
         assert_eq!(payload["ReplyTo"], input.email);
         assert_eq!(payload["TextBody"], input.text_body());
         assert!(

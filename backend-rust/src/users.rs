@@ -211,7 +211,7 @@ pub async fn list(
     let offset = query.offset.unwrap_or(0).max(0);
     let rows = match claims.role.as_str() {
         "admin" => sqlx::query_as::<_, ProfileRow>(&format!("SELECT {} FROM accounts_userprofile WHERE ($1::text IS NULL OR role = $1 OR roles ? $1) AND ($2::text IS NULL OR status = $2) ORDER BY created_date DESC,id DESC LIMIT $3 OFFSET $4", ProfileRow::FIELDS)).bind(query.role).bind(query.status).bind(limit).bind(offset).fetch_all(pool).await?,
-        "instructor" => sqlx::query_as::<_, ProfileRow>(&format!("SELECT {} FROM accounts_userprofile WHERE (id = $1 OR assigned_instructor_id = $1) AND ($2::text IS NULL OR role=$2 OR roles ? $2) AND ($3::text IS NULL OR status=$3) ORDER BY created_date DESC,id DESC LIMIT $4 OFFSET $5", ProfileRow::FIELDS)).bind(claims.profile_id).bind(query.role).bind(query.status).bind(limit).bind(offset).fetch_all(pool).await?,
+        "instructor" => sqlx::query_as::<_, ProfileRow>(&format!("SELECT {} FROM accounts_userprofile WHERE (id = $1 OR assigned_instructor_id = $1) AND ($3::text IS NOT NULL OR status<>'baja') AND ($2::text IS NULL OR role=$2 OR roles ? $2) AND ($3::text IS NULL OR status=$3) ORDER BY created_date DESC,id DESC LIMIT $4 OFFSET $5", ProfileRow::FIELDS)).bind(claims.profile_id).bind(query.role).bind(query.status).bind(limit).bind(offset).fetch_all(pool).await?,
         _ => sqlx::query_as::<_, ProfileRow>(&format!("SELECT {} FROM accounts_userprofile WHERE id=$1 AND ($2::text IS NULL OR role=$2 OR roles ? $2) AND ($3::text IS NULL OR status=$3) LIMIT $4 OFFSET $5", ProfileRow::FIELDS)).bind(claims.profile_id).bind(query.role).bind(query.status).bind(limit).bind(offset).fetch_all(pool).await?,
     };
     rows.into_iter()
@@ -252,6 +252,8 @@ pub async fn update(
 ) -> Result<Json<ProfileView>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     let mut tx = pool(&state)?.begin().await?;
+    crate::account_lifecycle::lock(&mut tx).await?;
+    crate::account_lifecycle::actor_active(&mut tx, &claims).await?;
     if input.login_2fa_enabled_override.is_some() {
         crate::runtime_config::lock_email_auth_config(&mut tx).await?;
     }
@@ -264,6 +266,12 @@ pub async fn update(
     // Check the locked, persisted roles before accepting a role replacement.
     // A forged PATCH cannot demote and block an administrator in one request.
     protect_administrator_from_block(&current.role, &current.roles, input.status.as_deref())?;
+    if current.status == "baja" && input.status.is_some() {
+        return Err(AppError::Validation(
+            "Una cuenta de baja sólo puede reactivarse mediante el procedimiento autorizado."
+                .into(),
+        ));
+    }
     match claims.role.as_str() {
         "alumno" if id == claims.profile_id => {
             input.status = None;
@@ -305,6 +313,12 @@ pub async fn update(
         .roles
         .clone()
         .unwrap_or_else(|| auth::roles_from_json(&current.roles, &current.role));
+    if is_administrator(&current.role, &current.roles)
+        && (input.status.as_deref().is_some_and(|v| v != "activo")
+            || !target_roles.iter().any(|v| v == "admin"))
+    {
+        crate::account_lifecycle::protect_last_admin(&mut tx, id).await?;
+    }
     if let Some(instructor_id) = input.assigned_instructor_id {
         let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1 AND p.status='activo' AND p.otp_verified AND u.is_active AND (p.role='instructor' OR p.roles ? 'instructor'))")
             .bind(instructor_id).fetch_one(&mut *tx).await?;
@@ -423,6 +437,17 @@ pub async fn update(
             .await?;
     }
     if role_changed {
+        sqlx::query("UPDATE auth_tab_session SET revoked_at=clock_timestamp() WHERE profile_id=$1 AND revoked_at IS NULL").bind(id).execute(&mut *tx).await?;
+        crate::account_lifecycle::event(
+            &mut tx,
+            id,
+            Some(claims.profile_id),
+            "roles_changed",
+            "PASS",
+            serde_json::json!({"previous":current.roles,"current":target_roles}),
+            None,
+        )
+        .await?;
         sqlx::query("UPDATE accounts_userprofile SET active_session_key=NULL,active_refresh_jti='',session_role=role,assigned_instructor_id=CASE WHEN role='alumno' OR roles ? 'alumno' THEN assigned_instructor_id ELSE NULL END WHERE id=$1")
             .bind(id).execute(&mut *tx).await?;
         sqlx::query("UPDATE conexiones_registroconexion SET estado_sesion='finalizada',fecha_cierre=NOW(),ultima_actividad=NOW(),tiempo_sesion=GREATEST(0,EXTRACT(EPOCH FROM (NOW()-fecha_hora))::integer),updated_date=NOW() WHERE profile_id=$1 AND estado_sesion='activa'")
@@ -483,6 +508,26 @@ pub async fn delete(
         return Err(AppError::Forbidden);
     }
     let mut transaction = pool(&state)?.begin().await?;
+    crate::account_lifecycle::lock(&mut transaction).await?;
+    crate::account_lifecycle::actor_active(&mut transaction, &claims).await?;
+    let locked =
+        sqlx::query_as::<_, ProfileRow>(&format!("{} FOR UPDATE", ProfileRow::SELECT_BY_ID))
+            .bind(id)
+            .fetch_one(&mut *transaction)
+            .await?;
+    if claims.role != "admin"
+        && (locked.assigned_instructor_id != Some(claims.profile_id)
+            || locked.role != "alumno"
+            || is_administrator(&locked.role, &locked.roles)
+            || auth::roles_from_json(&locked.roles, &locked.role)
+                .iter()
+                .any(|r| r == "instructor"))
+    {
+        return Err(AppError::Forbidden);
+    }
+    if is_administrator(&locked.role, &locked.roles) {
+        crate::account_lifecycle::protect_last_admin(&mut transaction, id).await?;
+    }
     sqlx::query("UPDATE auth_user SET is_active=FALSE WHERE id=$1")
         .bind(row.user_id)
         .execute(&mut *transaction)
@@ -505,7 +550,7 @@ pub async fn assigned_students(
     if claims.role != "admin" && claims.profile_id != id {
         return Err(AppError::Forbidden);
     }
-    let rows=sqlx::query_as::<_,ProfileRow>(&format!("SELECT {} FROM accounts_userprofile WHERE assigned_instructor_id=$1 AND (role='alumno' OR roles ? 'alumno') ORDER BY created_date DESC",ProfileRow::FIELDS)).bind(id).fetch_all(pool(&state)?).await?;
+    let rows=sqlx::query_as::<_,ProfileRow>(&format!("SELECT {} FROM accounts_userprofile WHERE assigned_instructor_id=$1 AND status<>'baja' AND (role='alumno' OR roles ? 'alumno') ORDER BY created_date DESC",ProfileRow::FIELDS)).bind(id).fetch_all(pool(&state)?).await?;
     views(rows, &state)
 }
 pub async fn assign_students(
@@ -548,7 +593,7 @@ pub async fn assign_students(
             .iter()
             .find(|row| row.id == *student_id)
             .ok_or(AppError::NotFound)?;
-        if !student.has_role("alumno") {
+        if !student.has_role("alumno") || student.status == "baja" {
             return Err(AppError::NotFound);
         }
         if !student.can_be_assigned_by(&claims, id) {

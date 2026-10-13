@@ -17,8 +17,9 @@ export async function sendContactMessage(form) {
   const payload = sanitizePayload(form, CONTACT_SCHEMA);
   payload.email = form.email.trim();
   payload.mensaje = form.mensaje;
+  payload.request_id = form.request_id || crypto.randomUUID();
   const res = await apiClient.post(endpoints.contact, payload);
-  if (res.data?.delivery_accepted !== true || res.data?.warning) {
+  if (res.data?.internally_accepted !== true && res.data?.delivery_accepted !== true) {
     throw new Error('No se ha podido enviar la consulta. Inténtalo de nuevo más tarde.');
   }
   return res.data;

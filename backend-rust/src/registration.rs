@@ -161,14 +161,16 @@ pub async fn register(
     sqlx::query("INSERT INTO accounts_userprofile (id,created_date,updated_date,nombre,apellidos,email,username,dni_nie,foto_perfil,status,role,otp_hash,otp_verified,user_id,roles,username_lookup,email_lookup,dni_lookup,fecha_nacimiento,active_session_key,login_otp_created_at,login_otp_hash,login_2fa_enabled_override,session_role,assigned_instructor_id) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,'pendiente','alumno',$8,FALSE,$9,'[\"alumno\"]'::jsonb,$10,$11,$12,$13,'',NULL,'',NULL,'',NULL)")
         .bind(profile_id).bind(state.cipher.encrypt(input.nombre.trim())?).bind(state.cipher.encrypt(input.apellidos.trim())?)
         .bind(state.cipher.encrypt(&email)?).bind(state.cipher.encrypt(&username)?).bind(state.cipher.encrypt(input.dni_nie.trim())?)
-        .bind(state.cipher.encrypt(&input.foto_perfil)?).bind(otp_hash).bind(user_id).bind(username_lookup).bind(email_lookup).bind(dni_lookup)
+        .bind(state.cipher.encrypt(&input.foto_perfil)?).bind(&otp_hash).bind(user_id).bind(username_lookup).bind(email_lookup).bind(dni_lookup)
         .bind(state.cipher.encrypt(&input.fecha_nacimiento.map(|date| date.to_string()).unwrap_or_default())?).execute(&mut *tx).await?;
     sqlx::query("UPDATE accounts_userprofile SET otp_created_at=NOW() WHERE id=$1")
         .bind(profile_id)
         .execute(&mut *tx)
         .await?;
-    deliver_otp(&state, &email, &otp).await?;
+    let mail_id = crate::mail_queue::enqueue(&state,&mut tx,crate::mail_queue::MailRequest{to:&email,reply_to:None,subject:"Código de verificación UASSpain",body:&format!("Su código de verificación es: {otp}"),options:crate::mail_queue::QueueOptions{kind:"registration_otp",ttl:chrono::Duration::minutes(15),validity:json!({"kind":"registration_otp","profile_id":profile_id,"hash":otp_hash}),idempotency:None}})
+    .await?;
     tx.commit().await?;
+    crate::email::dispatch(&state, mail_id).await?;
     Ok((
         axum::http::StatusCode::CREATED,
         Json(
@@ -217,16 +219,36 @@ pub async fn resend_otp(
     let otp = format!("{:06}", rand::rng().random_range(100_000..1_000_000));
     let hash = hash_argon2(&otp)?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let result=sqlx::query("UPDATE accounts_userprofile SET otp_hash=$1,otp_created_at=NOW(),otp_attempts=0,updated_date=NOW() WHERE email_lookup=$2 AND NOT otp_verified AND status='pendiente' AND (otp_created_at IS NULL OR otp_created_at<NOW()-INTERVAL '1 minute')").bind(&hash).bind(lookup).execute(pool).await?;
-    if result.rows_affected() > 0 {
-        tokio::spawn(async move {
-            if deliver_otp(&state, &email, &otp).await.is_err() {
-                tracing::warn!("registration code delivery unavailable");
-                if let Some(pool) = &state.pool {
-                    let _ = sqlx::query("UPDATE accounts_userprofile SET otp_hash='',otp_created_at=NULL WHERE email_lookup=$1 AND otp_hash=$2").bind(state.cipher.blind_index(&email).unwrap_or_default()).bind(hash).execute(pool).await;
+    // The non-enumerating endpoint records token and email atomically. A
+    // delivery outage must not issue a token without its durable work item.
+    let mut tx = pool.begin().await?;
+    let profile:Option<Uuid>=sqlx::query_scalar("UPDATE accounts_userprofile SET otp_hash=$1,otp_created_at=NOW(),otp_attempts=0,updated_date=NOW() WHERE email_lookup=$2 AND NOT otp_verified AND status='pendiente' AND (otp_created_at IS NULL OR otp_created_at<NOW()-INTERVAL '1 minute') RETURNING id").bind(&hash).bind(lookup).fetch_optional(&mut *tx).await?;
+    if let Some(profile) = profile {
+        let queued = crate::mail_queue::enqueue(
+            &state,
+            &mut tx,
+            crate::mail_queue::MailRequest {
+                to: &email,
+                reply_to: None,
+                subject: "Codigo de verificacion UASSpain",
+                body: &format!("Su codigo de verificacion es: {otp}"),
+                options: crate::mail_queue::QueueOptions {
+                    kind: "registration_otp",
+                    ttl: chrono::Duration::minutes(15),
+                    validity: json!({"kind":"registration_otp","profile_id":profile,"hash":hash}),
+                    idempotency: None,
+                },
+            },
+        )
+        .await;
+        if let Ok(id) = queued {
+            tx.commit().await?;
+            tokio::spawn(async move {
+                if crate::email::dispatch(&state, id).await.is_err() {
+                    tracing::warn!("registration delivery not accepted; durable result retained");
                 }
-            }
-        });
+            });
+        }
     }
     tokio::time::sleep(std::time::Duration::from_millis(250).saturating_sub(started.elapsed()))
         .await;
@@ -281,7 +303,7 @@ pub async fn password_reset_request(
     let email = normalize_email(&input.email)?;
     crate::auth::enforce_login_rate(&headers, &format!("reset:{email}"))?;
     let lookup = state.cipher.blind_index(&email)?;
-    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,p.username AS username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE p.email_lookup=$1 AND u.is_active LIMIT 1")
+    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,p.username AS username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE p.email_lookup=$1 AND p.status='activo' AND u.is_active LIMIT 1")
         .bind(lookup).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
     // Delivery happens independently of the public response, including failures.
     // Neither status, message nor SMTP latency discloses whether an account exists.
@@ -349,21 +371,25 @@ async fn send_reset_link(state: &AppState, user: &ResetUser, email: &str) -> Res
         .await?;
     sqlx::query("INSERT INTO accounts_passwordresettoken (id,user_id,token_hash,credential_hash,expires_at) VALUES ($1,$2,$3,$4,NOW()+INTERVAL '1 hour')")
         .bind(id).bind(user.id).bind(digest_hex(&token)).bind(digest_hex(&user.password)).execute(&mut *tx).await?;
-    tx.commit().await?;
-    if let Err(error) = crate::email::send(
+    let mail_id = crate::mail_queue::enqueue(
         state,
-        email,
-        "Restablecer contrasena UASSpain",
-        &format!("Use este enlace para restablecer su contrasena: {link}"),
+        &mut tx,
+        crate::mail_queue::MailRequest {
+            to: email,
+            reply_to: None,
+            subject: "Restablecer contrasena UASSpain",
+            body: &format!("Use este enlace para restablecer su contrasena: {link}"),
+            options: crate::mail_queue::QueueOptions {
+                kind: "password_reset",
+                ttl: chrono::Duration::hours(1),
+                validity: json!({"kind":"password_reset","reset_id":id}),
+                idempotency: None,
+            },
+        },
     )
-    .await
-    {
-        let _ = sqlx::query("DELETE FROM accounts_passwordresettoken WHERE id=$1")
-            .bind(id)
-            .execute(pool)
-            .await;
-        return Err(error);
-    }
+    .await?;
+    tx.commit().await?;
+    crate::email::dispatch(state, mail_id).await?;
     Ok(())
 }
 
@@ -386,14 +412,16 @@ pub async fn password_reset_confirm(
         .ok_or_else(|| AppError::Validation("Enlace invalido.".into()))?;
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let mut tx = pool.begin().await?;
-    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,p.username AS username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE u.id=$1 AND u.is_active FOR UPDATE OF u")
+    crate::account_lifecycle::lock(&mut tx).await?;
+    let user = sqlx::query_as::<_, ResetUser>("SELECT u.id,u.password,u.last_login,u.email,p.username AS username,p.email AS profile_email,p.dni_nie FROM auth_user u JOIN accounts_userprofile p ON p.user_id=u.id WHERE u.id=$1 AND p.status='activo' AND u.is_active FOR UPDATE OF u")
         .bind(user_id).fetch_optional(&mut *tx).await?.ok_or_else(|| AppError::Validation("Token invalido o expirado.".into()))?;
     let valid = if input.token.starts_with("r2_") {
         sqlx::query("UPDATE accounts_passwordresettoken SET consumed_at=NOW() WHERE user_id=$1 AND token_hash=$2 AND credential_hash=$3 AND consumed_at IS NULL AND expires_at>NOW()")
             .bind(user_id).bind(digest_hex(&input.token)).bind(digest_hex(&user.password)).execute(&mut *tx).await?.rows_affected() == 1
     } else {
         // Preserve already sent legacy links; the row lock makes consumption atomic.
-        valid_reset_token(&user, &input.token)?
+        let lifecycle_changed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM account_lifecycle l JOIN accounts_userprofile p ON p.id=l.profile_id WHERE p.user_id=$1 AND l.revision>0)").bind(user_id).fetch_one(&mut *tx).await?;
+        !lifecycle_changed && valid_reset_token(&user, &input.token)?
     };
     if !valid {
         return Err(AppError::Validation("Token invalido o expirado.".into()));
@@ -725,15 +753,6 @@ pub(crate) fn validate_password(
     } else {
         Ok(())
     }
-}
-async fn deliver_otp(state: &AppState, email: &str, code: &str) -> Result<(), AppError> {
-    crate::email::send(
-        state,
-        email,
-        "Código de verificación UASSpain",
-        &format!("Su código de verificación es: {code}"),
-    )
-    .await
 }
 fn env_true(name: &str, fallback: bool) -> bool {
     std::env::var(name).map_or(fallback, |v| {

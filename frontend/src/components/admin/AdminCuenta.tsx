@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import AccountDeactivation from '@/components/account/AccountDeactivation';
 import { motion } from 'framer-motion';
 import { Save, Loader2, CheckCircle, AlertCircle, UserCog } from 'lucide-react';
 import authService from '@/services/authService';
@@ -283,6 +284,7 @@ export default function AdminCuenta({ profile: sessionProfile = null, onProfileU
           </div>
         </div>
       </div>
+      <AccountDeactivation />
     </motion.div>
   );
 }

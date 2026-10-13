@@ -87,6 +87,9 @@ services:
       # The two SFTP fixtures are isolated Docker peers, not real WireGuard
       # endpoints. Production compose fails closed with BACKUP_REQUIRE_VPN=true.
       BACKUP_REQUIRE_VPN: "false"
+      BACKUP_CREDENTIAL_ROOTS: /app/backup_keys
+      INFRASTRUCTURE_AGENT_KEY_FILE: /app/backup_keys/infrastructure_agent.key
+      INFRASTRUCTURE_AGENT_SNAPSHOT: /app/backup_keys/infrastructure_status.json
       PRODUCTION_RESTORE_ENABLED: "true"
       REGISTRATION_ENABLED: "true"
     ports:

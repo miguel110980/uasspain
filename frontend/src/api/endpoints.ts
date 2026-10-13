@@ -85,6 +85,8 @@ export const endpoints = {
   backups: {
     status: `${API_PREFIX}/backups/status/`,
     history: `${API_PREFIX}/backups/history/`,
+    clearHistory: `${API_PREFIX}/backups/history/clear/`,
+    inventory: `${API_PREFIX}/backups/inventory/`,
     detail: (id) => `${API_PREFIX}/backups/${id}/`,
     create: `${API_PREFIX}/backups/create/`,
     verify: `${API_PREFIX}/backups/verify/`,

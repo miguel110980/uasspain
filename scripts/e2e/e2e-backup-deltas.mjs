@@ -6,7 +6,7 @@ const admin = await adminClient();
 const call = (path, method = 'GET', body) => admin.call('/api/backups/' + path, method, body);
 const finish = async id => {
   for (let attempt = 0; attempt < 300; attempt++) {
-    const job = (await call('history/?limit=100')).body.find(j => j.id === id);
+    const job = (await call('inventory/?limit=100')).body.find(j => j.id === id);
     if (job && job.status !== 'creating') {
       check(job.status === 'completed' && job.verified && job.encrypted, 'Verified encrypted recovery point');
       return job;
@@ -41,18 +41,20 @@ const second = await create('incremental');
 check(second.parent_backup_id === first.id && second.base_full_id === full.id && second.chain_index === 2, 'Second incremental depends on the prior delta');
 for (const job of [full, first, second]) check((await call('verify/', 'POST', { job_id: job.id })).body.valid === true, 'Artifact and reconstructed-state integrity');
 const source = sql(`SELECT storage_path FROM backups_backupjob WHERE id='${uuid(full.id)}'`);
-check(/^\/app\/backups\/uasspain_full_[a-z0-9_.]+\.enc$/.test(source), 'Owned isolated FULL filename');
+check( /^\/app\/backups\/(?:local|destination-local)\/uasspain_full_[a-z0-9_.]+\.enc$/.test(source), 'Owned isolated FULL filename');
 docker(['exec', backend, 'mv', source, source + '.audit-held']);
+const savedChecksum=sql(`SELECT checksum FROM backups_backupjob WHERE id='${full.id}'`);
+sql(`UPDATE backups_backupjob SET checksum='sha256:'||repeat('0',64) WHERE id='${full.id}'`);
 try {
-  check((await call('restore-test/', 'POST', { job_id: second.id })).status === 400, 'Missing ancestor prevents restoration');
+  check((await call('restore-test/', 'POST', { job_id: second.id })).status === 400, 'No valid ancestor replica prevents restoration');
   check(fingerprint() === expected, 'Rejected drill leaves database unchanged');
-} finally { docker(['exec', backend, 'mv', source + '.audit-held', source]); }
+} finally { docker(['exec', backend, 'mv', source + '.audit-held', source]); sql(`UPDATE backups_backupjob SET checksum='${savedChecksum}' WHERE id='${full.id}'`); }
 check((await call('restore-test/', 'POST', { job_id: second.id })).body.success === true, 'FULL plus two deltas drill');
 async function restore(job, role) {
   const server = (await call('servers/')).body.find(s => s.role === role && s.is_active);
   const available = (await call('origins/?origin=' + server.id)).body.available.find(j => j.id === job.id);
   check(Boolean(available), 'Replicated recovery point is available');
-  const response = await call('restore/', 'POST', { origin: server.id, filename: available.filename, confirmed: true, confirmation_text: 'RESTAURAR' });
+  const response = await call('restore/', 'POST', { job_id: job.id, origin: server.id, filename: available.filename, confirmed: true, confirmation_text: 'RESTAURAR' });
   check(response.status === 202, 'Isolated restore queued');
   let reauthenticatedAfterRestore = false;
   for (let attempt = 0; attempt < 300; attempt++) {

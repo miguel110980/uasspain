@@ -1,5 +1,6 @@
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import React, { useState, useEffect } from 'react';
+import AccountDeactivation from '@/components/account/AccountDeactivation';
 import { motion } from 'framer-motion';
 import { Save, Loader2, CheckCircle, AlertCircle, Upload, UserCheck } from 'lucide-react';
 import authService from '@/services/authService';
@@ -298,6 +299,7 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
           </form>
         </div>
       </div>
+      <AccountDeactivation />
     </motion.div>
   );
 }

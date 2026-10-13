@@ -85,7 +85,7 @@ test('admin runtime settings and all three empty backup slots are editable', asy
     await expect(dialog).toHaveCount(0);
     await expect(card.getByRole('status')).toHaveText('Destino guardado. Prueba la conexión antes de activarlo.');
     const connection=page.waitForRequest(request=>request.url().endsWith('/api/backups/test-connection/'));
-    await card.getByRole('button',{name:'Probar conexión',exact:true}).click();
+    await card.getByRole('button',{name:'Comprobar conexión',exact:true}).click();
     const request=await connection;
     const saved=await(await page.request.get('/api/backups/servers/',{headers})).json();
     expect(request.postDataJSON().server_id).toBe(saved.find(server=>server.name==='Fixture '+label).id);

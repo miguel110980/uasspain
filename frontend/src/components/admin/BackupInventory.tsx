@@ -1,0 +1,28 @@
+import { backupState, backupDuration, backupReplicas, backupErrorLabel } from '@/lib/backups';
+
+const KINDS = { full: 'Completa', incremental: 'Incremental' };
+const SLOTS = { local: 'Servidor local', external_1: 'Servidor externo 1', external_2: 'Servidor externo 2' };
+const bytes = (value) => `${(Number(value) / 1048576).toLocaleString('es-ES', { maximumFractionDigits: 2 })} MB`;
+
+export default function BackupInventory({ inventory, total, page, setPage, origins, setOrigins, date, button, control, loading, busy, restoreEnabled, verify, drill, restore }) {
+  return <section id="backup-inventory" aria-label="Copias de seguridad almacenadas" className="glass-card p-4 space-y-4 scroll-mt-4 min-w-0">
+    <h3 className="font-heading font-semibold">Copias de seguridad almacenadas</h3>
+    {!inventory.length && !loading && <p className="text-sm text-muted-foreground">No hay copias identificadas en el inventario.</p>}
+    <div className="overflow-x-auto max-w-full" tabIndex={0} aria-label="Tabla de copias almacenadas"><table className="w-full text-sm text-left"><thead><tr>{['Fecha', 'Tipo', 'Tamaño', 'Duración', 'Destinos', 'Estado', 'Integridad', 'Recuperación', 'Acciones'].map(label => <th key={label} className="px-3 py-2 whitespace-nowrap">{label}</th>)}</tr></thead><tbody>{inventory.map(job => {
+      const replicas = backupReplicas(job);
+      const origin = origins[job.id] || replicas[0]?.id || 'auto';
+      const integrity = job.replica_checks?.[origin]?.integrity;
+      const recovery = job.replica_checks?.[origin]?.recovery;
+      const unavailable = !replicas.length || job.status === 'creating';
+      const canRecover = !unavailable && job.verified && integrity?.success !== false && Boolean(job.manifest_checksum);
+      const reason = unavailable ? 'No hay una réplica finalizada disponible.' : integrity?.success === false ? 'La réplica seleccionada no supera la integridad. Puedes validarla de nuevo o seleccionar otra.' : !job.verified ? 'Valida la integridad de esta copia.' : !job.manifest_checksum ? 'Esta copia histórica necesita metadatos compatibles para restaurarse.' : '';
+      return <tr key={job.id} data-backup-id={job.id} aria-label={`Copia ${job.id}`} className="border-t border-border-subtle align-top">
+        <td className="px-3 py-2 whitespace-nowrap">{date(job.created_date)}<details className="mt-1"><summary className="cursor-pointer">Ver detalles</summary><div className="text-xs max-w-48 whitespace-normal break-words">{job.id}{job.parent_backup_id && <p>Depende de: {job.parent_backup_id}</p>}{job.error && <p className="text-danger">{job.error}</p>}</div></details></td><td className="px-3 py-2">{KINDS[job.job_type] || 'Copia'}</td><td className="px-3 py-2 whitespace-nowrap">{bytes(Number(job.size_bytes) + Number(job.media_size_bytes))}</td><td className="px-3 py-2 whitespace-nowrap">{backupDuration(job.duration_milliseconds, job.duration_seconds)}</td>
+        <td className="px-3 py-2 min-w-44">{Object.entries(job.destinations || {}).filter(([, dest]: [string, any]) => dest.status !== 'NOT_CONFIGURED').map(([role, dest]: [string, any]) => <p key={role}>{dest.server_name || SLOTS[role] || 'Destino'}: {dest.status === 'success' ? 'Correcta' : dest.status === 'running' ? 'En proceso' : 'Error'}</p>)}</td><td className={`px-3 py-2 ${backupState(job) === 'Correcta' ? 'text-success' : backupState(job) === 'Parcial' ? 'text-warning' : backupState(job) === 'En proceso' ? 'text-primary' : 'text-danger'}`}>{backupState(job)}</td>
+        <td className="px-3 py-2 min-w-40">{integrity ? integrity.success ? 'Verificada' : 'Incorrecta' : job.verified ? 'Verificada al crear' : 'Pendiente'}<p className="text-xs text-muted-foreground">{date(integrity?.checked_at || job.verified_at)}</p>{integrity?.errors?.length > 0 && <p className="text-xs text-danger">{integrity.errors.map(backupErrorLabel).join(' ')}</p>}</td><td className="px-3 py-2 min-w-40">{recovery ? recovery.success ? 'Comprobada' : 'Fallida' : job.restore_tested ? 'Comprobada' : 'Pendiente'}<p className="text-xs text-muted-foreground">{date(recovery?.checked_at || job.restore_tested_at)}</p></td>
+        <td className="px-3 py-2 min-w-64"><label className="block space-y-1 mb-2"><span className="text-xs">Réplica de esta copia</span><select aria-label={`Réplica de ${job.id}`} className={control} disabled={busy || unavailable} value={origin} onChange={event => setOrigins(current => ({ ...current, [job.id]: event.target.value }))}>{replicas.map(replica => <option key={replica.id} value={replica.id}>{replica.name}</option>)}{!replicas.length && <option value="auto">No disponible</option>}</select></label><div className="flex flex-wrap gap-2"><button className={button} disabled={busy || unavailable} onClick={() => verify(job)}>Validar copia</button><button className={button} disabled={busy || !canRecover} onClick={() => drill(job)}>Comprobar recuperación</button><button className={`${button} text-danger`} disabled={busy || !restoreEnabled || !canRecover || recovery?.success === false} onClick={() => restore(job)}>Restaurar</button></div>{reason && <p className="text-xs text-muted-foreground mt-2">{reason}</p>}{!restoreEnabled && <p className="text-xs text-muted-foreground mt-2">La restauración requiere habilitación del sistema.</p>}</td>
+      </tr>;
+    })}</tbody></table></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><button className={button} disabled={page === 0} onClick={() => setPage(page - 1)}>Anterior</button><span className="text-sm">Página {page + 1} · {total || 0} copias</span><button className={button} disabled={(page + 1) * 10 >= (total || 0)} onClick={() => setPage(page + 1)}>Siguiente</button></div>
+  </section>;
+}

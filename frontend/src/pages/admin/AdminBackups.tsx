@@ -5,18 +5,24 @@ import BackupDestinationForm, { BACKUP_SLOTS } from '@/components/admin/BackupDe
 import apiClient from '@/api/apiClient';
 import endpoints from '@/api/endpoints';
 import { extractErrorMessage } from '@/lib/errors';
+import { backupReplicas } from '@/lib/backups';
+import BackupHistory from '@/components/admin/BackupHistory';
+import BackupInventory from '@/components/admin/BackupInventory';
 
 const DAYS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 const KINDS = { automatic: 'Automática recomendada', full: 'Completa', incremental: 'Incremental' };
 const STATES = { ok: 'Correcto', attention: 'Atención', error: 'Error', not_configured: 'No configurado' };
 const PAGE_SIZE = 10;
 const bytes = (value) => { const n = Number(value) || 0; return n >= 1073741824 ? `${(n / 1073741824).toFixed(2)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(2)} MB` : `${(n / 1024).toFixed(1)} KB`; };
-const jobState = (job) => job.status === 'creating' ? 'En curso' : job.status === 'completed' && job.verified ? 'Correcta' : 'Error';
-const destinations = (job) => Object.entries(job.destinations || {}).filter(([, value]: [string, any]) => value.status !== 'NOT_CONFIGURED').map(([key, value]: [string, any]) => `${value.server_name || BACKUP_SLOTS.find(slot => slot.role === key)?.label || 'Destino'}: ${value.status === 'success' ? 'Correcta' : 'Error'}`).join(' · ') || 'Almacenamiento de recuperación local';
+
 
 export default function AdminBackups() {
   const [status, setStatus] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
+  const [inventory, setInventory] = useState<any[]>([]);
+  const [inventoryPage, setInventoryPage] = useState(0);
+  const [origins, setOrigins] = useState<Record<string, string>>({});
+  const [clearIds, setClearIds] = useState<string[] | null>(null);
   const [servers, setServers] = useState<any[]>([]);
   const [config, setConfig] = useState<any>(null);
   const [schedule, setSchedule] = useState({ frequency: 'manual', day: '1', hour: '03:00', job_type: 'automatic', retention_days: 30 });
@@ -40,9 +46,9 @@ export default function AdminBackups() {
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
     try {
-      const [s, h, c, targets] = await Promise.all([apiClient.get(endpoints.backups.status), apiClient.get(endpoints.backups.history, { params: { limit: PAGE_SIZE, offset: page * PAGE_SIZE } }), apiClient.get(endpoints.backups.config), apiClient.get(endpoints.backups.servers)]);
+      const [s, h, c, targets, copies] = await Promise.all([apiClient.get(endpoints.backups.status), apiClient.get(endpoints.backups.history, { params: { limit: PAGE_SIZE, offset: page * PAGE_SIZE } }), apiClient.get(endpoints.backups.config), apiClient.get(endpoints.backups.servers), apiClient.get(endpoints.backups.inventory, { params: { limit: PAGE_SIZE, offset: inventoryPage * PAGE_SIZE } })]);
       if (version !== loadVersion.current) return;
-      setStatus(s.data); setHistory(h.data); setConfig(c.data?.value); setServers(targets.data);
+      setStatus(s.data); setHistory(h.data); setInventory(copies.data); setConfig(c.data?.value); setServers(targets.data);
       if (!initialized.current) {
         const cfg = c.data?.value || {};
         const retention = cfg.retention_days || cfg.retention_incremental || 30;
@@ -52,23 +58,23 @@ export default function AdminBackups() {
       setError('');
     } catch (err) { if (version === loadVersion.current) setError(extractErrorMessage(err, 'No se pudo actualizar el estado de las copias.')); }
     finally { if (version === loadVersion.current) setLoading(false); }
-  }, [page]);
+  }, [page, inventoryPage]);
   useEffect(() => {
     void load(); const timer = setInterval(() => { void load(); }, 5000);
     return () => { clearInterval(timer); loadVersion.current++; };
   }, [load]);
   useEffect(() => {
-    const job = history.find(item => item.id === pendingJob);
+    const job = inventory.find(item => item.id === pendingJob);
     if (!job || job.status === 'creating') return;
     setPendingJob(null);
     if (job.status === 'completed' && job.verified) {
       setNotice('Copia creada e integridad verificada. Comprueba su recuperación antes de considerarla utilizable.');
     } else if (job.status === 'partial' && job.verified) {
-      setNotice('La copia local se conserva, pero no se completaron todos los destinos.');
+      setNotice('Solo algunos destinos recibieron y verificaron la copia. Consulta sus resultados.');
     } else {
       setNotice(''); setError(job.error || 'No se pudo crear la copia.');
     }
-  }, [history, pendingJob]);
+  }, [inventory, pendingJob]);
   useEffect(() => {
     if (!restore?.restoreId || restore.step !== 'running') return;
     let stopped = false; let polling = false;
@@ -104,27 +110,28 @@ export default function AdminBackups() {
     setConfirmation(false);
     const { data } = await apiClient.post(endpoints.backups.create, { type: createKind, background: true, encrypt: true });
     setPendingJob(data.job_id);
-    setNotice('Copia en curso. Puedes seguir consultando esta pantalla.'); setPage(0);
+    setNotice('Copia en curso. Puedes seguir consultando esta pantalla.'); setPage(0); setInventoryPage(0);
   });
   const verify = (job) => run(async () => {
-    const { data } = await apiClient.post(endpoints.backups.verify, { job_id: job.id }, { timeout: 90000 });
+    const { data } = await apiClient.post(endpoints.backups.verify, { job_id: job.id, origin: origins[job.id] || backupReplicas(job)[0]?.id || 'auto' }, { timeout: 90000 });
     if (!data.valid) throw new Error('La copia no supera la comprobación de integridad.');
     setNotice('Integridad, descifrado y formato comprobados.');
   });
   const drill = (job) => run(async () => {
-    await apiClient.post(endpoints.backups.restoreTest, { job_id: job.id }, { timeout: 660000 });
+    await apiClient.post(endpoints.backups.restoreTest, { job_id: job.id, origin: origins[job.id] || backupReplicas(job)[0]?.id || 'auto' }, { timeout: 660000 });
     setNotice('Recuperación comprobada en una base de prueba.');
   });
   const openRestore = (job) => {
     setConfirmationText(''); setRestoreAck(false);
-    setRestore({ job, origin: 'local', step: 'confirm', error: '', filename: '', loading: false });
+    const origin = origins[job.id] || backupReplicas(job)[0]?.id || 'local';
+    setRestore({ job, origin, step: 'confirm', error: '', filename: job.manifest?.files?.database?.name || '', loading: false });
   };
   const changeOrigin = async (origin) => {
     const selectedId = restore.job.id;
     setRestore(current => ({ ...current, origin, filename: '', loading: origin !== 'local', error: '' }));
     if (origin === 'local') return;
     try {
-      const { data } = await apiClient.get(endpoints.backups.origins, { params: { origin }, timeout: 60000 });
+      const { data } = await apiClient.get(endpoints.backups.origins, { params: { origin, job_id: selectedId }, timeout: 60000 });
       const selected = data.available?.find(item => item.id === selectedId);
       setRestore(current => current?.job.id === selectedId && current.origin === origin ? { ...current, loading: false, filename: selected?.filename || '', error: selected ? '' : 'Esta copia no está disponible en el destino seleccionado.' } : current);
     } catch { setRestore(current => ({ ...current, loading: false, error: 'No se pudo consultar el destino.' })); }
@@ -133,7 +140,7 @@ export default function AdminBackups() {
     if (operationBusy || restore?.step !== 'confirm' || confirmationText !== 'RESTAURAR' || !restoreAck) return;
     const selected = restore; setRestore(current => ({ ...current, step: 'running', error: '' }));
     try {
-      const { data } = await apiClient.post(endpoints.backups.restore, { origin: selected.origin, confirmed: true, confirmation_text: confirmationText, ...(selected.origin === 'local' ? { job_id: selected.job.id } : { filename: selected.filename }) }, { timeout: 60000 });
+      const { data } = await apiClient.post(endpoints.backups.restore, { origin: selected.origin, confirmed: true, confirmation_text: confirmationText, job_id: selected.job.id, ...(selected.origin === 'local' ? {} : { filename: selected.filename }) }, { timeout: 60000 });
       setRestore(current => ({ ...current, restoreId: data.restore_id })); void load();
     } catch (err) { setRestore(current => ({ ...current, step: 'confirm', error: extractErrorMessage(err, 'No se pudo iniciar la restauración.') })); }
   };
@@ -142,7 +149,7 @@ export default function AdminBackups() {
   const freq = schedule.frequency === 'manual' ? 'Manual' : schedule.frequency === 'weekly' ? `Cada ${DAYS[Number(schedule.day)]}` : schedule.frequency === 'daily' ? 'Diaria' : 'Programación anterior';
   return <div className="space-y-5 min-w-0">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-heading text-xl flex items-center gap-2"><DatabaseBackup className="w-5 h-5 text-primary" />Backups</h2><p className="text-sm text-muted-foreground mt-1">Configura, crea y recupera tus copias de seguridad.</p></div><button className={button} onClick={() => void load()}><RefreshCw className="inline w-4 h-4 mr-1" />Actualizar</button></div>
-    <nav aria-label="Secciones de copias de seguridad" className="flex flex-wrap gap-2">{[['backup-state', 'Estado de las copias'], ['backup-targets', 'Destinos de backup'], ['backup-schedule', 'Programación'], ['backup-history', 'Historial y restauración']].map(([id, label]) => <a key={id} className={button} href={`#${id}`}>{label}</a>)}</nav>
+    <nav aria-label="Secciones de copias de seguridad" className="flex flex-wrap gap-2">{[['backup-state', 'Estado de las copias'], ['backup-targets', 'Destinos de backup'], ['backup-schedule', 'Programación'], ['backup-history', 'Historial de copias'], ['backup-inventory', 'Copias almacenadas']].map(([id, label]) => <a key={id} className={button} href={`#${id}`}>{label}</a>)}</nav>
     {loading && <p role="status">Cargando copias…</p>}{error && <p role="alert" className="rounded-md bg-danger-soft text-danger p-3">{error}</p>}{notice && <p role="status" className="rounded-md bg-success-soft text-success p-3">{notice}</p>}
     <section id="backup-state" aria-label="Estado de las copias" className="space-y-4 scroll-mt-4">
       <h3 className="font-heading font-semibold">Estado de las copias</h3>
@@ -171,19 +178,12 @@ export default function AdminBackups() {
         <button className={`${button} text-primary bg-primary/10`} disabled={saving || loading || !['daily', 'weekly', 'manual'].includes(schedule.frequency)} type="submit">{saving ? 'Guardando…' : 'Guardar programación'}</button>
       </form>
     </section>
-    <section id="backup-history" aria-label="Historial y restauración" className="glass-card p-4 space-y-4 scroll-mt-4">
-      <h3 className="font-heading font-semibold">Historial de copias</h3>
-      {!history.length && !loading && <p className="text-sm text-muted-foreground">No hay copias registradas.</p>}
-      {history.map(job => <article key={job.id} aria-label={`Copia ${job.id}`} className="rounded-md border border-border-subtle p-3 space-y-3 min-w-0"><div className="flex flex-wrap justify-between gap-2"><p className="font-semibold">{date(job.created_date)} · {KINDS[job.job_type] || 'Copia'}</p><span className={jobState(job) === 'Correcta' ? 'text-success' : jobState(job) === 'En curso' ? 'text-primary' : 'text-danger'}>{jobState(job)}</span></div><p className="text-sm text-muted-foreground">{bytes(Number(job.size_bytes) + Number(job.media_size_bytes))} · Duración: {job.duration_seconds}s</p><p className="text-sm break-words">{destinations(job)}</p>{job.status === 'partial' && <p className="text-sm text-warning">La copia local se conserva, pero no se completaron todos los destinos.</p>}
-        <div className="flex flex-wrap gap-2"><button className={button} disabled={operationBusy || !['completed', 'partial', 'verify_failed'].includes(job.status)} onClick={() => void verify(job)}>Validar copia</button><button className={button} disabled={operationBusy || !job.verified || !job.manifest_checksum || !['completed', 'partial'].includes(job.status)} onClick={() => void drill(job)}>Comprobar recuperación</button><button className={`${button} text-danger`} disabled={operationBusy || !status?.restore_enabled || !job.verified || !job.manifest_checksum || !['completed', 'partial'].includes(job.status)} onClick={() => openRestore(job)}>Restaurar</button></div>
-        <details><summary className="text-sm cursor-pointer focus-visible:outline-primary">Ver detalles</summary><dl className="mt-2 space-y-1 text-xs break-words"><dt>Identificador</dt><dd className="break-all">{job.id}</dd><dt>Comprobación</dt><dd>{job.verified ? 'Integridad verificada' : 'Pendiente o incorrecta'} · {job.restore_tested ? 'Recuperación probada' : 'Recuperación pendiente de prueba'}</dd>{job.error && <><dt>Incidencia</dt><dd>{job.error}</dd></>}</dl></details>
-      </article>)}
-      <div className="flex flex-wrap items-center justify-between gap-2"><button className={button} disabled={page === 0} onClick={() => setPage(page - 1)}>Anterior</button><span className="text-sm">Página {page + 1} · {status?.history_total || 0} copias</span><button className={button} disabled={(page + 1) * PAGE_SIZE >= (status?.history_total || 0)} onClick={() => setPage(page + 1)}>Siguiente</button></div>
-      {!status?.restore_enabled && <p className="text-sm text-muted-foreground">La restauración requiere habilitación del sistema.</p>}
-    </section>
+    <BackupHistory history={history} total={status?.history_total} page={page} setPage={setPage} date={date} button={button} loading={loading} busy={busy} clear={setClearIds} servers={servers} />
+    <BackupInventory inventory={inventory} total={status?.inventory_total} page={inventoryPage} setPage={setInventoryPage} origins={origins} setOrigins={setOrigins} date={date} button={button} control={control} loading={loading} busy={operationBusy} restoreEnabled={status?.restore_enabled} verify={verify} drill={drill} restore={openRestore} />
+    {clearIds && <PanelModal label="Limpiar historial de copias" onClose={() => setClearIds(null)}><h3 className="font-heading text-lg">Limpiar historial</h3><p className="my-4 text-sm">Se eliminarán {clearIds.length} operaciones finalizadas de esta página. Las copias, dependencias, configuraciones y auditoría administrativa se conservarán.</p><div className="flex flex-wrap justify-end gap-2"><button className={button} onClick={() => setClearIds(null)}>Cancelar</button><button className={button} disabled={busy} onClick={() => void run(async () => { const ids = clearIds; setClearIds(null); await apiClient.post(endpoints.backups.clearHistory, { confirmed: true, ids }); setPage(0); setNotice('Historial visible limpiado. Las copias se conservan.'); })}>Confirmar limpieza</button></div></PanelModal>}
     {confirmation && <PanelModal label="Crear copia ahora" onClose={() => setConfirmation(false)}><h3 className="font-heading text-lg">Crear copia ahora</h3><p className="my-4 text-sm">Se creará una copia cifrada de los datos y archivos en {active.map(server => server.name).join(', ')}.</p><label className="block space-y-1 mb-4"><span className="text-sm">Tipo de esta copia</span><select className={control} value={createKind} onChange={event => setCreateKind(event.target.value)}>{Object.entries(KINDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{createKind === 'incremental' && <p className="mb-4 text-sm text-muted-foreground">Guarda los cambios respecto a la copia anterior. Si falta una base válida, se creará primero una completa.</p>}<div className="flex flex-wrap justify-end gap-2"><button className={button} onClick={() => setConfirmation(false)}>Cancelar</button><button className={`${button} text-primary`} disabled={operationBusy} onClick={() => void create()}>Confirmar creación</button></div></PanelModal>}
     {restore && <PanelModal label="Restaurar copia de seguridad" onClose={() => restore.step !== 'running' && setRestore(null)}><div className="flex items-start justify-between gap-3"><h3 className="font-heading text-lg">Restaurar copia de seguridad</h3><button aria-label="Cerrar" className={button} disabled={restore.step === 'running'} onClick={() => setRestore(null)}><X className="w-4 h-4" /></button></div>
-      {restore.step === 'confirm' && <div className="space-y-4 mt-4"><p className="text-sm">Copia: {date(restore.job.created_date)} · {KINDS[restore.job.job_type]}</p><label className="block space-y-1"><span className="text-sm">Recuperar desde</span><select className={control} value={restore.origin} onChange={event => void changeOrigin(event.target.value)}><option value="local">Almacenamiento de recuperación local</option>{servers.filter(server => server.is_active && Object.values(restore.job.destinations || {}).some((dest: any) => dest.server_id === server.id && dest.status === 'success')).map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</select></label><p className="text-sm text-warning">Se sustituirán los datos actuales. El sistema comprobará la copia, creará una copia de seguridad previa y verificará la recuperación.</p><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={restoreAck} onChange={event => setRestoreAck(event.target.checked)} />Entiendo que se sustituirán los datos actuales.</label><label className="block space-y-1"><span className="text-sm">Escribe RESTAURAR para confirmar</span><input className={control} autoComplete="off" value={confirmationText} onChange={event => setConfirmationText(event.target.value)} /></label>{restore.error && <p role="alert" className="text-sm text-danger">{restore.error}</p>}<button className={`${button} text-danger`} disabled={operationBusy || restore.loading || Boolean(restore.error) || !restoreAck || confirmationText !== 'RESTAURAR' || (restore.origin !== 'local' && !restore.filename)} onClick={() => void restoreNow()}>Restaurar definitivamente</button></div>}
+      {restore.step === 'confirm' && <div className="space-y-4 mt-4"><p className="text-sm">Copia: {date(restore.job.created_date)} · {KINDS[restore.job.job_type]} · {restore.job.id}</p><label className="block space-y-1"><span className="text-sm">Recuperar desde</span><select className={control} value={restore.origin} onChange={event => void changeOrigin(event.target.value)}>{backupReplicas(restore.job).map(replica => <option key={replica.id} value={replica.id}>{replica.name}</option>)}</select></label><p className="text-sm text-warning">Se sustituirán los datos actuales. El sistema comprobará la copia, creará una copia de seguridad previa y verificará la recuperación.</p><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={restoreAck} onChange={event => setRestoreAck(event.target.checked)} />Entiendo que se sustituirán los datos actuales.</label><label className="block space-y-1"><span className="text-sm">Escribe RESTAURAR para confirmar</span><input className={control} autoComplete="off" value={confirmationText} onChange={event => setConfirmationText(event.target.value)} /></label>{restore.error && <p role="alert" className="text-sm text-danger">{restore.error}</p>}<button className={`${button} text-danger`} disabled={operationBusy || restore.loading || Boolean(restore.error) || !restoreAck || confirmationText !== 'RESTAURAR' || (restore.origin !== 'local' && !restore.filename)} onClick={() => void restoreNow()}>Restaurar definitivamente</button></div>}
       {restore.step === 'running' && <p role="status" className="my-4 text-sm">Restauración en curso. Se comprobará la recuperación antes de finalizar.</p>}
       {restore.step === 'done' && <p role="status" className="my-4 text-sm text-success">Restauración completada y verificada.</p>}
       {restore.step === 'failed' && <div role="alert" className="my-4 text-sm text-danger"><p>{restore.result?.error || 'No se pudo completar la restauración.'}</p><p>{restore.result?.rolled_back ? 'Se recuperaron los datos con la copia de seguridad previa.' : 'Consulta el estado del sistema antes de reintentar.'}</p></div>}

@@ -31,6 +31,11 @@ use crate::{
 
 const BACKUP_LOCK_KEY: i64 = 20_260_925;
 
+#[path = "backup_artifacts.rs"]
+mod artifacts;
+#[path = "backup_operations.rs"]
+mod operations;
+
 #[derive(Clone, Debug, FromRow, Serialize)]
 pub struct BackupJob {
     id: Uuid,
@@ -39,6 +44,10 @@ pub struct BackupJob {
     started_at: DateTime<Utc>,
     finished_at: Option<DateTime<Utc>>,
     duration_seconds: i32,
+    duration_milliseconds: Option<i64>,
+    replica_checks: Value,
+    #[sqlx(default)]
+    historical_local_available: bool,
     size_bytes: i64,
     encrypted: bool,
     checksum: String,
@@ -50,6 +59,7 @@ pub struct BackupJob {
     media_size_bytes: i64,
     #[serde(skip_serializing)]
     remote_paths: Value,
+    #[serde(serialize_with = "serialize_destinations")]
     destinations: Value,
     verified: bool,
     verified_at: Option<DateTime<Utc>>,
@@ -122,6 +132,7 @@ pub struct CreateRequest {
 #[derive(Debug, Deserialize)]
 pub struct IdRequest {
     job_id: Option<Uuid>,
+    origin: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,6 +175,7 @@ pub struct ServerIdRequest {
 #[derive(Debug, Deserialize)]
 pub struct OriginQuery {
     origin: Option<String>,
+    job_id: Option<Uuid>,
 }
 #[derive(Debug, Deserialize)]
 pub struct HistoryQuery {
@@ -233,7 +245,7 @@ pub async fn status(
     Ok(Json(json!({
         "system_status": if !pg_dump_available {"error"} else if active.is_empty() {"not_configured"} else if latest.as_ref().is_some_and(|job|matches!(job.status.as_str(),"failed"|"connection_failed"|"verify_failed")) {"error"} else if latest.as_ref().is_none_or(|job|job.status!="completed" || !job.verified) || active.iter().any(|server|server.status!="online") {"attention"} else {"ok"},
         "pg_dump_available": pg_dump_available,
-        "server2_ip": std::env::var("VPN_SERVER2_IP").unwrap_or_else(|_| "10.50.0.2".into()),
+        "server2_ip": std::env::var("VPN_SERVER2_IP").ok().filter(|v|!v.is_empty()),
         "last_backup": latest.as_ref().map(|job| job.created_date),
         "last_backup_type": latest.as_ref().map_or("none", |job| &job.job_type),
         "last_backup_status": latest.as_ref().map_or("none", |job| &job.status),
@@ -244,7 +256,8 @@ pub async fn status(
         "operation": latest.as_ref().filter(|job|job.status=="creating"),
         "restore_enabled": env_bool("PRODUCTION_RESTORE_ENABLED",false),
         "restore_in_progress": state.restores.read().await.values().any(|value|matches!(value.get("state").and_then(Value::as_str),Some("queued"|"downloading"|"running"))),
-        "history_total": sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM backups_backupjob").fetch_one(pool).await?,
+        "history_total": sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM backups_operation").fetch_one(pool).await?,
+        "inventory_total": sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM backups_backupjob WHERE checksum<>'' OR status='creating'").fetch_one(pool).await?,
         "storage_used_bytes": sqlx::query_scalar::<_,i64>("SELECT COALESCE(SUM(size_bytes+media_size_bytes),0)::bigint FROM backups_backupjob").fetch_one(pool).await?,
         "last_successful_backup": last_successful,
         "last_verification": last_verified,
@@ -281,31 +294,66 @@ pub async fn test_connection(
         .await?
         .ok_or(AppError::NotFound)?;
     let result = probe_destination(&server).await;
-    let (ok, detail, code) = match result {
-        Ok(()) => (true, "Conexión correcta.", "ok"),
-        Err(error) => (false, safe_error(&error), error_code(&error)),
+    let (ok, detail, code, metrics) = match result {
+        Ok(metrics) => (true, "Conexión correcta.", "ok", Some(metrics)),
+        Err(error) => (false, safe_error(&error), error_code(&error), None),
     };
     sqlx::query("UPDATE backups_backupserver SET connection_ok=$2,connection_checked_at=NOW(),status=$3,last_seen=CASE WHEN $2 THEN NOW() ELSE last_seen END,error=$4 WHERE id=$1")
         .bind(id).bind(ok).bind(if ok {"online"} else {"offline"}).bind(if ok {""} else {code}).execute(&mut *tx).await?;
+    if let Some(metrics) = metrics {
+        sqlx::query(
+            "UPDATE backups_backupserver SET disk_total_bytes=$2,disk_used_bytes=$3 WHERE id=$1",
+        )
+        .bind(id)
+        .bind(metrics.total as i64)
+        .bind(metrics.total.saturating_sub(metrics.available) as i64)
+        .execute(&mut *tx)
+        .await?;
+    }
     sqlx::query("INSERT INTO core_auditlog (id,profile_id,action,model_name,instance_id,extra,created_date,updated_date) VALUES ($1,$2,'backup_connection_test','BackupDestination',$3,$4,NOW(),NOW())")
         .bind(Uuid::new_v4()).bind(claims.profile_id).bind(id.to_string()).bind(json!({"result":if ok {"success"}else{"failure"},"code":code})).execute(&mut *tx).await?;
     tx.commit().await?;
-    Ok(Json(json!({"ok":ok,"detail":detail,"code":code})))
+    Ok(Json(
+        json!({"ok":ok,"detail":detail,"code":code,"available_bytes":metrics.map(|m|m.available),"capacity_verified":metrics.is_some()}),
+    ))
 }
 
 pub async fn history(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<HistoryQuery>,
+) -> Result<Json<Vec<operations::Operation>>, AppError> {
+    admin(&state, &headers)?;
+    operations::history(pool(&state)?, query).await
+}
+
+pub async fn clear_history(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<operations::ClearRequest>,
+) -> Result<Json<Value>, AppError> {
+    let claims = admin(&state, &headers)?;
+    operations::clear(pool(&state)?, claims.profile_id, input).await
+}
+
+pub async fn inventory(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<HistoryQuery>,
 ) -> Result<Json<Vec<BackupJob>>, AppError> {
     admin(&state, &headers)?;
-    let jobs = sqlx::query_as::<_, BackupJob>(&job_select(
-        "ORDER BY created_date DESC,id DESC LIMIT $1 OFFSET $2",
+    let mut jobs = sqlx::query_as::<_, BackupJob>(&job_select(
+        "WHERE checksum<>'' OR status='creating' ORDER BY created_date DESC,id DESC LIMIT $1 OFFSET $2",
     ))
     .bind(query.limit.unwrap_or(50).clamp(1, 100))
     .bind(query.offset.unwrap_or(0).max(0))
     .fetch_all(pool(&state)?)
     .await?;
+    for job in &mut jobs {
+        job.historical_local_available = safe_job_path(&job.storage_path)
+            .await
+            .is_some_and(|path| path.is_file());
+    }
     Ok(Json(jobs))
 }
 
@@ -401,6 +449,15 @@ pub async fn create(
         ));
     }
     let encrypt = true;
+    if !fetch_servers(pool(&state)?)
+        .await?
+        .iter()
+        .any(|server| server.is_active)
+    {
+        return Err(AppError::Validation(
+            "No hay destinos activos; no se ha generado ningún backup.".into(),
+        ));
+    }
     let encrypted_email: String =
         sqlx::query_scalar("SELECT email FROM accounts_userprofile WHERE id=$1")
             .bind(claims.profile_id)
@@ -506,17 +563,27 @@ async fn create_locked(
     if existing_id.is_none() {
         insert_backup_job(connection, id, initiated_by, &chain).await?;
     }
+    let active: Vec<_> = fetch_servers(pool(state)?)
+        .await?
+        .into_iter()
+        .filter(|s| s.is_active)
+        .collect();
+    if active.is_empty() {
+        sqlx::query("UPDATE backups_backupjob SET status='failed',finished_at=NOW(),error='no_active_destinations' WHERE id=$1").bind(id).execute(&mut **connection).await?;
+        return Err(AppError::Validation("No hay destinos activos.".into()));
+    }
+    let staging = artifacts::Staging::create().await?;
     let started = Instant::now();
     match dump_to_disk(
         state,
         &chain.effective_kind,
         encrypt,
         chain.parent_backup_id,
+        staging.path(),
     )
     .await
     {
         Ok((path, checksum, size, media)) => {
-            let elapsed = i32::try_from(started.elapsed().as_secs()).unwrap_or(i32::MAX);
             let manifest = create_manifest(
                 state,
                 id,
@@ -536,25 +603,52 @@ async fn create_locked(
             );
             let transfers = transfer_to_servers(
                 state,
+                id,
+                &active,
                 &path,
                 &checksum,
                 media.as_ref(),
                 Some(&manifest_transfer),
             )
             .await;
+            let local_path = transfers
+                .destinations
+                .pointer("/local/path")
+                .and_then(Value::as_str)
+                .filter(|_| {
+                    transfers
+                        .destinations
+                        .pointer("/local/status")
+                        .and_then(Value::as_str)
+                        == Some("success")
+                });
+            let storage_path = local_path
+                .map(PathBuf::from)
+                .unwrap_or_else(|| path.clone());
+            let manifest_path =
+                storage_path.with_file_name(manifest.path.file_name().ok_or(AppError::Internal)?);
+            let elapsed = i32::try_from(started.elapsed().as_secs()).unwrap_or(i32::MAX);
             let (media_path, media_checksum, media_size) = media.map_or_else(
                 || (String::new(), String::new(), 0_i64),
                 |(path, checksum, size)| {
                     (
-                        path.to_string_lossy().into_owned(),
+                        storage_path
+                            .with_file_name(path.file_name().unwrap_or_default())
+                            .to_string_lossy()
+                            .into_owned(),
                         checksum,
                         i64::try_from(size).unwrap_or(i64::MAX),
                     )
                 },
             );
-            sqlx::query("UPDATE backups_backupjob SET status=$2,finished_at=NOW(),duration_seconds=$3,size_bytes=$4,encrypted=$5,checksum=$6,storage_path=$7,media_path=$8,media_checksum=$9,media_size_bytes=$10,remote_paths=$11,destinations=$12,verified=true,verified_at=NOW(),verified_checksum=$6,error=$13,manifest=$14,manifest_checksum=$15,manifest_path=$16,encryption_key_id=$17,backup_format_version=2 WHERE id=$1")
-                .bind(id).bind(&transfers.status).bind(elapsed).bind(i64::try_from(size).unwrap_or(i64::MAX)).bind(encrypt).bind(&checksum).bind(path.to_string_lossy().as_ref()).bind(media_path).bind(media_checksum).bind(media_size).bind(&transfers.remote_paths).bind(&transfers.destinations).bind(&transfers.error).bind(&manifest.value).bind(&manifest.checksum).bind(manifest.path.to_string_lossy().as_ref()).bind(&manifest.key_id).execute(&mut **connection).await?;
-            let _ = apply_retention_locked(state, connection, None).await;
+            let replica_checks:serde_json::Map<String,Value>=transfers.destinations.as_object().into_iter().flatten().filter(|(_,dest)|dest.get("status").and_then(Value::as_str)==Some("success")).filter_map(|(role,dest)|{
+                let origin=if role=="local" {Some("local")} else {dest.get("server_id").and_then(Value::as_str)}?;
+                Some((origin.to_owned(),json!({"integrity":{"success":true,"checked_at":dest.get("verified_at"),"errors":[],"source":"verified_storage"}})))
+            }).collect();
+            sqlx::query("UPDATE backups_backupjob SET status=$2,finished_at=NOW(),duration_seconds=$3,size_bytes=$4,encrypted=$5,checksum=$6,storage_path=$7,media_path=$8,media_checksum=$9,media_size_bytes=$10,remote_paths=$11,destinations=$12,verified=($2 IN ('completed','partial')),verified_at=NOW(),verified_checksum=CASE WHEN $2 IN ('completed','partial') THEN $6 ELSE '' END,error=$13,manifest=$14,manifest_checksum=$15,manifest_path=$16,encryption_key_id=$17,backup_format_version=2,replica_checks=$18 WHERE id=$1")
+                .bind(id).bind(&transfers.status).bind(elapsed).bind(i64::try_from(size).unwrap_or(i64::MAX)).bind(encrypt).bind(&checksum).bind(storage_path.to_string_lossy().as_ref()).bind(media_path).bind(media_checksum).bind(media_size).bind(&transfers.remote_paths).bind(&transfers.destinations).bind(&transfers.error).bind(&manifest.value).bind(&manifest.checksum).bind(manifest_path.to_string_lossy().as_ref()).bind(&manifest.key_id).bind(Value::Object(replica_checks)).execute(&mut **connection).await?;
+            staging.clean().await?;
+            // Retention is explicit; creation must never delete an existing copy.
             let job = fetch_job_connection(connection, id)
                 .await?
                 .ok_or(AppError::Internal)?;
@@ -566,7 +660,7 @@ async fn create_locked(
             Ok((
                 response_status,
                 Json(
-                    json!({"detail":if chain.promoted_to_full {"No existía una base FULL válida; se creó automáticamente el FULL base."} else if transfers.status == "completed" {"Punto de recuperación creado y verificado."} else {"Punto local creado con incidencias remotas."},"promoted_to_full":chain.promoted_to_full,"job":job}),
+                    json!({"detail":if chain.promoted_to_full {"No existía una base FULL válida; se creó automáticamente el FULL base."} else if transfers.status == "completed" {"Punto de recuperación creado y verificado."} else {"Copia creada con incidencias en los destinos previstos."},"promoted_to_full":chain.promoted_to_full,"job":job}),
                 ),
             ))
         }
@@ -1024,15 +1118,16 @@ async fn dump_to_disk(
     kind: &str,
     encrypt: bool,
     parent_id: Option<Uuid>,
+    root: &Path,
 ) -> Result<(PathBuf, String, u64, Option<(PathBuf, String, u64)>), String> {
-    let root = backup_root().await?;
-    check_local_capacity(state, &root).await?;
+    check_local_capacity(state, root).await?;
     let timestamp = format!(
         "{}_{}",
         Utc::now().format("%Y%m%d_%H%M%S"),
         Uuid::new_v4().simple()
     );
     let plain = std::env::temp_dir().join(format!(".tmp_{kind}_{timestamp}.dump"));
+    let _plain_guard = artifacts::TemporaryFile::create(&plain).await?;
     let final_path = root.join(format!(
         "uasspain_{kind}_{timestamp}.sql.gz{}",
         if encrypt { ".enc" } else { "" }
@@ -1091,7 +1186,7 @@ async fn dump_to_disk(
     let _ = fs::remove_file(&plain).await;
     let checksum = sha256(&final_bytes);
     let media =
-        create_media_archive(state, &root, &timestamp.to_string(), encrypt, parent_id).await?;
+        create_media_archive(state, root, &timestamp.to_string(), encrypt, parent_id).await?;
     Ok((final_path, checksum, final_bytes.len() as u64, media))
 }
 
@@ -1100,6 +1195,7 @@ async fn validate_dump_bytes(bytes: &[u8]) -> Result<(), String> {
         return Err("Backup PostgreSQL corrupto".into());
     }
     let path = std::env::temp_dir().join(format!("uasspain-verify-{}.dump", Uuid::new_v4()));
+    let _temporary_guard = artifacts::TemporaryFile::create(&path).await?;
     fs::write(&path, bytes)
         .await
         .map_err(|_| "No hay espacio para validar backup")?;
@@ -1128,6 +1224,14 @@ async fn load_job_artifact(
     job: &BackupJob,
     media: bool,
 ) -> Result<Vec<u8>, String> {
+    load_job_artifact_from(state, job, media, None).await
+}
+async fn load_job_artifact_from(
+    state: &AppState,
+    job: &BackupJob,
+    media: bool,
+    origin: Option<&str>,
+) -> Result<Vec<u8>, String> {
     let mut current = job.clone();
     let mut deltas: Vec<Vec<u8>> = Vec::new();
     let mut delta_bytes = 0_usize;
@@ -1137,12 +1241,24 @@ async fn load_job_artifact(
         if !seen.insert(current.id) || seen.len() > 256 {
             return Err("Cadena incremental corrupta o demasiado larga; crea un FULL.".into());
         }
-        let manifest_path = safe_job_path(&current.manifest_path)
+        let selected = if current.id == job.id { origin } else { None };
+        if current.backup_format_version == 1
+            && current.manifest_checksum.is_empty()
+            && current.job_type == "full"
+        {
+            let bytes = artifacts::read(state, &current, field, selected).await?;
+            return if current.encrypted {
+                state
+                    .cipher
+                    .decrypt_backup(&bytes)
+                    .map_err(|_| "No se pudo descifrar la copia histórica.".into())
+            } else {
+                Ok(bytes)
+            };
+        }
+        let manifest_bytes = artifacts::read(state, &current, "manifest", selected)
             .await
-            .ok_or("Manifest no encontrado.")?;
-        let manifest_bytes = fs::read(manifest_path)
-            .await
-            .map_err(|_| "Manifest no accesible.")?;
+            .map_err(|error| format!("Manifest: {error}"))?;
         if sha256(&manifest_bytes) != current.manifest_checksum
             || serde_json::from_slice::<Value>(&manifest_bytes)
                 .ok()
@@ -1153,6 +1269,46 @@ async fn load_job_artifact(
         {
             return Err("Manifest corrupto o incompatible.".into());
         }
+        if current
+            .manifest
+            .get("format_version")
+            .and_then(Value::as_i64)
+            != Some(i64::from(current.backup_format_version))
+            || current.manifest.get("type").and_then(Value::as_str)
+                != Some(current.job_type.to_ascii_uppercase().as_str())
+            || current.manifest.pointer("/chain/parent_backup_id")
+                != Some(&json!(current.parent_backup_id))
+            || current.manifest.pointer("/chain/base_full_id") != Some(&json!(current.base_full_id))
+            || current
+                .manifest
+                .pointer("/chain/chain_index")
+                .and_then(Value::as_i64)
+                != Some(i64::from(current.chain_index))
+            || current
+                .manifest
+                .pointer("/files/database/size_bytes")
+                .and_then(Value::as_i64)
+                != Some(current.size_bytes)
+            || current
+                .manifest
+                .pointer("/encryption/key_id")
+                .and_then(Value::as_str)
+                != Some(current.encryption_key_id.as_str())
+            || current
+                .manifest
+                .pointer("/encryption/scheme")
+                .and_then(Value::as_str)
+                != Some(if current.encrypted {
+                    "AES-256-GCM"
+                } else {
+                    "NONE"
+                })
+        {
+            return Err(
+                "Manifest incompatible con los metadatos, cifrado o dependencias registrados."
+                    .into(),
+            );
+        }
         let (raw, checksum) = if media {
             (&current.media_path, &current.media_checksum)
         } else {
@@ -1161,12 +1317,7 @@ async fn load_job_artifact(
         let mut bytes = if media && raw.is_empty() {
             Vec::new()
         } else {
-            let path = safe_job_path(raw)
-                .await
-                .ok_or("Archivo de backup no encontrado.")?;
-            let stored = fs::read(path)
-                .await
-                .map_err(|_| "Archivo de backup no accesible.")?;
+            let stored = artifacts::read(state, &current, field, selected).await?;
             if !checksum_matches(&stored, checksum)
                 || current
                     .manifest
@@ -1217,8 +1368,7 @@ async fn load_job_artifact(
         } else {
             parent.base_full_id
         };
-        if !parent.verified
-            || !matches!(parent.status.as_str(), "completed" | "partial")
+        if !matches!(parent.status.as_str(), "completed" | "partial")
             || current.chain_index
                 != parent
                     .chain_index
@@ -1258,6 +1408,7 @@ async fn create_media_archive(
         return Err("MEDIA_ROOT y BACKUP_STORAGE_PATH no pueden ser iguales.".into());
     }
     let temporary = std::env::temp_dir().join(format!(".tmp_media_{timestamp}.zip"));
+    let _temporary_guard = artifacts::TemporaryFile::create(&temporary).await?;
     let source = media_root.clone();
     let excluded = backup_root.to_path_buf();
     let output = temporary.clone();
@@ -1363,45 +1514,67 @@ struct TransferSummary {
 
 async fn transfer_to_servers(
     state: &AppState,
+    job_id: Uuid,
+    active: &[BackupServer],
     database_path: &Path,
     database_checksum: &str,
     media: Option<&(PathBuf, String, u64)>,
     manifest: Option<&(PathBuf, String, u64)>,
 ) -> TransferSummary {
-    let Ok(pool) = pool(state) else {
-        return TransferSummary {
-            status: "completed".into(),
-            destinations: json!({"local":{"status":"NOT_CONFIGURED"},"external_1":{"status":"NOT_CONFIGURED"},"external_2":{"status":"NOT_CONFIGURED"}}),
-            remote_paths: json!([]),
-            error: String::new(),
-        };
-    };
-    let servers = fetch_servers(pool).await.unwrap_or_default();
-    let active: Vec<_> = servers
-        .into_iter()
-        .filter(|server| server.is_active)
-        .collect();
-    if active.is_empty() {
-        return TransferSummary {
-            status: "partial".into(),
-            destinations: json!({"local":{"status":"NOT_CONFIGURED"},"external_1":{"status":"NOT_CONFIGURED"},"external_2":{"status":"NOT_CONFIGURED"}}),
-            remote_paths: json!([]),
-            error: String::new(),
-        };
-    }
+    let pool = pool(state).expect("Backup operation already holds a database pool");
     let mut results = serde_json::Map::new();
     for role in ["local", "external_1", "external_2"] {
         results.insert(role.into(), json!({"status":"NOT_CONFIGURED"}));
     }
     let mut remote_paths = Vec::new();
     let mut successes = 0_usize;
-    for server in &active {
+    for server in active {
+        let operation = operations::begin(pool, "transfer", job_id, &server.role)
+            .await
+            .ok();
         let outcome = if server.transfer_protocol == "sftp" {
             transfer_sftp(server, database_path, database_checksum, media, manifest).await
         } else if server.transfer_protocol == "copy" || server.transfer_protocol == "smb" {
             transfer_copy(server, database_path, database_checksum, media, manifest).await
         } else {
             Err("Protocolo de transferencia no soportado.".to_owned())
+        };
+        // A successful upload is not proof of stored integrity. Read every
+        // received file back through the authenticated transport and checksum it.
+        let outcome = match outcome {
+            Ok(paths) => {
+                let mut failure = None;
+                for (file, expected) in std::iter::once((database_path, database_checksum))
+                    .chain(media.into_iter().map(|(p, c, _)| (p.as_path(), c.as_str())))
+                    .chain(
+                        manifest
+                            .into_iter()
+                            .map(|(p, c, _)| (p.as_path(), c.as_str())),
+                    )
+                {
+                    match download_remote_backup(
+                        server,
+                        file.file_name().and_then(|v| v.to_str()).unwrap_or(""),
+                        expected,
+                    )
+                    .await
+                    {
+                        Ok(download) => {
+                            if fs::remove_file(download).await.is_err() {
+                                failure =
+                                    Some("No se pudo limpiar la comprobación temporal.".to_owned());
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            failure = Some(error);
+                            break;
+                        }
+                    }
+                }
+                failure.map_or(Ok(paths), Err)
+            }
+            Err(error) => Err(error),
         };
         let (status, path, error) = match outcome {
             Ok(paths) => {
@@ -1415,6 +1588,16 @@ async fn transfer_to_servers(
             }
             Err(error) => ("failed", String::new(), error),
         };
+        if let Some(operation) = operation {
+            let _ = operations::finish(
+                pool,
+                operation,
+                status,
+                safe_error(&error),
+                json!({"backup_id":job_id,"checksum":database_checksum}),
+            )
+            .await;
+        }
         results.insert(
             server.role.clone(),
             json!({
@@ -1425,6 +1608,9 @@ async fn transfer_to_servers(
                 "error": safe_error(&error),
                 "protocol": server.transfer_protocol,
                 "offsite": server.is_offsite,
+                "checksum": database_checksum,
+                "size_bytes": fs::metadata(database_path).await.map(|m|m.len()).unwrap_or(0),
+                "verified_at": if status=="success" {Some(Utc::now())} else {None},
             }),
         );
         let _ = sqlx::query("UPDATE backups_backupserver SET status=$2,last_backup=CASE WHEN $2='online' THEN NOW() ELSE last_backup END,last_seen=CASE WHEN $2='online' THEN NOW() ELSE last_seen END,last_backup_status=$3,error=$4 WHERE id=$1")
@@ -1450,7 +1636,7 @@ async fn transfer_to_servers(
             String::new()
         } else {
             format!(
-                "Solo {successes}/{} destinos recibieron el backup; la copia local se conserva.",
+                "Solo {successes}/{} destinos recibieron y verificaron el backup.",
                 active.len()
             )
         },
@@ -1464,13 +1650,7 @@ async fn transfer_copy(
     media: Option<&(PathBuf, String, u64)>,
     manifest: Option<&(PathBuf, String, u64)>,
 ) -> Result<Vec<String>, String> {
-    let destination = PathBuf::from(&server.smb_share);
-    if !destination.is_absolute() || server.smb_share.contains("..") {
-        return Err("Destino copy/SMB no válido.".into());
-    }
-    fs::create_dir_all(&destination)
-        .await
-        .map_err(|error| format!("No se pudo abrir el destino: {error}"))?;
+    let destination = authorized_local_directory(&server.smb_share, true).await?;
     let mut paths = Vec::new();
     copy_with_checksum(database_path, database_checksum, &destination, &mut paths).await?;
     if let Some((path, checksum, _)) = media {
@@ -1507,9 +1687,22 @@ async fn copy_with_checksum(
         let _ = fs::remove_file(&partial).await;
         return Err("Checksum remoto no válido; copia temporal eliminada.".into());
     }
-    fs::rename(&partial, &target)
+    // link/create is exclusive: a pre-existing backup is never overwritten.
+    if fs::hard_link(&partial, &target).await.is_err() {
+        if fs::symlink_metadata(&partial)
+            .await
+            .is_ok_and(|m| !m.file_type().is_symlink())
+            && fs::read(&partial)
+                .await
+                .is_ok_and(|bytes| checksum_matches(&bytes, checksum))
+        {
+            let _ = fs::remove_file(&partial).await;
+        }
+        return Err("El archivo de destino ya existe o no admite publicación segura.".into());
+    }
+    fs::remove_file(&partial)
         .await
-        .map_err(|error| format!("No se pudo finalizar la copia remota: {error}"))?;
+        .map_err(|_| "No se pudo limpiar la copia temporal propia.".to_owned())?;
     let sidecar = target.with_file_name(format!("{}.sha256", name.to_string_lossy()));
     atomic_write(
         &sidecar,
@@ -1696,7 +1889,9 @@ fn ssh_host_alias(server: &BackupServer) -> String {
 fn safe_remote_path(path: &str) -> bool {
     path.starts_with('/')
         && !path.contains("..")
-        && !path.contains(['\n', '\r', '"', ';', '|', '&', '`'])
+        && !path.contains([
+            '\n', '\r', '"', ';', '|', '&', '`', '*', '?', '[', ']', '\\',
+        ])
 }
 
 pub async fn verify(
@@ -1705,79 +1900,80 @@ pub async fn verify(
     Json(input): Json<IdRequest>,
 ) -> Result<Json<Value>, AppError> {
     let claims = admin(&state, &headers)?;
+    let id = input
+        .job_id
+        .ok_or_else(|| AppError::Validation("Selecciona el identificador de la copia.".into()))?;
+    let selected_job = fetch_job(pool(&state)?, Some(id))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    validate_selected_origin(&selected_job, input.origin.as_deref()).await?;
+    let origin = input.origin.clone().unwrap_or_else(|| "auto".into());
+    let operation = operations::begin(pool(&state)?, "integrity", id, &origin).await?;
+    let result = verify_inner(State(Arc::clone(&state)), headers, Json(input)).await;
+    let success = result.as_ref().is_ok_and(|Json(v)| {
+        v.get("valid")
+            .or_else(|| v.get("success"))
+            .and_then(Value::as_bool)
+            == Some(true)
+    });
+    operations::record_check(pool(&state)?, id, &origin, "integrity", &result).await?;
+    operations::finish(
+        pool(&state)?,
+        operation,
+        if success { "success" } else { "failed" },
+        if success {
+            ""
+        } else {
+            "La copia no está disponible o no supera la comprobación."
+        },
+        json!({"backup_id":id}),
+    )
+    .await?;
+    audit_event(
+        pool(&state)?,
+        claims.profile_id,
+        "backup_integrity_result",
+        id,
+        json!({"result":success,"origin":origin}),
+    )
+    .await?;
+    result
+}
+
+async fn verify_inner(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<IdRequest>,
+) -> Result<Json<Value>, AppError> {
+    let claims = admin(&state, &headers)?;
     let job = fetch_job(pool(&state)?, input.job_id)
         .await?
         .ok_or(AppError::NotFound)?;
-    let path = safe_job_path(&job.storage_path)
-        .await
-        .ok_or_else(|| AppError::Validation("Archivo no encontrado".into()))?;
-    let stored = fs::read(path).await.map_err(|_| AppError::NotFound)?;
-    let actual = sha256(&stored);
     let mut errors = Vec::new();
-    if actual != job.checksum {
-        errors.push("database_checksum_mismatch");
+    let origin = input.origin.as_deref().filter(|v| *v != "auto");
+    match load_job_artifact_from(&state, &job, false, origin).await {
+        Ok(dump) => {
+            if validate_dump_bytes(&dump).await.is_err() {
+                errors.push("database_archive_invalid");
+            }
+        }
+        Err(error) => errors.push(artifact_error_code(&error)),
     }
     if !job.media_path.is_empty() {
-        let media_path = safe_job_path(&job.media_path)
+        let bytes = load_job_artifact_from(&state, &job, true, origin)
             .await
-            .ok_or_else(|| AppError::Validation("Archivo de media no encontrado".into()))?;
-        let media_actual = sha256(&fs::read(media_path).await.map_err(|_| AppError::NotFound)?);
-        if media_actual != job.media_checksum {
-            errors.push("media_checksum_mismatch");
-        }
-    }
-    let manifest_path = safe_job_path(&job.manifest_path)
-        .await
-        .ok_or_else(|| AppError::Validation("Manifest no encontrado".into()))?;
-    let manifest_bytes = fs::read(manifest_path)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-    if sha256(&manifest_bytes) != job.manifest_checksum {
-        errors.push("manifest_checksum_mismatch");
-    }
-    let parsed: Value = serde_json::from_slice(&manifest_bytes)
-        .map_err(|_| AppError::Validation("Manifest JSON no válido.".into()))?;
-    if parsed.get("backup_id").and_then(Value::as_str) != Some(job.id.to_string().as_str())
-        || parsed
-            .pointer("/files/database/checksum")
-            .and_then(Value::as_str)
-            != Some(job.checksum.as_str())
-        || parsed.get("format_version").and_then(Value::as_i64)
-            != Some(i64::from(job.backup_format_version))
-    {
-        errors.push("manifest_content_mismatch");
-    }
-    if job.job_type == "incremental" {
-        let chain_valid: bool = sqlx::query_scalar(
-            "SELECT $1::uuid IS NOT NULL AND $2::uuid IS NOT NULL AND $3 > 0 \
-             AND EXISTS(SELECT 1 FROM backups_backupjob WHERE id=$1 AND verified=TRUE) \
-             AND EXISTS(SELECT 1 FROM backups_backupjob WHERE id=$2 AND job_type='full' AND verified=TRUE)",
-        )
-        .bind(job.parent_backup_id)
-        .bind(job.base_full_id)
-        .bind(job.chain_index)
-        .fetch_one(pool(&state)?)
-        .await?;
-        if !chain_valid {
-            errors.push("incremental_chain_broken");
-        }
-    }
-    let dump = load_job_artifact(&state, &job, false).await.ok();
-    if let Some(dump) = dump {
-        if validate_dump_bytes(&dump).await.is_err() {
-            errors.push("database_archive_invalid");
-        }
-    } else {
-        errors.push("decryption_failed");
-    }
-    if !job.media_path.is_empty() {
-        let bytes = load_job_artifact(&state, &job, true).await.ok();
+            .ok();
         if bytes.is_none_or(|bytes| zip::ZipArchive::new(Cursor::new(bytes)).is_err()) {
             errors.push("media_archive_invalid");
         }
     }
     let valid = errors.is_empty();
-    sqlx::query("UPDATE backups_backupjob SET verified=$2,verified_at=NOW(),verified_checksum=$3,status=CASE WHEN $2 THEN status ELSE 'verify_failed' END WHERE id=$1")
+    let actual = if valid {
+        job.checksum.clone()
+    } else {
+        String::new()
+    };
+    sqlx::query("UPDATE backups_backupjob SET verified=$2,verified_at=CASE WHEN $2 THEN NOW() ELSE verified_at END,verified_checksum=$3 WHERE id=$1")
         .bind(job.id).bind(valid).bind(&actual).execute(pool(&state)?).await?;
     audit_event(
         pool(&state)?,
@@ -1799,11 +1995,19 @@ pub async fn origins(
 ) -> Result<Json<Value>, AppError> {
     admin(&state, &headers)?;
     let origin = query.origin.unwrap_or_else(|| "local".into());
-    let jobs = sqlx::query_as::<_, BackupJob>(&job_select(
-        "WHERE status IN ('completed','partial') ORDER BY created_date DESC LIMIT 100",
-    ))
-    .fetch_all(pool(&state)?)
-    .await?;
+    let jobs = if let Some(id) = query.job_id {
+        vec![
+            fetch_job(pool(&state)?, Some(id))
+                .await?
+                .ok_or(AppError::NotFound)?,
+        ]
+    } else {
+        sqlx::query_as::<_, BackupJob>(&job_select(
+            "WHERE status IN ('completed','partial') ORDER BY created_date DESC LIMIT 100",
+        ))
+        .fetch_all(pool(&state)?)
+        .await?
+    };
     if origin == "local" {
         let available: Vec<Value> = jobs
             .iter()
@@ -1830,7 +2034,7 @@ pub async fn origins(
     let server = fetch_servers(pool(&state)?)
         .await?
         .into_iter()
-        .find(|server| server.id == server_id && server.is_active)
+        .find(|server| server.id == server_id)
         .ok_or(AppError::NotFound)?;
     let mut available = Vec::new();
     for job in jobs {
@@ -1957,6 +2161,9 @@ pub async fn restore(
             "filename solo es válido para orígenes remotos.".into(),
         ));
     }
+    let selected_id = input
+        .job_id
+        .ok_or_else(|| AppError::Validation("Selecciona el identificador de la copia.".into()))?;
     let (job, server, filename) = if input.origin == "local" {
         (
             fetch_job(pool(&state)?, input.job_id)
@@ -1971,7 +2178,7 @@ pub async fn restore(
         let server = fetch_servers(pool(&state)?)
             .await?
             .into_iter()
-            .find(|server| server.id == server_id && server.is_active)
+            .find(|server| server.id == server_id)
             .ok_or(AppError::NotFound)?;
         let filename = input
             .filename
@@ -1979,14 +2186,9 @@ pub async fn restore(
             .filter(|name| safe_backup_filename(name))
             .ok_or_else(|| AppError::Validation("Nombre de backup remoto no válido.".into()))?
             .to_owned();
-        let jobs = sqlx::query_as::<_, BackupJob>(&job_select(
-            "WHERE status IN ('completed','partial') ORDER BY created_date DESC LIMIT 500",
-        ))
-        .fetch_all(pool(&state)?)
-        .await?;
-        let job = jobs
-            .into_iter()
-            .find(|job| remote_job_matches(job, &input.origin, &filename))
+        let job = fetch_job(pool(&state)?, Some(selected_id))
+            .await?
+            .filter(|job| remote_job_matches(job, &input.origin, &filename))
             .ok_or(AppError::NotFound)?;
         (job, Some(server), Some(filename))
     };
@@ -1995,6 +2197,7 @@ pub async fn restore(
             "Solo se puede restaurar un backup completado.".into(),
         ));
     }
+    validate_selected_origin(&job, Some(&input.origin)).await?;
     validate_restore_metadata(&state, &job).await?;
     let mut lock_connection = crate::db::backup_operation_lock_connection().await?;
     lock_connection.close_on_drop();
@@ -2115,9 +2318,7 @@ pub async fn restore_unavailable(
 
 struct SafetySnapshot {
     id: Uuid,
-    path: PathBuf,
-    checksum: String,
-    encrypted: bool,
+    job: BackupJob,
 }
 
 struct RestoreContext {
@@ -2227,8 +2428,8 @@ async fn validate_restore_metadata(state: &AppState, job: &BackupJob) -> Result<
 async fn execute_remote_restore(
     state: Arc<AppState>,
     restore_id: Uuid,
-    mut job: BackupJob,
-    server: BackupServer,
+    job: BackupJob,
+    _server: BackupServer,
     filename: String,
     origin: String,
     restored: (String, String, String),
@@ -2245,27 +2446,9 @@ async fn execute_remote_restore(
             "rolled_back": false,
         }),
     );
-    let downloaded = match download_remote_backup(&server, &filename, &job.checksum).await {
-        Ok(path) => path,
-        Err(error) => {
-            state.restores.write().await.insert(
-                restore_id,
-                json!({
-                    "restore_id": restore_id,
-                    "state": "failed",
-                    "origin": origin,
-                    "filename": filename,
-                    "checksum_verified": false,
-                    "rolled_back": false,
-                    "error": safe_error(&error),
-                    "verify_errors": ["No se pudo descargar y verificar el origen remoto."],
-                }),
-            );
-            return;
-        }
-    };
     let audit_storage_path = job.storage_path.clone();
-    job.storage_path = downloaded.to_string_lossy().into_owned();
+    // Keep immutable filenames: reconstruction reads the explicitly selected replica.
+
     execute_production_restore(
         Arc::clone(&state),
         restore_id,
@@ -2280,7 +2463,6 @@ async fn execute_remote_restore(
         },
     )
     .await;
-    let _ = fs::remove_file(downloaded).await;
 }
 
 async fn download_remote_backup(
@@ -2291,7 +2473,7 @@ async fn download_remote_backup(
     let checksum_hex = expected_checksum
         .strip_prefix("sha256:")
         .unwrap_or_default();
-    if !safe_backup_filename(filename)
+    if !safe_artifact_filename(filename)
         || checksum_hex.len() != 64
         || !checksum_hex
             .chars()
@@ -2324,20 +2506,28 @@ async fn download_remote_backup(
         let _ = fs::remove_file(&sidecar).await;
         return Err(error);
     }
-    let data = fs::read(&destination)
-        .await
-        .map_err(|error| format!("No se pudo leer la descarga remota: {error}"))?;
-    let sidecar_text = fs::read_to_string(&sidecar)
-        .await
-        .map_err(|error| format!("No se pudo leer el checksum remoto: {error}"))?;
-    let _ = fs::remove_file(&sidecar).await;
-    let declared = sidecar_text.split_whitespace().next().unwrap_or_default();
-    let actual = sha256(&data);
-    if !declared.eq_ignore_ascii_case(expected_checksum) || actual != expected_checksum {
-        let _ = fs::remove_file(&destination).await;
-        return Err("Checksum remoto inválido; restauración cancelada.".into());
+    let verified = async {
+        let data = fs::read(&destination)
+            .await
+            .map_err(|error| format!("No se pudo leer la descarga remota: {error}"))?;
+        let sidecar_text = fs::read_to_string(&sidecar)
+            .await
+            .map_err(|error| format!("No se pudo leer el checksum remoto: {error}"))?;
+        let _ = fs::remove_file(&sidecar).await;
+        let declared = sidecar_text.split_whitespace().next().unwrap_or_default();
+        let actual = sha256(&data);
+        if !declared.eq_ignore_ascii_case(expected_checksum) || actual != expected_checksum {
+            let _ = fs::remove_file(&destination).await;
+            return Err("Checksum remoto inválido; restauración cancelada.".into());
+        }
+        Ok(destination.clone())
     }
-    Ok(destination)
+    .await;
+    let _ = fs::remove_file(&sidecar).await;
+    if verified.is_err() {
+        let _ = fs::remove_file(&destination).await;
+    }
+    verified
 }
 
 async fn download_copy_backup(
@@ -2346,13 +2536,8 @@ async fn download_copy_backup(
     destination: &Path,
     sidecar: &Path,
 ) -> Result<(), String> {
-    let root = PathBuf::from(&server.smb_share);
-    if !root.is_absolute() || server.smb_share.contains("..") {
-        return Err("Destino copy/SMB no válido.".into());
-    }
-    let canonical_root = fs::canonicalize(&root)
-        .await
-        .map_err(|error| format!("No se pudo abrir el origen remoto: {error}"))?;
+    let root = authorized_local_directory(&server.smb_share, false).await?;
+    let canonical_root = root.clone();
     for (source, target) in [
         (root.join(filename), destination.to_path_buf()),
         (
@@ -2463,7 +2648,17 @@ async fn execute_production_restore(
             "rolled_back": false,
         }),
     );
-    let result = production_restore(&state, &job).await;
+    let operation = operations::begin(
+        pool(&state).expect("restore database pool"),
+        "restore",
+        job.id,
+        &context.origin,
+    )
+    .await
+    .ok();
+    let started = Instant::now();
+    let result = production_restore(&state, &job, Some(&context.origin)).await;
+    let succeeded = result.is_ok();
     match result {
         Ok((tables, safety)) => {
             for _ in 0..10 {
@@ -2548,13 +2743,28 @@ async fn execute_production_restore(
             );
         }
     }
+    if let Some(operation) = operation {
+        let _ = operations::finish(
+            pool(&state).expect("restore database pool"),
+            operation,
+            if succeeded { "success" } else { "failed" },
+            if succeeded {
+                ""
+            } else {
+                "No se pudo restaurar la copia."
+            },
+            json!({"backup_id":job.id,"elapsed_milliseconds":started.elapsed().as_millis()}),
+        )
+        .await;
+    }
 }
 
 async fn production_restore(
     state: &AppState,
     job: &BackupJob,
+    origin: Option<&str>,
 ) -> Result<(i64, SafetySnapshot), (String, bool, Option<Uuid>)> {
-    let dump = load_job_artifact(state, job, false)
+    let dump = load_job_artifact_from(state, job, false, origin)
         .await
         .map_err(|error| (safe_error(&error).into(), false, None))?;
     // Validate media before replacing the database; it must use the original
@@ -2563,7 +2773,7 @@ async fn production_restore(
         None
     } else {
         Some(
-            load_job_artifact(state, job, true)
+            load_job_artifact_from(state, job, true, origin)
                 .await
                 .map_err(|error| (safe_error(&error).into(), false, None))?,
         )
@@ -2578,11 +2788,39 @@ async fn production_restore(
             None,
         )
     })?;
-    let root = backup_root()
+    let safety_dump = load_snapshot_dump(state, &safety)
         .await
         .map_err(|error| (error, false, Some(safety.id)))?;
+    let safety_test = std::env::temp_dir().join(format!(".safety-drill-{}.dump", Uuid::new_v4()));
+    let _safety_guard = artifacts::TemporaryFile::create(&safety_test)
+        .await
+        .map_err(|error| (error, false, Some(safety.id)))?;
+    fs::write(&safety_test, &safety_dump).await.map_err(|_| {
+        (
+            "No se pudo preparar la prueba preventiva.".into(),
+            false,
+            Some(safety.id),
+        )
+    })?;
+    let safety_database = format!("uasspain_restore_test_{}", Uuid::new_v4().simple());
+    let safety_result = run_restore_drill(&safety_database, &safety_test).await;
+    let _ = fs::remove_file(&safety_test).await;
+    let tables = safety_result.map_err(|error| (error, false, Some(safety.id)))?;
+    drill_media_restore(state, &safety.job, None)
+        .await
+        .map_err(|_| {
+            (
+                "La copia preventiva no supera la recuperación de archivos.".into(),
+                false,
+                Some(safety.id),
+            )
+        })?;
+    sqlx::query("UPDATE backups_backupjob SET restore_tested=true,restore_tested_at=NOW(),restore_test_result=$2 WHERE id=$1").bind(safety.id).bind(format!("success:{tables}")).execute(pool(state).map_err(|_|("Base de datos no disponible.".into(),false,Some(safety.id)))?).await.map_err(|_|("No se pudo registrar la prueba preventiva.".into(),false,Some(safety.id)))?;
     let temporary =
         std::env::temp_dir().join(format!(".tmp_production_restore_{}.dump", Uuid::new_v4()));
+    let _restore_guard = artifacts::TemporaryFile::create(&temporary)
+        .await
+        .map_err(|error| (error, false, Some(safety.id)))?;
     if let Err(error) = fs::write(&temporary, dump).await {
         return Err((
             format!("No se pudo preparar la restauración: {error}"),
@@ -2590,6 +2828,21 @@ async fn production_restore(
             Some(safety.id),
         ));
     }
+    let catalog = operations::snapshot_catalog(pool(state).map_err(|_| {
+        (
+            "Base de datos no disponible.".into(),
+            false,
+            Some(safety.id),
+        )
+    })?)
+    .await
+    .map_err(|_| {
+        (
+            "No se pudo preservar el catálogo de recuperación.".into(),
+            false,
+            Some(safety.id),
+        )
+    })?;
     let restored = match replace_database(&temporary).await {
         Ok(tables) => match crate::db::migrate_restored_database(
             &restore_database_url().map_err(|error| (error, false, Some(safety.id)))?,
@@ -2602,26 +2855,54 @@ async fn production_restore(
         Err(error) => Err(error),
     };
     let _ = fs::remove_file(&temporary).await;
+    let restored = match restored {
+        Ok(tables) => operations::preserve_catalog(
+            pool(state).map_err(|_| {
+                (
+                    "Base de datos no disponible.".into(),
+                    false,
+                    Some(safety.id),
+                )
+            })?,
+            &catalog,
+        )
+        .await
+        .map(|()| tables)
+        .map_err(|_| "No se pudo conservar el catálogo y la auditoría de recuperación.".to_owned()),
+        Err(error) => Err(error),
+    };
     match restored {
         Ok(tables) => match restore_media_archive(media).await {
             Ok(_) => Ok((tables, safety)),
             Err(error) => {
-                let rolled_back = rollback_database(state, &safety, &root).await;
+                let rolled_back = rollback_database(&safety_dump).await
+                    && operations::preserve_catalog(
+                        pool(state).expect("restore database pool"),
+                        &catalog,
+                    )
+                    .await
+                    .is_ok();
                 Err((error, rolled_back, Some(safety.id)))
             }
         },
         Err(error) => {
-            let rolled_back = rollback_database(state, &safety, &root).await;
+            let rolled_back = rollback_database(&safety_dump).await
+                && operations::preserve_catalog(
+                    pool(state).expect("restore database pool"),
+                    &catalog,
+                )
+                .await
+                .is_ok();
             Err((error, rolled_back, Some(safety.id)))
         }
     }
 }
 
-async fn rollback_database(state: &AppState, safety: &SafetySnapshot, _root: &Path) -> bool {
-    let Ok(bytes) = load_snapshot_dump(state, safety).await else {
+async fn rollback_database(bytes: &[u8]) -> bool {
+    let rollback_path = std::env::temp_dir().join(format!(".tmp_rollback_{}.dump", Uuid::new_v4()));
+    let Ok(_rollback_guard) = artifacts::TemporaryFile::create(&rollback_path).await else {
         return false;
     };
-    let rollback_path = std::env::temp_dir().join(format!(".tmp_rollback_{}.dump", Uuid::new_v4()));
     if fs::write(&rollback_path, bytes).await.is_err() {
         return false;
     }
@@ -2747,87 +3028,41 @@ fn replace_media_contents(root: &Path, archive: &[u8], max_bytes: u64) -> Result
 }
 
 async fn create_safety_snapshot(state: &AppState) -> Result<SafetySnapshot, String> {
-    let root = backup_root().await?;
-    let id = Uuid::new_v4();
-    let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-    let temporary = std::env::temp_dir().join(format!(".tmp_restore_safety_{id}.dump"));
-    let output = timeout(
-        Duration::from_secs(600),
-        Command::new(pg_dump_path())
-            .kill_on_drop(true)
-            .args(["-F", "c", "-Z", "6", "-f"])
-            .arg(&temporary)
-            .arg(backup_database_url()?)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output(),
+    let mut connection = pool(state)
+        .map_err(|_| "Base de datos no disponible.")?
+        .acquire()
+        .await
+        .map_err(|_| "Base de datos no disponible.")?;
+    let (status, Json(value)) =
+        create_locked(state, &mut connection, "restore-safety", "full", true, None)
+            .await
+            .map_err(|_| "No se pudo crear la copia preventiva.")?;
+    if !status.is_success()
+        || value.pointer("/job/status").and_then(Value::as_str) != Some("completed")
+    {
+        return Err(
+            "La copia preventiva no se almacen? y verific? en todos los destinos activos.".into(),
+        );
+    }
+    let id = value
+        .pointer("/job/id")
+        .and_then(Value::as_str)
+        .and_then(|v| Uuid::parse_str(v).ok())
+        .ok_or("Copia preventiva sin identidad.")?;
+    let job = fetch_job(
+        pool(state).map_err(|_| "Base de datos no disponible.")?,
+        Some(id),
     )
     .await
-    .map_err(|_| "pg_dump de seguridad excedió 600 segundos".to_owned())?
-    .map_err(|error| format!("No se pudo ejecutar pg_dump de seguridad: {error}"))?;
-    if !output.status.success() {
-        let _ = fs::remove_file(&temporary).await;
-        return Err(format!(
-            "pg_dump de seguridad falló: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let plain = fs::read(&temporary)
-        .await
-        .map_err(|error| format!("No se pudo leer el backup de seguridad: {error}"))?;
-    let _ = fs::remove_file(&temporary).await;
-    let encrypted = true;
-    let payload = if encrypted {
-        state
-            .cipher
-            .encrypt_backup(&plain)
-            .map_err(|_| "No se pudo cifrar el backup de seguridad.".to_owned())?
-    } else {
-        plain
-    };
-    let path = root.join(format!(
-        "uasspain_restore_safety_{timestamp}.dump{}",
-        if encrypted { ".enc" } else { "" }
-    ));
-    fs::write(&path, &payload)
-        .await
-        .map_err(|error| format!("No se pudo guardar el backup de seguridad: {error}"))?;
-    let checksum = sha256(&payload);
-    sqlx::query("INSERT INTO backups_backupjob (id,job_type,status,started_at,finished_at,duration_seconds,size_bytes,encrypted,checksum,storage_path,media_path,media_checksum,media_size_bytes,remote_paths,destinations,verified,verified_at,verified_checksum,restore_tested,restore_test_result,initiated_by,restored_by,data_loss_window_seconds,error,created_date) VALUES ($1,'full','completed',NOW(),NOW(),0,$2,$3,$4,$5,'','',0,'[]'::jsonb,'{}'::jsonb,true,NOW(),$4,false,'','restore-safety','',0,'',NOW())")
-        .bind(id)
-        .bind(i64::try_from(payload.len()).unwrap_or(i64::MAX))
-        .bind(encrypted)
-        .bind(&checksum)
-        .bind(path.to_string_lossy().as_ref())
-        .execute(pool(state).map_err(|_| "Base de datos no disponible.".to_owned())?)
-        .await
-        .map_err(|error| format!("No se pudo registrar el backup de seguridad: {error}"))?;
-    Ok(SafetySnapshot {
-        id,
-        path,
-        checksum,
-        encrypted,
-    })
+    .map_err(|_| "Copia preventiva no disponible.")?
+    .ok_or("Copia preventiva no disponible.")?;
+    Ok(SafetySnapshot { id, job })
 }
-
 async fn load_snapshot_dump(
     state: &AppState,
     snapshot: &SafetySnapshot,
 ) -> Result<Vec<u8>, String> {
-    let stored = fs::read(&snapshot.path)
-        .await
-        .map_err(|error| format!("No se pudo leer el rollback: {error}"))?;
-    if sha256(&stored) != snapshot.checksum {
-        return Err("Checksum del rollback no válido.".into());
-    }
-    if snapshot.encrypted {
-        state
-            .cipher
-            .decrypt_backup(&stored)
-            .map_err(|_| "No se pudo descifrar el rollback.".to_owned())
-    } else {
-        Ok(stored)
-    }
+    load_job_artifact(state, &snapshot.job, false).await
 }
 
 async fn replace_database(dump: &Path) -> Result<i64, String> {
@@ -2984,6 +3219,52 @@ pub async fn restore_test(
     Json(input): Json<IdRequest>,
 ) -> Result<Json<Value>, AppError> {
     let claims = admin(&state, &headers)?;
+    let id = input
+        .job_id
+        .ok_or_else(|| AppError::Validation("Selecciona el identificador de la copia.".into()))?;
+    let selected_job = fetch_job(pool(&state)?, Some(id))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    validate_selected_origin(&selected_job, input.origin.as_deref()).await?;
+    let origin = input.origin.clone().unwrap_or_else(|| "auto".into());
+    let operation = operations::begin(pool(&state)?, "recovery", id, &origin).await?;
+    let result = restore_test_inner(State(Arc::clone(&state)), headers, Json(input)).await;
+    let success = result.as_ref().is_ok_and(|Json(v)| {
+        v.get("valid")
+            .or_else(|| v.get("success"))
+            .and_then(Value::as_bool)
+            == Some(true)
+    });
+    operations::record_check(pool(&state)?, id, &origin, "recovery", &result).await?;
+    operations::finish(
+        pool(&state)?,
+        operation,
+        if success { "success" } else { "failed" },
+        if success {
+            ""
+        } else {
+            "La copia no está disponible o no supera la comprobación."
+        },
+        json!({"backup_id":id}),
+    )
+    .await?;
+    audit_event(
+        pool(&state)?,
+        claims.profile_id,
+        "backup_recovery_result",
+        id,
+        json!({"result":success,"origin":origin}),
+    )
+    .await?;
+    result
+}
+
+async fn restore_test_inner(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<IdRequest>,
+) -> Result<Json<Value>, AppError> {
+    let claims = admin(&state, &headers)?;
     let mut operation_lock = crate::db::backup_operation_lock_connection().await?;
     let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
         .bind(BACKUP_LOCK_KEY)
@@ -2998,19 +3279,32 @@ pub async fn restore_test(
         .await?
         .ok_or(AppError::NotFound)?;
     validate_restore_metadata(&state, &job).await?;
-    let dump = load_job_artifact(&state, &job, false)
-        .await
-        .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
+    let dump = load_job_artifact_from(
+        &state,
+        &job,
+        false,
+        input.origin.as_deref().filter(|v| *v != "auto"),
+    )
+    .await
+    .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
     let suffix = Uuid::new_v4().simple().to_string();
     let database = format!("uasspain_restore_test_{}", &suffix[..12]);
     let temporary = std::env::temp_dir().join(format!(".tmp_restore_{suffix}.dump"));
+    let _temporary_guard = artifacts::TemporaryFile::create(&temporary)
+        .await
+        .map_err(|_| AppError::Internal)?;
     validate_dump_bytes(&dump)
         .await
         .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
     fs::write(&temporary, &dump)
         .await
         .map_err(|_| AppError::Internal)?;
-    let media_result = drill_media_restore(&state, &job).await;
+    let media_result = drill_media_restore(
+        &state,
+        &job,
+        input.origin.as_deref().filter(|v| *v != "auto"),
+    )
+    .await;
     let media_files = match media_result {
         Ok(files) => files,
         Err(error) => {
@@ -3058,11 +3352,15 @@ pub async fn restore_test(
     }
 }
 
-async fn drill_media_restore(state: &AppState, job: &BackupJob) -> Result<usize, AppError> {
+async fn drill_media_restore(
+    state: &AppState,
+    job: &BackupJob,
+    origin: Option<&str>,
+) -> Result<usize, AppError> {
     if job.media_path.is_empty() {
         return Ok(0);
     }
-    let archive = load_job_artifact(state, job, true)
+    let archive = load_job_artifact_from(state, job, true, origin)
         .await
         .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
     let drill = std::env::temp_dir().join(format!(".media-restore-drill-{}", Uuid::new_v4()));
@@ -3112,29 +3410,30 @@ async fn run_restore_drill(database: &str, dump: &Path) -> Result<i64, String> {
             String::from_utf8_lossy(&create.stderr).trim()
         ));
     }
-    let restore = timeout(
-        Duration::from_secs(600),
-        Command::new(pg_tool_path("pg_restore"))
-            .kill_on_drop(true)
-            .args([
-                "--exit-on-error",
-                "--no-owner",
-                "--no-privileges",
-                "--dbname",
-            ])
-            .arg(&test_url)
-            .arg(dump)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output(),
-    )
-    .await
-    .map_err(|_| "pg_restore excedió 600 segundos".to_owned())
-    .and_then(|result| {
-        result.map_err(|error| format!("No se pudo ejecutar pg_restore: {error}"))
-    })?;
-    let table_count = if restore.status.success() {
-        timeout(
+    let result = async {
+        let restore = timeout(
+            Duration::from_secs(600),
+            Command::new(pg_tool_path("pg_restore"))
+                .kill_on_drop(true)
+                .args([
+                    "--exit-on-error",
+                    "--no-owner",
+                    "--no-privileges",
+                    "--dbname",
+                ])
+                .arg(&test_url)
+                .arg(dump)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output(),
+        )
+        .await
+        .map_err(|_| "pg_restore excedió 600 segundos".to_owned())
+        .and_then(|result| {
+            result.map_err(|error| format!("No se pudo ejecutar pg_restore: {error}"))
+        })?;
+        let table_count = if restore.status.success() {
+            timeout(
             Duration::from_secs(30),
             Command::new(pg_tool_path("psql"))
                 .kill_on_drop(true)
@@ -3149,29 +3448,31 @@ async fn run_restore_drill(database: &str, dump: &Path) -> Result<i64, String> {
         .await
         .map_err(|_| "La verificación psql excedió 30 segundos".to_owned())
         .and_then(|result| result.map_err(|error| format!("No se pudo ejecutar psql: {error}")))?
-    } else {
-        let error = String::from_utf8_lossy(&restore.stderr).trim().to_owned();
-        drop_restore_database(&base_url, database).await;
-        return Err(format!("pg_restore falló: {error}"));
-    };
-    drop_restore_database(&base_url, database).await;
-    if !table_count.status.success() {
-        return Err(format!(
-            "Verificación SQL falló: {}",
-            String::from_utf8_lossy(&table_count.stderr).trim()
-        ));
+        } else {
+            let error = String::from_utf8_lossy(&restore.stderr).trim().to_owned();
+            return Err(format!("pg_restore falló: {error}"));
+        };
+        if !table_count.status.success() {
+            return Err(format!(
+                "Verificación SQL falló: {}",
+                String::from_utf8_lossy(&table_count.stderr).trim()
+            ));
+        }
+        let tables = String::from_utf8_lossy(&table_count.stdout)
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| "La verificación no devolvió un recuento válido.".to_owned())?;
+        (tables > 0)
+            .then_some(tables)
+            .ok_or_else(|| "El restore temporal no contiene tablas públicas.".to_owned())
     }
-    let tables = String::from_utf8_lossy(&table_count.stdout)
-        .trim()
-        .parse::<i64>()
-        .map_err(|_| "La verificación no devolvió un recuento válido.".to_owned())?;
-    (tables > 0)
-        .then_some(tables)
-        .ok_or_else(|| "El restore temporal no contiene tablas públicas.".to_owned())
+    .await;
+    drop_restore_database(&base_url, database).await?;
+    result
 }
 
-async fn drop_restore_database(base_url: &str, database: &str) {
-    let _ = timeout(
+async fn drop_restore_database(base_url: &str, database: &str) -> Result<(), String> {
+    let status = timeout(
         Duration::from_secs(30),
         Command::new(pg_tool_path("dropdb"))
             .kill_on_drop(true)
@@ -3183,7 +3484,13 @@ async fn drop_restore_database(base_url: &str, database: &str) {
             .stderr(Stdio::null())
             .status(),
     )
-    .await;
+    .await
+    .map_err(|_| "La limpieza de la base temporal excedi? el tiempo permitido.".to_owned())?
+    .map_err(|_| "No se pudo limpiar la base temporal.".to_owned())?;
+    if !status.success() {
+        return Err("No se pudo eliminar la base temporal propia.".into());
+    }
+    Ok(())
 }
 
 fn database_url_with_name(url: &str, database: &str) -> Result<String, String> {
@@ -3270,10 +3577,10 @@ pub async fn create_server(
         .fetch_one(&mut *tx)
         .await?;
     if active {
-        probe_destination(&server)
+        let metrics = probe_destination(&server)
             .await
             .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
-        sqlx::query("UPDATE backups_backupserver SET is_active=true,connection_ok=true,connection_checked_at=NOW(),last_seen=NOW(),status='online' WHERE id=$1").bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE backups_backupserver SET is_active=true,connection_ok=true,connection_checked_at=NOW(),last_seen=NOW(),status='online',disk_total_bytes=$2,disk_used_bytes=$3 WHERE id=$1").bind(id).bind(metrics.total as i64).bind(metrics.total.saturating_sub(metrics.available) as i64).execute(&mut *tx).await?;
         server = sqlx::query_as::<_, BackupServer>(&server_select("WHERE id=$1"))
             .bind(id)
             .fetch_one(&mut *tx)
@@ -3336,10 +3643,10 @@ pub async fn update_server(
         .fetch_one(&mut *tx)
         .await?;
     if activation && !changed {
-        probe_destination(&server)
+        let metrics = probe_destination(&server)
             .await
             .map_err(|error| AppError::Validation(safe_error(&error).into()))?;
-        sqlx::query("UPDATE backups_backupserver SET is_active=true,connection_ok=true,connection_checked_at=NOW(),last_seen=NOW(),status='online',error='' WHERE id=$1").bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE backups_backupserver SET is_active=true,connection_ok=true,connection_checked_at=NOW(),last_seen=NOW(),status='online',error='',disk_total_bytes=$2,disk_used_bytes=$3 WHERE id=$1").bind(id).bind(metrics.total as i64).bind(metrics.total.saturating_sub(metrics.available) as i64).execute(&mut *tx).await?;
         server = sqlx::query_as::<_, BackupServer>(&server_select("WHERE id=$1"))
             .bind(id)
             .fetch_one(&mut *tx)
@@ -3394,6 +3701,7 @@ fn error_code(error: &str) -> &'static str {
     match text.as_str() {
         "ok" => return "ok",
         "storage_full" => return "storage_full",
+        "capacity_unknown" => return "capacity_unknown",
         "server_identity" => return "server_identity",
         "credentials" => return "credentials",
         "vpn" => return "vpn",
@@ -3403,8 +3711,12 @@ fn error_code(error: &str) -> &'static str {
         "connection" => return "connection",
         _ => {}
     }
-    if text.is_empty() {
+    if text.contains("extension") && text.contains("superuser") {
+        "database_extension"
+    } else if text.is_empty() {
         "ok"
+    } else if text.contains("no verificable") || text.contains("statvfs") {
+        "capacity_unknown"
     } else if text.contains("space") || text.contains("espacio") || text.contains("quota") {
         "storage_full"
     } else if text.contains("host key") || text.contains("host identification") {
@@ -3439,11 +3751,15 @@ fn safe_error(error: &str) -> &'static str {
     match error_code(error) {
         "ok" => "",
         "storage_full" => "No hay espacio suficiente para guardar las copias.",
+        "capacity_unknown" => "No se pudo verificar la capacidad disponible del destino.",
         "server_identity" => "No se pudo verificar la identidad del servidor.",
         "credentials" => "Credenciales/configuración incorrectas.",
         "vpn" => "No está disponible la conexión privada configurada.",
         "integrity" => "La copia no supera las comprobaciones de integridad.",
         "database" => "No se pudo completar la operación de base de datos.",
+        "database_extension" => {
+            "La copia requiere una extensión PostgreSQL que no está habilitada en el entorno de recuperación."
+        }
         "folder" => "Carpeta no accesible o sin permisos de escritura.",
         _ => "No se pudo conectar. Comprueba el destino e inténtalo de nuevo.",
     }
@@ -3618,6 +3934,33 @@ async fn prepare_server(
             );
         }
     }
+    for path in [&input.sftp_key_path, &input.sftp_known_hosts]
+        .into_iter()
+        .flatten()
+    {
+        if !path.is_empty() {
+            let roots = std::env::var("BACKUP_CREDENTIAL_ROOTS")
+                .unwrap_or_else(|_| "/run/backup-secrets".into());
+            let allowed = std::env::split_paths(&roots).any(|r| Path::new(path).starts_with(r));
+            if !Path::new(path).is_absolute()
+                || !allowed
+                || path.contains("..")
+                || path.contains(['\n', '\r', '"', ';', '|', '&', '`'])
+            {
+                return Err(AppError::Validation(
+                    "Referencia de credencial fuera del almacén autorizado.".into(),
+                ));
+            }
+            if fs::symlink_metadata(path)
+                .await
+                .is_ok_and(|m| m.file_type().is_symlink())
+            {
+                return Err(AppError::Validation(
+                    "Referencia de credencial con enlace no permitido.".into(),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 async fn checked_sftp_host(server: &BackupServer) -> Result<String, String> {
@@ -3632,6 +3975,25 @@ async fn checked_sftp_host(server: &BackupServer) -> Result<String, String> {
     .map_err(|_| "No se pudo resolver servidor")?
     .map_err(|_| "No se pudo resolver servidor")?;
     let addresses: Vec<_> = addresses.map(|address| address.ip()).collect();
+    if addresses.is_empty()
+        || addresses.iter().any(|ip| match ip {
+            std::net::IpAddr::V4(v) => {
+                v.is_loopback()
+                    || v.is_link_local()
+                    || v.is_unspecified()
+                    || v.is_multicast()
+                    || v.is_broadcast()
+            }
+            std::net::IpAddr::V6(v) => {
+                v.is_loopback()
+                    || v.is_unspecified()
+                    || v.is_multicast()
+                    || (v.segments()[0] & 0xffc0) == 0xfe80
+            }
+        })
+    {
+        return Err("Dirección de destino no permitida".into());
+    }
     if !env_bool("BACKUP_REQUIRE_VPN", true) {
         return addresses
             .first()
@@ -3651,32 +4013,171 @@ async fn checked_sftp_host(server: &BackupServer) -> Result<String, String> {
     if !private || !addresses.contains(&peer) {
         return Err("El servidor no coincide con el peer VPN privado".into());
     }
+    let observed = crate::infrastructure::observation()
+        .await
+        .map_err(|_| "VPN: agente del anfitrión no disponible o no autenticado")?;
+    if !observed
+        .interfaces
+        .iter()
+        .flat_map(|i| i.peers.iter())
+        .any(|p| {
+            p.latest_handshake > 0
+                && (0..=180).contains(&(Utc::now().timestamp() - p.latest_handshake))
+                && p.allowed_ips
+                    .iter()
+                    .any(|route| crate::infrastructure::route_contains(route, peer))
+        })
+    {
+        return Err("VPN sin handshake reciente para el destino".into());
+    }
     Ok(peer.to_string())
 }
-async fn probe_destination(server: &BackupServer) -> Result<(), String> {
-    if server.transfer_protocol != "sftp" {
-        let path = Path::new(&server.smb_share);
-        if !safe_remote_path(&server.smb_share) {
-            return Err("Carpeta no válida".into());
+pub(crate) async fn authorized_local_directory(raw: &str, create: bool) -> Result<PathBuf, String> {
+    let path = Path::new(raw);
+    if !path.is_absolute()
+        || raw.contains(['\n', '\r', '"', '`', ';', '|', '&'])
+        || path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err("Carpeta no válida".into());
+    }
+    let mut roots = vec![backup_root().await?];
+    if let Ok(additional) = std::env::var("BACKUP_LOCAL_ALLOWED_ROOTS") {
+        roots.extend(std::env::split_paths(&additional));
+    }
+    let Some(root) = roots
+        .into_iter()
+        .filter(|r| r.is_absolute())
+        .find(|r| path.starts_with(r))
+    else {
+        return Err("Carpeta fuera del almacenamiento permitido".into());
+    };
+    // Validate existing ancestors before mkdir, then check canonical containment.
+    for ancestor in path.ancestors() {
+        if let Ok(meta) = fs::symlink_metadata(ancestor).await
+            && meta.file_type().is_symlink()
+        {
+            return Err("Carpeta con enlace no permitido".into());
         }
-        let allowed = backup_root().await?;
-        if path.starts_with(&allowed) {
-            fs::create_dir_all(path)
-                .await
-                .map_err(|_| "Carpeta no accesible")?;
-        }
-        let path = fs::canonicalize(path)
+    }
+    if create {
+        fs::create_dir_all(path)
             .await
-            .map_err(|_| "Carpeta no accesible")?;
-        let roots = std::env::var("BACKUP_LOCAL_ALLOWED_ROOTS").unwrap_or_default();
-        let additional = roots
-            .split(':')
-            .filter(|root| !root.is_empty())
-            .any(|root| path.starts_with(root));
-        if !path.starts_with(&allowed) && !additional {
-            return Err("Carpeta fuera del almacenamiento permitido".into());
-        }
-        if local_free_bytes(&path).await? < 1024 * 1024 {
+            .map_err(|_| "Carpeta sin escritura")?;
+    }
+    let canonical = fs::canonicalize(path)
+        .await
+        .map_err(|_| "Carpeta no accesible")?;
+    let root = fs::canonicalize(root)
+        .await
+        .map_err(|_| "Raíz autorizada no disponible")?;
+    if !canonical.starts_with(root) {
+        return Err("Carpeta fuera del almacenamiento permitido".into());
+    }
+    Ok(canonical)
+}
+pub(crate) async fn infrastructure_destinations(state: &AppState) -> Result<Vec<Value>, AppError> {
+    let servers = fetch_servers(pool(state)?).await?;
+    let mut result = Vec::new();
+    for role in ["local", "external_1", "external_2"] {
+        let Some(server) = servers.iter().find(|s| s.role == role) else {
+            result.push(json!({"role":role,"enabled":false,"configured":false,"result":"NOT_RUN","state":"NOT_CONFIGURED"}));
+            continue;
+        };
+        let verified = server.connection_ok
+            && server.connection_checked_at.is_some_and(|t| {
+                t >= server.configuration_updated_at
+                    && Utc::now().signed_duration_since(t).num_seconds() <= 300
+            })
+            && server.status == "online";
+        result.push(json!({"role":role,"id":server.id,"name":server.name,"enabled":server.is_active,"configured":true,"accessible":verified,"result":if !server.is_active{"N/A"}else if verified{"PASS"}else{"BLOCKED"},"state":if verified{"VERIFIED"}else{"CONFIGURED"},"last_check":server.connection_checked_at,"last_backup":server.last_backup,"available_bytes":if server.disk_total_bytes>0{Some(server.disk_total_bytes-server.disk_used_bytes)}else{None},"error":safe_error(&server.error)}));
+    }
+    Ok(result)
+}
+#[derive(Clone, Copy)]
+struct ProbeMetrics {
+    total: u64,
+    available: u64,
+}
+#[cfg(not(windows))]
+async fn local_probe_metrics(root: &Path) -> Result<ProbeMetrics, String> {
+    let output = timeout(
+        Duration::from_secs(5),
+        Command::new("df")
+            .kill_on_drop(true)
+            .args(["-Pk", "--"])
+            .arg(root)
+            .output(),
+    )
+    .await
+    .map_err(|_| "No se pudo comprobar espacio")?
+    .map_err(|_| "No se pudo comprobar espacio")?;
+    if !output.status.success() {
+        return Err("No se pudo comprobar espacio".into());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().last().ok_or("Espacio no verificable")?;
+    let values: Vec<_> = line.split_whitespace().collect();
+    let total = values
+        .get(1)
+        .and_then(|s| s.parse::<u64>().ok())
+        .and_then(|v| v.checked_mul(1024))
+        .ok_or("Espacio no verificable")?;
+    let available = values
+        .get(3)
+        .and_then(|s| s.parse::<u64>().ok())
+        .and_then(|v| v.checked_mul(1024))
+        .ok_or("Espacio no verificable")?;
+    if total > i64::MAX as u64 || available > total {
+        return Err("Espacio no verificable".into());
+    }
+    Ok(ProbeMetrics { total, available })
+}
+#[cfg(windows)]
+async fn local_probe_metrics(root: &Path) -> Result<ProbeMetrics, String> {
+    let output=timeout(Duration::from_secs(5),Command::new("powershell.exe").kill_on_drop(true).env("UAS_BACKUP_PROBE_PATH",root).args(["-NoProfile","-NonInteractive","-Command","$d=(Get-Item -LiteralPath $env:UAS_BACKUP_PROBE_PATH -ErrorAction Stop).PSDrive; if($null -eq $d.Free -or $null -eq $d.Used){exit 2}; [Console]::Write(('{0} {1}' -f ($d.Free+$d.Used),$d.Free))"]).output()).await.map_err(|_|"Espacio no verificable")?.map_err(|_|"Espacio no verificable")?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let values: Vec<_> = text.split_whitespace().collect();
+    let total = values
+        .first()
+        .and_then(|v| v.parse::<u64>().ok())
+        .ok_or("Espacio no verificable")?;
+    let available = values
+        .get(1)
+        .and_then(|v| v.parse::<u64>().ok())
+        .ok_or("Espacio no verificable")?;
+    if !output.status.success() || total > i64::MAX as u64 || available > total {
+        return Err("Espacio no verificable".into());
+    }
+    Ok(ProbeMetrics { total, available })
+}
+fn capacity_from_output(output: &str) -> Option<ProbeMetrics> {
+    output.lines().rev().find_map(|line| {
+        let values: Vec<_> = line.split_whitespace().collect();
+        if values.len() < 4 {
+            return None;
+        };
+        let total = values[0].parse::<u64>().ok()?.checked_mul(1024)?;
+        let available = values[2].parse::<u64>().ok()?.checked_mul(1024)?;
+        (total >= available && total <= i64::MAX as u64)
+            .then_some(ProbeMetrics { total, available })
+    })
+}
+async fn probe_destination(server: &BackupServer) -> Result<ProbeMetrics, String> {
+    if server.transfer_protocol != "sftp" {
+        let path = authorized_local_directory(&server.smb_share, true).await?;
+        let metrics = local_probe_metrics(&path).await?;
+        let available = metrics.available;
+        if available
+            < std::env::var("BACKUP_MIN_FREE_BYTES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1024 * 1024)
+        {
             return Err("Espacio insuficiente".into());
         }
         let probe = path.join(format!(".uasspain-probe-{}", Uuid::new_v4()));
@@ -3700,10 +4201,20 @@ async fn probe_destination(server: &BackupServer) -> Result<(), String> {
             Ok(())
         }
         .await;
-        let removed = fs::remove_file(&probe).await;
         result.map_err(str::to_owned)?;
-        removed.map_err(|_| "Carpeta sin permiso de eliminación".to_owned())?;
-        return Ok(());
+        if fs::symlink_metadata(&probe)
+            .await
+            .map_err(|_| "Prueba no disponible")?
+            .file_type()
+            .is_symlink()
+            || fs::read(&probe).await.map_err(|_| "Prueba no disponible")? != bytes
+        {
+            return Err("La identidad del archivo de prueba cambió; no se elimina".into());
+        }
+        fs::remove_file(&probe)
+            .await
+            .map_err(|_| "Carpeta sin permiso de eliminación".to_owned())?;
+        return Ok(metrics);
     }
     let host = checked_sftp_host(server).await?;
     if !safe_remote_path(&server.sftp_remote_path)
@@ -3726,7 +4237,7 @@ async fn probe_destination(server: &BackupServer) -> Result<(), String> {
         server.sftp_remote_path.trim_end_matches('/')
     );
     let commands = format!(
-        "cd \"{}\"\nput \"{}\" \"{remote}\"\nget \"{remote}\" \"{}\"\nrm \"{remote}\"\n-df .\n",
+        "cd \"{}\"\nput \"{}\" \"{remote}\"\nget \"{remote}\" \"{}\"\ndf .\n",
         server.sftp_remote_path,
         upload.display(),
         download.display()
@@ -3763,18 +4274,71 @@ async fn probe_destination(server: &BackupServer) -> Result<(), String> {
     )
     .await;
     let readback = fs::read(&download).await.ok();
-    for path in [&upload, &download, &batch] {
-        let _ = fs::remove_file(path).await;
-    }
-    match outcome {
-        Ok(Ok(output))
-            if output.status.success() && readback.as_deref() == Some(bytes.as_slice()) =>
-        {
-            Ok(())
+    let result = match outcome {
+        Ok(Ok(output)) if readback.as_deref() == Some(bytes.as_slice()) => {
+            // Only remove the unique remote probe after proving its bytes.
+            fs::write(&batch, format!("rm \"{remote}\"\n"))
+                .await
+                .map_err(|_| "No se pudo preparar limpieza de prueba")?;
+            let cleaned = timeout(
+                Duration::from_secs(15),
+                Command::new("sftp")
+                    .kill_on_drop(true)
+                    .args([
+                        "-o",
+                        "BatchMode=yes",
+                        "-o",
+                        "StrictHostKeyChecking=yes",
+                        "-o",
+                        "PasswordAuthentication=no",
+                        "-o",
+                        "ConnectTimeout=10",
+                    ])
+                    .arg("-o")
+                    .arg(format!("UserKnownHostsFile={}", server.sftp_known_hosts))
+                    .arg("-o")
+                    .arg(format!("HostKeyAlias={}", ssh_host_alias(server)))
+                    .arg("-i")
+                    .arg(&server.sftp_key_path)
+                    .arg("-P")
+                    .arg(server.sftp_port.to_string())
+                    .arg("-b")
+                    .arg(&batch)
+                    .arg(format!("{}@{host}", server.sftp_user))
+                    .output(),
+            )
+            .await;
+            if !cleaned.is_ok_and(|v| v.is_ok_and(|o| o.status.success())) {
+                Err("No se pudo limpiar el archivo de prueba propio".into())
+            } else {
+                if let Some(metrics) =
+                    capacity_from_output(&String::from_utf8_lossy(&output.stdout))
+                {
+                    if metrics.available
+                        < std::env::var("BACKUP_MIN_FREE_BYTES")
+                            .ok()
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(1024 * 1024)
+                    {
+                        Err("Espacio insuficiente".into())
+                    } else {
+                        Ok(metrics)
+                    }
+                } else {
+                    Err(
+                        "Espacio disponible no verificable: el servidor necesita statvfs SFTP"
+                            .into(),
+                    )
+                }
+            }
         }
         Ok(Ok(output)) => Err(String::from_utf8_lossy(&output.stderr).into_owned()),
         _ => Err("No se pudo conectar al servidor".into()),
+    };
+    for path in [&upload, &download, &batch] {
+        let _ = fs::remove_file(path).await;
     }
+    result
 }
 async fn fetch_servers(pool: &PgPool) -> Result<Vec<BackupServer>, AppError> {
     Ok(sqlx::query_as(&server_select("ORDER BY name"))
@@ -3789,7 +4353,7 @@ async fn fetch_server(pool: &PgPool, id: Uuid) -> Result<Option<BackupServer>, A
 }
 fn job_select(suffix: &str) -> String {
     format!(
-        "SELECT id,job_type,status,started_at,finished_at,duration_seconds::integer,size_bytes::bigint,encrypted,checksum,storage_path,media_path,media_checksum,media_size_bytes::bigint,remote_paths,destinations,verified,verified_at,verified_checksum,restore_tested,restore_tested_at,restore_test_result,initiated_by,restored_by,restored_at,data_loss_window_seconds::integer,error,created_date,parent_backup_id,base_full_id,chain_index::integer,manifest,manifest_checksum,manifest_path,backup_format_version::integer,encryption_key_id FROM backups_backupjob {suffix}"
+        "SELECT id,job_type,status,started_at,finished_at,duration_seconds::integer,duration_milliseconds,replica_checks,size_bytes::bigint,encrypted,checksum,storage_path,media_path,media_checksum,media_size_bytes::bigint,remote_paths,destinations,verified,verified_at,verified_checksum,restore_tested,restore_tested_at,restore_test_result,initiated_by,restored_by,restored_at,data_loss_window_seconds::integer,error,created_date,parent_backup_id,base_full_id,chain_index::integer,manifest,manifest_checksum,manifest_path,backup_format_version::integer,encryption_key_id FROM backups_backupjob {suffix}"
     )
 }
 async fn fetch_job(pool: &PgPool, id: Option<Uuid>) -> Result<Option<BackupJob>, AppError> {
@@ -4162,8 +4726,100 @@ fn validate_server(input: &ServerWrite, create: bool) -> Result<(), AppError> {
     Ok(())
 }
 
+fn safe_artifact_filename(name: &str) -> bool {
+    (safe_backup_filename(name)
+        || (name.starts_with("uasspain_") && name.ends_with(".enc.manifest.json")))
+        && name.len() <= 220
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
+async fn validate_selected_origin(job: &BackupJob, origin: Option<&str>) -> Result<(), AppError> {
+    let Some(origin) = origin.filter(|value| *value != "auto") else {
+        return Ok(());
+    };
+    let valid = if origin == "local" {
+        job.destinations
+            .pointer("/local/status")
+            .and_then(Value::as_str)
+            == Some("success")
+            || (!job.checksum.is_empty() && safe_job_path(&job.storage_path).await.is_some())
+    } else {
+        Uuid::parse_str(origin).is_ok()
+            && destination_for_origin(&job.destinations, origin)
+                .and_then(|v| v.get("status"))
+                .and_then(Value::as_str)
+                == Some("success")
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::Validation(
+            "El origen no pertenece a una réplica disponible de la copia seleccionada.".into(),
+        ))
+    }
+}
+
+fn artifact_error_code(error: &str) -> &'static str {
+    let error = error.to_lowercase();
+    if error.contains("manifest") {
+        "manifest_missing_or_invalid"
+    } else if error.contains("checksum") {
+        "checksum_mismatch"
+    } else if error.contains("tamaño") {
+        "size_mismatch"
+    } else if error.contains("descifr") {
+        "decryption_failed"
+    } else if error.contains("cadena") {
+        "incremental_chain_invalid"
+    } else if error.contains("configuración") {
+        "historical_destination_configuration_changed"
+    } else {
+        "artifact_missing_or_destination_unavailable"
+    }
+}
+fn serialize_destinations<S: serde::Serializer>(
+    value: &Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut safe = value.clone();
+    if let Some(entries) = safe.as_object_mut() {
+        for entry in entries.values_mut() {
+            if let Some(v) = entry.as_object_mut() {
+                v.remove("path");
+                if let Some(error) = v.get("error").and_then(Value::as_str).map(safe_error) {
+                    v.insert("error".into(), json!(error));
+                }
+            }
+        }
+    }
+    safe.serialize(serializer)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sftp_paths_are_literal_and_cannot_expand_cleanup_globs() {
+        assert!(super::safe_remote_path("/backups/empresa con espacios"));
+        for path in [
+            "/backups/*",
+            "/backups/?",
+            "/backups/[a-z]",
+            "/backups/../keys",
+            "/backups\\name",
+        ] {
+            assert!(!super::safe_remote_path(path), "{path}");
+        }
+    }
+    #[test]
+    fn unsupported_extension_is_reported_without_exposing_restore_output() {
+        let diagnostic = "pg_restore: permission denied to create extension; must be superuser; sensitive-fixture-detail";
+        assert_eq!(super::error_code(diagnostic), "database_extension");
+        let message = super::safe_error(diagnostic);
+        assert!(message.contains("extensión PostgreSQL"));
+        assert!(!message.contains("sensitive-fixture-detail"));
+    }
     #[test]
     fn postgres_tools_keep_verified_tls_and_explicit_ca() {
         let raw = "postgresql://fixture@postgres/db?sslmode=verify-full";

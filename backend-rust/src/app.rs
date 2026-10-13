@@ -69,6 +69,48 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let request_id = HeaderName::from_static("x-request-id");
     let cors = cors_layer();
     Router::new()
+        .route(
+            "/api/admin/students/{id}/courses/",
+            post(crate::student_directory::register_course),
+        )
+        .route(
+            "/api/admin/accounts/{id}/reactivate/",
+            post(crate::account_lifecycle::reactivate_account),
+        )
+        .route(
+            "/api/account/deactivate/",
+            post(crate::account_lifecycle::deactivate),
+        )
+        .route(
+            "/api/account/deactivation/",
+            get(crate::account_lifecycle::info),
+        )
+        .route("/api/admin/students/", get(crate::student_directory::list))
+        .route(
+            "/api/admin/students/export/",
+            get(crate::student_directory::export),
+        )
+        .route(
+            "/api/admin/students/{id}/",
+            get(crate::student_directory::detail),
+        )
+        .route(
+            "/api/admin/students/{id}/reactivate/",
+            post(crate::account_lifecycle::reactivate),
+        )
+        .route(
+            "/api/system/mail/",
+            get(crate::mail_config::get).put(crate::mail_config::put),
+        )
+        .route("/api/system/mail/test/", post(crate::mail_config::test))
+        .route(
+            "/api/system/mail/monitor/",
+            get(crate::mail_migration::monitor),
+        )
+        .route(
+            "/api/system/mail/messages/{id}/reconcile/",
+            post(crate::mail_migration::reconcile),
+        )
         .route("/", get(api::root))
         .route(
             "/api/admin/content/images",
@@ -197,6 +239,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::runtime_config::google_get).put(crate::runtime_config::google_put),
         )
         .route("/api/vpn/status/", get(crate::vpn::status))
+        .route(
+            "/api/infrastructure/",
+            get(crate::infrastructure::get).put(crate::infrastructure::put),
+        )
+        .route(
+            "/api/infrastructure/validate/",
+            post(crate::infrastructure::validate_current),
+        )
+        .route(
+            "/api/infrastructure/export/",
+            get(crate::infrastructure::export),
+        )
         .route(
             "/api/system/auth-policy/",
             get(api::auth_policy_get).put(api::auth_policy_put),
@@ -523,6 +577,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/media/{*path}", get(crate::uploads::download))
         .route("/api/backups/status/", get(crate::backups::status))
         .route("/api/backups/history/", get(crate::backups::history))
+        .route(
+            "/api/backups/history/clear/",
+            post(crate::backups::clear_history),
+        )
+        .route("/api/backups/inventory/", get(crate::backups::inventory))
         .route("/api/backups/{id}/", delete(crate::backups::delete_backup))
         .route("/api/backups/create/", post(crate::backups::create))
         .route("/api/backups/verify/", post(crate::backups::verify))

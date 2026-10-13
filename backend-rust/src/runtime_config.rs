@@ -139,6 +139,19 @@ pub async fn require_email_2fa_ready(
     state: &AppState,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), AppError> {
+    let mode: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT value FROM core_systemsetting WHERE key='mail_mode'")
+            .fetch_optional(&mut **tx)
+            .await?;
+    if mode.is_some_and(|value| value["api_exclusive"] == true) {
+        let config = crate::mail_config::api_config(state, false).await?;
+        if !config.verified() || crate::mail_config::token(state, false).await?.is_none() {
+            return Err(AppError::Validation(
+                "Verifique la API de correo antes de activar 2FA.".into(),
+            ));
+        }
+        return Ok(());
+    }
     let (config, password) = smtp_in_transaction(state, tx).await?;
     validate_email_2fa(
         &config,
@@ -210,6 +223,41 @@ async fn smtp_in_transaction(
 }
 
 fn smtp_from_env() -> (SmtpConfig, Option<String>) {
+    if std::env::var("EMAIL_HOST").unwrap_or_default().is_empty()
+        && !std::env::var("CONTACT_SMTP_HOST")
+            .unwrap_or_default()
+            .is_empty()
+    {
+        let password = std::env::var("CONTACT_SMTP_PASSWORD_FILE")
+            .ok()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .or_else(|| std::env::var("CONTACT_SMTP_PASSWORD").ok())
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let recipient = crate::contact::mailbox().unwrap_or_default();
+        return (
+            SmtpConfig {
+                enabled: true,
+                host: std::env::var("CONTACT_SMTP_HOST").unwrap_or_default(),
+                port: std::env::var("CONTACT_SMTP_PORT")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(587),
+                security: std::env::var("CONTACT_SMTP_SECURITY")
+                    .unwrap_or_else(|_| "STARTTLS".into()),
+                username: std::env::var("CONTACT_SMTP_USER").unwrap_or_default(),
+                from_email: std::env::var("CONTACT_SMTP_FROM")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| recipient.clone()),
+                from_name: "UASSpain".into(),
+                contact_recipient: recipient,
+                timeout_seconds: 15,
+                ..Default::default()
+            },
+            password,
+        );
+    }
     let username = std::env::var("EMAIL_HOST_USER").unwrap_or_default();
     let host = std::env::var("EMAIL_HOST").unwrap_or_default();
     let password = std::env::var("EMAIL_HOST_PASSWORD_FILE")
@@ -241,7 +289,7 @@ fn smtp_from_env() -> (SmtpConfig, Option<String>) {
         password,
     )
 }
-async fn secret(state: &AppState, key: &str) -> Result<Option<String>, AppError> {
+pub(crate) async fn secret(state: &AppState, key: &str) -> Result<Option<String>, AppError> {
     let Some(pool) = &state.pool else {
         return Ok(None);
     };
@@ -292,6 +340,9 @@ pub async fn smtp_put(
     Json(mut input): Json<SmtpWrite>,
 ) -> Result<Json<Value>, AppError> {
     let profile = admin(&state, &headers)?;
+    if crate::mail_config::api_exclusive(&state).await? {
+        return Err(AppError::Forbidden);
+    }
     validate_smtp(&input.config)?;
     if input.password.len() > 4096 || input.password.starts_with("v1:") {
         return Err(AppError::Validation("Contraseña SMTP no válida.".into()));
@@ -332,6 +383,8 @@ pub async fn smtp_put(
 #[derive(Deserialize)]
 pub struct SmtpTest {
     pub recipient: String,
+    #[serde(default)]
+    pub confirm_rollback: bool,
 }
 pub async fn smtp_test(
     State(state): State<Arc<AppState>>,
@@ -339,6 +392,9 @@ pub async fn smtp_test(
     Json(input): Json<SmtpTest>,
 ) -> Result<Json<Value>, AppError> {
     let profile = admin(&state, &headers)?;
+    if crate::mail_config::api_exclusive(&state).await? && !input.confirm_rollback {
+        return Err(AppError::Forbidden);
+    }
     crate::auth::enforce_login_rate(&headers, &format!("smtp-test:{profile}"))?;
     let mut tx = state
         .pool
@@ -351,35 +407,96 @@ pub async fn smtp_test(
     if !config.enabled || password.is_none() {
         return Err(AppError::Unavailable);
     }
-    let result = crate::email::deliver(
-        &config,
-        password.as_deref().unwrap_or_default(),
-        &input.recipient,
-        "Prueba de correo UASSpain",
-        "Configuración de correo verificada.",
-    )
-    .await;
-    let mut config = config;
-    config.last_test_ok = Some(result.is_ok());
-    config.last_test_at = Some(chrono::Utc::now());
-    sqlx::query("INSERT INTO core_systemsetting (id,created_date,updated_date,key,value) VALUES ($1,NOW(),NOW(),'smtp',$2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_date=NOW()")
-        .bind(Uuid::new_v4()).bind(json!(config)).execute(&mut *tx).await?;
-    tx.commit().await?;
-    audit(
+    let envelope = crate::mail_provider::Envelope {
+        from: config.from_email.clone(),
+        from_name: config.from_name.clone(),
+        to: input.recipient,
+        reply_to: None,
+        subject: "Prueba de correo UASSpain".into(),
+        body: "Prueba autorizada del canal SMTP.".into(),
+        smtp: Some(config.clone()),
+    };
+    let id = crate::mail_queue::enqueue_explicit(
         &state,
+        &mut tx,
+        "smtp",
+        &envelope,
+        crate::mail_queue::QueueOptions {
+            kind: "provider_test",
+            ttl: chrono::Duration::minutes(5),
+            validity: json!({}),
+            idempotency: None,
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    let result = crate::mail_queue::process_test(&state, id, "").await?;
+    let success = matches!(result, crate::mail_provider::Outcome::Accepted(_));
+    let mut tx = state
+        .pool
+        .as_ref()
+        .ok_or(AppError::Unavailable)?
+        .begin()
+        .await?;
+    lock_email_auth_config(&mut tx).await?;
+    let (latest, latest_password) = smtp_in_transaction(&state, &mut tx).await?;
+    let same_password: bool = subtle::ConstantTimeEq::ct_eq(
+        latest_password.as_deref().unwrap_or_default().as_bytes(),
+        password.as_deref().unwrap_or_default().as_bytes(),
+    )
+    .into();
+    if json!(latest) != json!(config) || !same_password {
+        return Err(AppError::EditConflict);
+    }
+    // Testing can adopt environment configuration. Preserve its credential in
+    // the same transaction; a saved setting must never lose its tested secret.
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT ciphertext FROM core_systemsecret WHERE key='smtp_password'")
+            .fetch_optional(&mut *tx)
+            .await?;
+    if let Some(stored) = stored {
+        let existing = state.cipher.decrypt(&stored)?;
+        let unchanged: bool = subtle::ConstantTimeEq::ct_eq(
+            existing.as_bytes(),
+            password.as_deref().unwrap_or_default().as_bytes(),
+        )
+        .into();
+        if !unchanged {
+            return Err(AppError::EditConflict);
+        }
+    } else if let Some(password) = &password {
+        sqlx::query(
+            "INSERT INTO core_systemsecret(id,key,ciphertext) VALUES($1,'smtp_password',$2)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(state.cipher.encrypt(password)?)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let mut config = config;
+    config.last_test_ok = Some(success);
+    config.last_test_at = Some(chrono::Utc::now());
+    crate::mail_config::put_setting(&mut tx, "smtp", json!(config)).await?;
+    crate::mail_config::audit_tx(
+        &mut tx,
         profile,
-        if result.is_ok() {
+        if success {
             "smtp_test_success"
         } else {
             "smtp_test_failed"
         },
+        json!({"outbox_id":id}),
     )
     .await?;
-    result?;
+    tx.commit().await?;
+    if !success {
+        return Err(AppError::Unavailable);
+    }
     Ok(Json(
-        json!({"ok":true,"detail":"Correo de prueba enviado."}),
+        json!({"ok":true,"state":"ACCEPTED","message_id":id,"detail":"El servidor SMTP ha aceptado la prueba. La recepcion final requiere comprobacion del buzon."}),
     ))
 }
+
 pub fn google_view(config: GoogleConfig) -> Value {
     let configured = config.enabled && !config.client_id.is_empty();
     let origins: Vec<String> = ["FRONTEND_URL", "SITE_URL"]

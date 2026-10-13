@@ -48,6 +48,7 @@ const publicUser = (data) => ({
 });
 
 const BLOCKED_MESSAGES = {
+  baja: 'Su cuenta está dada de baja. Solicite una reactivación autorizada para volver a acceder.',
   pendiente: 'Su cuenta está pendiente de validación por el instructor.',
   rechazado: 'Su solicitud de registro ha sido rechazada.',
   bloqueado: 'Su cuenta ha sido bloqueada.',
@@ -60,6 +61,11 @@ export const authService = {
 
   invalidateSession() {
     queryClientInstance.removeQueries({ queryKey: SESSION_QUERY_KEY });
+  },
+  finishDeactivation(message: string) {
+    authService.setAuthNotice(message || 'Tu cuenta ha sido dada de baja.');
+    queryClientInstance.clear();
+    window.location.replace('/?account=deactivated');
   },
 
   setAuthNotice(message) {

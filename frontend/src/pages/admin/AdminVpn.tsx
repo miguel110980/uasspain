@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { ShieldCheck, Wifi, RefreshCw, AlertTriangle, CheckCircle2, Clock, Activity, Server } from 'lucide-react';
 import apiClient from '@/api/apiClient';
 import endpoints from '@/api/endpoints';
+import BackupDestinationForm, { BACKUP_SLOTS } from '@/components/admin/BackupDestinationForm';
 
 const STATE_MAP = {
   connected: { label: 'Conectada', tone: 'emerald', icon: CheckCircle2 },
@@ -15,13 +16,15 @@ export default function AdminVpn() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastChecked, setLastChecked] = useState(null);
+  const [servers, setServers] = useState([]);
 
   const load = async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await apiClient.get(endpoints.vpn.status);
+      const [res, destinations] = await Promise.all([apiClient.get(endpoints.vpn.status), apiClient.get(endpoints.backups.servers)]);
       setVpnData(res.data);
+      setServers(destinations.data);
       setLastChecked(new Date());
     } catch (err) {
       setError(err?.response?.data?.detail || 'No se pudo obtener el estado de la VPN.');
@@ -88,8 +91,8 @@ export default function AdminVpn() {
                 <Server className="w-4 h-4 text-primary" />
                 <span className="text-[10px] uppercase tracking-widest text-muted-foreground">Peers</span>
               </div>
-              <p className="text-base font-semibold text-foreground">{vpnData.peers_count ?? 0}</p>
-              <p className="text-xs text-muted-foreground mt-1">Activos: {vpnData.active_peers ?? 0}</p>
+              <p className="text-base font-semibold text-foreground">{vpnData.peers_count ?? 'No disponible'}</p>
+              <p className="text-xs text-muted-foreground mt-1">Activos: {vpnData.active_peers ?? 'No disponible'}</p>
             </div>
 
             <div className="glass-card p-4">
@@ -98,10 +101,20 @@ export default function AdminVpn() {
                 <span className="text-[10px] uppercase tracking-widest text-muted-foreground">Último handshake</span>
               </div>
               <p className="text-base font-semibold text-foreground">
-                {vpnData.last_handshake ? `${vpnData.last_handshake}s atrás` : '—'}
+                {vpnData.last_handshake != null ? `${vpnData.last_handshake}s atrás` : '—'}
               </p>
             </div>
           </div>
+
+          <div className="glass-card p-4 text-sm text-muted-foreground space-y-2">
+            <p>Anfitrión: {vpnData.host_platform || 'No identificado'} · Agente: {vpnData.agent_state || 'NOT_RUN'}</p>
+            <p>WireGuard: {vpnData.wireguard_installed == null ? 'No verificado' : vpnData.wireguard_installed ? 'Instalado' : 'No instalado'} · Servicio: {vpnData.service_state || 'No disponible'}</p>
+            <p>Preparación: {vpnData.preparation_state || 'NOT_RUN'}</p>
+            {vpnData.error && <p role="status">{vpnData.error}</p>}
+          </div>
+
+          {vpnData.peers?.length > 0 && <section className="glass-card p-4 space-y-3" aria-label="Peers WireGuard"><h3 className="font-heading font-bold text-foreground">Peers observados</h3>{vpnData.peers.map(peer => <div className="text-sm text-muted-foreground break-all" key={peer.public_key}><p>Clave pública: {peer.public_key}</p><p>Endpoint: {peer.endpoint || 'No disponible'} · Recepción: {peer.rx_bytes} bytes · Envío: {peer.tx_bytes} bytes</p><p>Handshake UTC: {peer.latest_handshake ? new Date(peer.latest_handshake * 1000).toISOString() : 'Sin handshake'}</p></div>)}</section>}
+          <section className="space-y-3" aria-label="Monitorización de destinos"><h3 className="font-heading text-lg font-bold text-foreground">Destinos de backup</h3><div className="grid xl:grid-cols-3 gap-4">{BACKUP_SLOTS.map(slot => <BackupDestinationForm key={slot.role} {...slot} server={servers.find(s => s.role === slot.role)} onSaved={load} operationBusy={loading} />)}</div></section>
 
           {lastChecked ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">

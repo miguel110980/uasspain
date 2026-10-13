@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "config": {
+    "host_platform": "",
+    "server_name": "",
+    "server_address": "",
+    "installation": "",
+    "timezone": "",
+    "step": 0,
+    "vpn": { "interface": "", "address": "", "port": 0, "public_key": "", "peers": [] },
+    "paths": [],
+    "reserved_networks": []
+  },
+  "secrets_included": false,
+  "apply_automatically": false
+}

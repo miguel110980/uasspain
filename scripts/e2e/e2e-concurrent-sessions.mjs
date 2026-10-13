@@ -42,8 +42,12 @@ async function socket(client) {
 }
 const allSockets = [];
 let seed;
+let instrumentationCreated = false;
 try {
-  sql('CREATE EXTENSION IF NOT EXISTS pg_stat_statements');
+  if (sql("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements')") !== 't') {
+    sql('CREATE EXTENSION pg_stat_statements');
+    instrumentationCreated = true;
+  }
   seed = await concurrentFixtures();
   const f = seed.fixtures[100], c = await loginFixture(f);
   let release = await holdProfile(f.id);
@@ -147,5 +151,8 @@ try {
 } finally {
   for (const ws of allSockets) ws.terminate();
   if (seed) await seed.cleanup();
+  // This non-trusted telemetry extension belongs only to this guarded fixture
+  // run. Leaving it behind prevents least-privilege restore drills afterward.
+  if (instrumentationCreated) sql('DROP EXTENSION pg_stat_statements');
   writeFileSync(resolve(folder, `concurrent-${phase}.json`), JSON.stringify(report,null,2));
 }

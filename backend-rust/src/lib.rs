@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod academic_scope;
+pub mod account_lifecycle;
 pub mod api;
 pub mod app;
 pub mod auth;
@@ -21,8 +22,13 @@ pub mod exam_admin;
 pub mod exam_import;
 pub mod exams;
 pub mod google_oidc;
+pub mod infrastructure;
 pub mod instructor_access;
 pub mod instructors;
+pub mod mail_config;
+pub mod mail_migration;
+pub mod mail_provider;
+pub mod mail_queue;
 pub mod material_text;
 pub mod materials;
 pub mod observability;
@@ -32,6 +38,7 @@ pub mod security;
 pub mod seo;
 mod service_images;
 pub mod services;
+pub mod student_directory;
 pub mod system_status;
 pub mod uploads;
 pub mod users;

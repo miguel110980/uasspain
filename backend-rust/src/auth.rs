@@ -108,6 +108,20 @@ pub async fn login(
     let password_correct =
         crate::security::verify_password_hash_async(input.password.clone(), row.password.clone())
             .await?;
+    if password_correct && row.status == "baja" {
+        let mut tx = pool.begin().await?;
+        crate::account_lifecycle::event(
+            &mut tx,
+            row.id,
+            None,
+            "deactivated_access_denied",
+            "DENIED",
+            serde_json::json!({"channel":"login"}),
+            None,
+        )
+        .await?;
+        tx.commit().await?;
+    }
     if !row.is_active || row.status != "activo" || !row.otp_verified || !password_correct {
         return Err(AppError::Unauthorized);
     }
@@ -131,23 +145,23 @@ pub async fn login(
         use rand::Rng as _;
         let code = format!("{:06}", rand::rng().random_range(100_000..1_000_000));
         let hash = crate::registration::hash_argon2(&code)?;
-        let issued = sqlx::query("UPDATE accounts_userprofile SET login_otp_hash=$1,login_otp_created_at=NOW(),login_otp_attempts=0 WHERE id=$2 AND (login_otp_created_at IS NULL OR login_otp_created_at<NOW()-INTERVAL '1 minute')").bind(&hash).bind(row.id).execute(pool).await?;
+        let mut mail_tx = pool.begin().await?;
+        let issued = sqlx::query("UPDATE accounts_userprofile SET login_otp_hash=$1,login_otp_created_at=NOW(),login_otp_attempts=0 WHERE id=$2 AND (login_otp_created_at IS NULL OR login_otp_created_at<NOW()-INTERVAL '1 minute')").bind(&hash).bind(row.id).execute(&mut *mail_tx).await?;
         if issued.rows_affected() != 1 {
             return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"detail":"Ya hay un codigo vigente. Revise su correo o espere un minuto para solicitar otro.","code":"otp_required"}))).into_response());
         }
-        if crate::email::send(
-            &state,
-            &canonical_email,
-            "Código temporal de acceso UASSpain",
-            &format!("Su código temporal de acceso es: {code}"),
-        )
-        .await
-        .is_err()
+        let queued = crate::mail_queue::enqueue(&state,&mut mail_tx,crate::mail_queue::MailRequest{to:&canonical_email,reply_to:None,subject:"Código temporal de acceso UASSpain",body:&format!("Su código temporal de acceso es: {code}"),options:crate::mail_queue::QueueOptions{kind:"login_otp",ttl:chrono::Duration::minutes(15),validity:serde_json::json!({"kind":"login_otp","profile_id":row.id,"hash":hash}),idempotency:None}})
+        .await;
+        let mail_id = queued.map_err(|_| AppError::OtpDeliveryUnavailable)?;
+        mail_tx.commit().await?;
+        if crate::email::dispatch_required(&state, mail_id)
+            .await
+            .is_err()
         {
             sqlx::query("UPDATE accounts_userprofile SET login_otp_hash='',login_otp_created_at=NULL,login_otp_attempts=0 WHERE id=$1 AND login_otp_hash=$2").bind(row.id).bind(hash).execute(pool).await?;
             return Err(AppError::OtpDeliveryUnavailable);
         }
-        return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"detail":"Código de acceso enviado. Introduzca el OTP para completar el login.","code":"otp_required"}))).into_response());
+        return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"detail":"Solicitud de código aceptada. Revise su correo e introduzca el OTP para completar el login.","code":"otp_required","internally_accepted":true}))).into_response());
     }
     if needs_2fa {
         let code = input.code.as_deref().unwrap_or_default();
@@ -970,6 +984,12 @@ fn client_agent(value: &str) -> (&'static str, &'static str, &'static str) {
 }
 
 pub(crate) fn enforce_login_rate(headers: &HeaderMap, email: &str) -> Result<(), AppError> {
+    enforce_bounded_rate(headers, email, 10)
+}
+pub(crate) fn enforce_operation_rate(headers: &HeaderMap, subject: &str) -> Result<(), AppError> {
+    enforce_bounded_rate(headers, &format!("operation:{subject}"), 120)
+}
+fn enforce_bounded_rate(headers: &HeaderMap, email: &str, maximum: usize) -> Result<(), AppError> {
     static ATTEMPTS: OnceLock<Mutex<HashMap<String, VecDeque<Instant>>>> = OnceLock::new();
     let ip = headers
         .get("x-forwarded-for")
@@ -1001,7 +1021,7 @@ pub(crate) fn enforce_login_rate(headers: &HeaderMap, email: &str) -> Result<(),
     {
         bucket.pop_front();
     }
-    if bucket.len() >= 10 {
+    if bucket.len() >= maximum {
         return Err(AppError::RateLimited);
     }
     bucket.push_back(now);

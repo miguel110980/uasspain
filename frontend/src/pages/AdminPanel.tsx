@@ -11,6 +11,7 @@ import AdminSidebar from '@/components/admin/AdminSidebar';
 import AdminTopbar from '@/components/admin/AdminTopbar';
 import AdminDashboard from '@/pages/admin/AdminDashboard';
 const AdminUsuarios = lazy(() => import('@/pages/admin/AdminUsuarios'));
+const AdminStudents = lazy(() => import('@/pages/admin/AdminStudents'));
 const AdminConexiones = lazy(() => import('@/pages/admin/AdminConexiones'));
 const AdminActividad = lazy(() => import('@/pages/admin/AdminActividad'));
 const AdminEstadisticas = lazy(() => import('@/pages/admin/AdminEstadisticas'));
@@ -22,6 +23,7 @@ const AdminNotificaciones = lazy(() => import('@/pages/admin/AdminNotificaciones
 const AdminConfiguracion = lazy(() => import('@/pages/admin/AdminConfiguracion'));
 const AdminBackups = lazy(() => import('@/pages/admin/AdminBackups'));
 const AdminVpn = lazy(() => import('@/pages/admin/AdminVpn'));
+const AdminInfrastructure = lazy(() => import('@/pages/admin/AdminInfrastructure'));
 const AdminInstructores = lazy(() => import('@/pages/admin/AdminInstructores'));
 const AdminChat = lazy(() => import('@/pages/admin/AdminChat'));
 const AdminCuenta = lazy(() => import('@/components/admin/AdminCuenta'));
@@ -75,12 +77,21 @@ const NAV_GROUPS = [
     ],
   },
   {
+    label: 'Infraestructura',
+    items: [{ id: 'infraestructura-setup', label: 'Configuración inicial', icon: Settings }],
+  },
+  {
     label: 'Cuenta',
     items: [{ id: 'cuenta', label: 'Mi cuenta', icon: User }],
   },
 ];
 
 const TITLES = Object.fromEntries(NAV_GROUPS.flatMap((g) => g.items.map((i) => [i.id, i.label])));
+
+function AdminUserSections() {
+  const [tab, setTab] = useState('users');
+  return <div className="min-w-0 space-y-5"><nav aria-label="Secciones de usuarios" className="flex flex-wrap gap-3">{[['users', 'Usuarios'], ['students', 'Alumnos']].map(([id, label]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => setTab(id)} className={`px-4 py-2 border rounded-sm ${tab === id ? 'border-primary text-primary' : 'border-border-subtle text-muted-foreground'}`}>{label}</button>)}</nav>{tab === 'students' ? <AdminStudents /> : <AdminUsuarios />}</div>;
+}
 
 export default function AdminPanel() {
   const [section, setSection] = useState('dashboard');
@@ -196,7 +207,7 @@ export default function AdminPanel() {
     'registro-conexiones': <PanelSection><AdminConexiones /></PanelSection>,
     seguridad: <PanelSection><AdminSeguridad /></PanelSection>,
     auditoria: <PanelSection><AdminAuditoria /></PanelSection>,
-    usuarios: <PanelSection><AdminUsuarios /></PanelSection>,
+    usuarios: <PanelSection><AdminUserSections /></PanelSection>,
     instructores: <PanelSection><AdminInstructores /></PanelSection>,
     blog: <PanelSection><AdminBlog /></PanelSection>,
     cursos: <PanelSection><AdminCursos active={section === 'cursos'} /></PanelSection>,
@@ -206,6 +217,7 @@ export default function AdminPanel() {
     notificaciones: <PanelSection><AdminNotificaciones /></PanelSection>,
     backups: <PanelSection><AdminBackups /></PanelSection>,
     vpn: <PanelSection><AdminVpn /></PanelSection>,
+    'infraestructura-setup': <PanelSection><AdminInfrastructure /></PanelSection>,
     configuracion: <PanelSection><AdminConfiguracion /></PanelSection>,
     cuenta: <PanelSection><AdminCuenta profile={accountProfile ?? authProfile} onProfileUpdate={setAccountProfile} /></PanelSection>,
   };

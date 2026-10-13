@@ -243,12 +243,15 @@ services:
       BACKUP_EXTERNAL_2_KNOWN_HOSTS_FILE: ${BACKUP_EXTERNAL_2_KNOWN_HOSTS_FILE:-/run/backup-secrets/known_hosts}
       BACKUP_EXTERNAL_2_VPN_IP: ${BACKUP_EXTERNAL_2_VPN_IP:-}
       BACKUP_LOCAL_ALLOWED_ROOTS: ${BACKUP_LOCAL_ALLOWED_ROOTS:-}
+      INFRASTRUCTURE_AGENT_KEY_FILE: /run/backup-secrets/infrastructure_agent.key
+      INFRASTRUCTURE_ENABLED: ${INFRASTRUCTURE_ENABLED:-true}
+      INFRASTRUCTURE_AGENT_SNAPSHOT: /run/infrastructure-agent/status.json
       BACKUP_ENCRYPTION_ENABLED: "true"
       BACKUP_SCHEDULER_ENABLED: "true"
       BACKUP_REQUIRE_VPN: "true"
       BACKUP_MIN_FREE_BYTES: ${BACKUP_MIN_FREE_BYTES:-268435456}
       PRODUCTION_RESTORE_ENABLED: "true"
-      VPN_SERVER2_IP: ${VPN_SERVER2_IP:-10.50.0.2}
+      VPN_SERVER2_IP: ${VPN_SERVER2_IP:-}
       REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
       EMAIL_HOST: ${EMAIL_HOST:-}
       EMAIL_PORT: ${EMAIL_PORT:-587}
@@ -265,6 +268,7 @@ services:
       CONTACT_SMTP_PASSWORD_FILE: /run/secrets/contact_smtp_password
       CONTACT_SMTP_CA_FILE: ${CONTACT_SMTP_CA_FILE:-}
       POSTMARK_SERVER_TOKEN_FILE: /run/secrets/postmark_server_token
+      ESSENTIAL_ACCOUNT_PROFILE_IDS: ${ESSENTIAL_ACCOUNT_PROFILE_IDS:-}
       POSTMARK_FROM: ${POSTMARK_FROM:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     networks:
@@ -280,6 +284,7 @@ services:
       - media_data:/app/media
       - backup_keys:/app/backup_keys
       - ./.secrets/backup-sftp:/run/backup-secrets:ro
+      - ${INFRASTRUCTURE_AGENT_DIRECTORY:-./.run/infrastructure-agent}:/run/infrastructure-agent:ro
       - ./nginx/allowed_hosts.conf:/app/config/allowed_hosts.conf:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/uasspain-backend", "--healthcheck"]

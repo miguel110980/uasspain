@@ -17,7 +17,7 @@ fn counts_sql() -> String {
 WITH scope AS MATERIALIZED (
   SELECT id,status FROM accounts_userprofile
   WHERE (role='alumno' OR roles ? 'alumno')
-    AND ($1='admin' OR ($1='instructor' AND assigned_instructor_id=$2) OR ($1='alumno' AND id=$2))
+    AND ($1='admin' OR ($1='instructor' AND assigned_instructor_id=$2 AND status<>'baja') OR ($1='alumno' AND id=$2))
 ), results AS MATERIALIZED (
   SELECT r.aprobado,r.nota FROM examenes_resultadoexamen r JOIN scope p ON p.id=r.alumno_id
 )

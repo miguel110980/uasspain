@@ -1072,6 +1072,14 @@ async def main():
         f"{st}",
     )
 
+    # Generation now requires an explicitly configured active slot. This is a
+    # synthetic fixture destination; a hidden local replica is forbidden.
+    st, bootstrap_destination = admin.call("POST", "/api/backups/servers/", {
+        "name": "E2E bootstrap local", "role": "local", "ip_address": "127.0.0.1",
+        "transfer_protocol": "copy", "smb_share": "/app/backups/destination-local", "is_active": True,
+    })
+    if st != 201:
+        raise RuntimeError("Isolated active local destination could not be created")
     st, created = admin.call(
         "POST", "/api/backups/create/", {"type": "full", "encrypt": True}
     )
@@ -1083,7 +1091,7 @@ async def main():
         f"{st} {job.get('status') if job else created}",
     )
 
-    st, hist = admin.call("GET", "/api/backups/history/")
+    st, hist = admin.call("GET", "/api/backups/inventory/")
     items = hist if isinstance(hist, list) else (hist.get("results") or [])
     audit_job = next((x for x in items if x.get("initiated_by")), None)
     log(
@@ -1097,6 +1105,7 @@ async def main():
     st, deny = admin.call("POST", "/api/backups/restore/", {"origin": "local"})
     log(st == 400, "e2e_restore_requiere_confirmacion", f"{st}")
 
+    admin.call("DELETE", f"/api/backups/servers/{bootstrap_destination['id']}/")
     # Destinos externos §9/§10: config independiente + host estricto
     st, srv = admin.call(
         "POST",
@@ -1218,7 +1227,7 @@ async def main():
     )
     st, res1 = do_restore(
         admin,
-        {"origin": ext1x, "filename": fname1, "confirmed": True},
+        {"job_id": next(x["id"] for x in avail1 if x["filename"] == fname1), "origin": ext1x, "filename": fname1, "confirmed": True},
     )
     log(
         st == 200 and res1.get("checksum_verified") is True,
@@ -1226,7 +1235,7 @@ async def main():
         f"{st} {res1.get('detail') or res1.get('error')}",
     )
 
-    st, hist = admin.call("GET", "/api/backups/history/")
+    st, hist = admin.call("GET", "/api/backups/inventory/")
     items = hist if isinstance(hist, list) else (hist.get("results") or [])
     has_full = any(
         x.get("job_type") == "full" and x.get("initiated_by") == ADMIN_EMAIL
@@ -1244,7 +1253,7 @@ async def main():
         f"{st} {res2.get('detail') or res2.get('error')}",
     )
 
-    st, hist = admin.call("GET", "/api/backups/history/")
+    st, hist = admin.call("GET", "/api/backups/inventory/")
     items = hist if isinstance(hist, list) else (hist.get("results") or [])
     restored = next((x for x in items if x.get("id") == full_id), None)
     log(
@@ -1268,7 +1277,7 @@ async def main():
         None,
     )
     st, res3 = do_restore(
-        admin, {"origin": ext2x, "filename": fname2, "confirmed": True}
+        admin, {"job_id": next(x["id"] for x in avail2 if x["filename"] == fname2), "origin": ext2x, "filename": fname2, "confirmed": True}
     )
     log(
         st == 200 and res3.get("checksum_verified") is True,
@@ -1332,7 +1341,7 @@ async def main():
         f"index={recjob.get('chain_index') if recjob else None}",
     )
     st_del, _ = admin.call(
-        "DELETE", f"/api/backups/{full_id}/", {"confirmed": True}
+        "DELETE", f"/api/backups/{recjob['base_full_id']}/", {"confirmed": True}
     )
     log(
         st_del == 400,
@@ -1346,6 +1355,7 @@ async def main():
         admin,
         {
             "origin": ext1x,
+            "job_id": full_id,
             "filename": "uasspain_full_20200101_000000.sql.gz.enc",
             "confirmed": True,
         },
