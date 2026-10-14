@@ -2,9 +2,9 @@
 
 ## Entrega documental validada localmente — 14 de octubre de 2026
 
-Estado funcional: **VALIDATED_LOCAL**, con dependencias externas de producción
-pendientes. La publicación requiere además seguridad final y coincidencia de
-HEAD/origin/main; los SHA se entregan después del push. El encargo autoriza Docker local,
+Estado: **VALIDATED_LOCAL_Y_PUBLICADO**, con dependencias externas de producción
+pendientes. Los commits de implementación, instaladores y documentación están
+publicados; este cierre documental registra su aceptación posterior. El encargo autoriza Docker local,
 commits y push normal; no instalaciones externas, cambios DNS ni escrituras de
 prueba sobre cuentas reales. El VBS local ajeno se excluye de la publicación.
 
@@ -17,9 +17,9 @@ históricos conservan sus resultados; no se actualizan sus PASS retroactivamente
 
 | Comprobación de esta entrega | Evidencia observada |
 |---|---|
-| Recuperación y rebuild oficial | Cinco servicios saludables; arranque con `-Build` y verificador de almacenamiento PASS. Reconstrucción final 14/10 09:53 UTC; caché sólo con inputs iguales. La política específica del callback está activa en el edge. |
+| Recuperación y rebuild oficial | Cinco servicios saludables; arranque con `-Build` y verificador de almacenamiento PASS. Reconstrucciones oficiales del 14/10 verificadas; caché sólo con inputs iguales. La política específica del callback está activa en el edge. |
 | Backup previo | AES-GCM, checksum, descifrado y restauración sin red/volúmenes: **62 tablas, 1.242 filas idénticas**, 14/10 08:09 UTC; cero perfiles creados. |
-| Seguridad de las imágenes finales | Gitleaks árbol/historial 0; Trivy cinco imágenes ejecutadas y lockfiles 0 HIGH/CRITICAL (14/10 09:51 UTC). Se vuelve a verificar el árbol documental final antes del commit y el historial nuevo antes del push. |
+| Seguridad de las imágenes finales | Gitleaks árbol/historial 0; Trivy cinco imágenes ejecutadas y lockfiles 0 HIGH/CRITICAL (14/10, incluidos los tres commits publicados). El cierre documental conserva el gate de escaneo antes de publicar. |
 | Frontend actual | Tipos, lint, **86 tests / 17 archivos** y build PASS, 14/10; 10 páginas públicas, seis indexables, 152 entradas de manifiesto. |
 | Rust actual | Nueva ejecución del 14/10 con `--no-cache-filter test,audit`: 143 tests, fmt, check y Clippy PASS; se reutiliza sólo compilación/dependencias donde los inputs coinciden. |
 | API integral, 14/10 | 137/137 PASS en datos iniciales nuevos; autenticación/OTP, roles, asignaciones, cursos, contenido, backups FULL/delta, inventario 184 casos, concurrencia, canales/vídeo y recuperación de dependencias PASS. |
@@ -29,15 +29,42 @@ históricos conservan sus resultados; no se actualizan sus PASS retroactivamente
 | Navegador MAIN, 14/10 | 36 casos PASS de responsive, teclado, navegación y temas. No se usa una cuenta real para pruebas. |
 | HTTP/SEO MAIN, 14/10 | Seis páginas estáticas, siete servicios dinámicos, cursos publicados, 404/noindex, TLS y callback no-store/no-referrer PASS. Sin puntuación Lighthouse nueva. |
 | Regresión después de limpiar | Protección de administradores, roles ordinarios, logout, aviso/reconexión WSS, cero residuos propios y perfiles ajenos idénticos PASS en la pila aislada (14/10 09:51 UTC). |
-| Preservación MAIN | 1.242 registros previos idénticos, archivos de media/backups, volúmenes y clave DPAPI conservados. Adiciones: metadato SQLx 0030 y cuatro filas de dos conexiones concurrentes Firefox/Windows, ajenas a las pruebas y conservadas por IDs exactos. No se declara ausencia de actividad del usuario. |
+| Preservación MAIN | 1.242 registros previos idénticos, archivos de media/backups, volúmenes y clave DPAPI conservados. Adiciones: metadato SQLx 0030 y seis filas de tres conexiones concurrentes Firefox/Windows, ajenas a las pruebas y conservadas por IDs exactos. No se declara ausencia de actividad del usuario. |
 | Instaladores externos | Nuevos parser PowerShell/Bash, 18 validadores PowerShell, 20 Linux y tres copias opcionales Linux PASS; seis casos de copias opcionales de ambas plataformas constan en 13/10. Instalación real NOT_RUN. |
-| Enlaces | 253 referencias internas y anclas PASS; inventario revisado contra los archivos entregados. |
+| Enlaces | 254 referencias internas y anclas PASS; inventario revisado contra los archivos entregados. |
 
 Evidencia privada: `.run/documentation-release-20261014/`, sin dumps en claro,
 claves ni datos personales en Git. La revisión automática de permisos que
 impidió los scans del día anterior ya no bloqueó esta ejecución: los scans
 previos del 14/10 sí terminaron. Las comprobaciones posteriores se informan por
 separado, sin convertir la autorización de publicación en evidencia de push.
+
+### Cierre y comprobación posterior a GitHub
+
+Los commits `259bac8` (OAuth y controles), `b54f28b` (instaladores) y
+`37cbad4` (documentación) se publicaron mediante push normal en `main`.
+HEAD, origin/main y la referencia remota coincidían en
+`37cbad4ba43d1bc2fffbe75a4bb9de7caab0bbaf`; los **66 archivos** estaban
+presentes. El SHA del posterior cierre documental se consulta en el historial
+de Git y se entrega en la respuesta final, sin intentar incluir su propio SHA
+en el contenido del commit.
+
+Después del push: cinco servicios saludables, cuatro healthchecks HTTP 200,
+HTTPS/SEO y WSS público PASS; un caso OAuth administrativo y tres casos
+VPN/copias PASS en las mismas imágenes sobre datos aislados. Regresión posterior
+de protección administrativa, revocación, logout, reconexión y limpieza PASS.
+Los 1.242 registros originales, media, backups, volúmenes y clave DPAPI siguen
+idénticos. No se crean perfiles ni se realizan escrituras de prueba en MAIN.
+
+La lista explícita de hosts incluye también la dirección LAN configurada;
+`nginx -t`, recarga y seis hosts autorizados HTTP 200 PASS. Un Host ajeno
+cierra la conexión (444 de Nginx), sin comodines. Se conserva el VBS local ajeno.
+Resultado del diff de entrega: **47 archivos modificados, 19 incorporados,
+ninguno eliminado**; 13 documentos actualizados o integrados.
+
+SMTP/OTP corporativo/Postmark, Google real, servidores WireGuard/SFTP y pruebas
+nativas de instalación continúan pendientes externos según sus respectivas
+guías. No se declara PRODUCTION_READY ni despliegue remoto.
 
 ### Versión observada en los contenedores
 
@@ -102,11 +129,11 @@ escrituras de prueba sobre cuentas reales. Los tags no sustituyen estos IDs.
   ahora identifica el párrafo VPN; los tres casos de supervisión, permisos y
   responsive PASS sin cambiar el estado mostrado por la aplicación.
 
-Dos logins normales de Firefox/Windows crearon sus sesiones y conexiones durante
+Tres logins normales de Firefox/Windows crearon sus sesiones y conexiones durante
 la auditoría. Se contrastaron actor, rol, fecha y relación por IDs exactos sin
 mostrar identidades, cookies ni claves. No se cerraron ni modificaron. La
 comparación de registros anteriores sigue sin diferencias; sólo se exceptúan
-esas cuatro adiciones conocidas y el metadato SQLx, no tablas ni rangos de fechas.
+esas seis adiciones conocidas y el metadato SQLx, no tablas ni rangos de fechas.
 
 ### Archivos incluidos en la entrega
 
