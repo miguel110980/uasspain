@@ -1,6 +1,6 @@
 # Preparación de infraestructura UASSpain
 
-La aplicación conserva cinco servicios: Nginx, frontend, backend Rust, PostgreSQL cifrado y Redis. El administrador guarda la configuración en **Infraestructura → Configuración inicial**, conserva el progreso y consulta evidencias de preparación. Los destinos, su activación, programación e inventario siguen utilizando el sistema de backups existente.
+La aplicación conserva cinco servicios: Nginx, frontend, backend Rust, PostgreSQL cifrado y Redis. El administrador guarda equipo, instalación, directorios, red y progreso en **Infraestructura → Configuración inicial**. WireGuard tiene un único editor público en **Conexiones VPN**; los tres destinos tienen un único editor en **Copias de seguridad → Servidores de copias de seguridad**. Los pasos VPN y copias del asistente son resúmenes de sólo lectura con enlaces. No se repite la introducción de datos. El despliegue se registra en [validación local](LOCAL_VALIDATION.md).
 
 La configuración guardada no instala software, activa WireGuard, abre puertos, crea montajes ni aplica rutas. `CONFIGURED` y `VERIFIED` tienen significados distintos. Las comprobaciones pendientes muestran BLOCKED/NOT_RUN; no se convierten en PASS mediante confirmación manual.
 
@@ -18,7 +18,7 @@ Consultar el informe de auditoría para distinguir pruebas realizadas, contratos
 1. Docker con contenedores Linux y Compose compatible con las opciones del proyecto. Preparar virtualización, FUSE, recursos y red; preservar los volúmenes existentes.
 2. Provisionar los secretos y certificados del despliegue fuera de Git con identidades de servicio y permisos mínimos. Conservar la clave actual del volumen y las claves de cifrado del backend: una reinstalación no autoriza regenerarlas.
 3. Preparar almacenamiento persistente para PostgreSQL, Redis, medios, copias, claves y assets. Verificar capacidad y acceso del UID del servicio, incluidos los mounts.
-4. Si se requiere VPN, instalar WireGuard mediante el procedimiento corporativo autorizado y la [documentación oficial](https://www.wireguard.com/install/). Los scripts de esta entrega no lo instalan.
+4. Si se requiere VPN, instalar WireGuard mediante el procedimiento corporativo autorizado y la [documentación oficial](https://www.wireguard.com/install/). Los scripts `scripts/infrastructure/` sólo preparan/inspeccionan; los instaladores externos descritos más abajo sí contemplan instalación en un host dedicado, con confirmación técnica y paquete completo. No se han ejecutado durante esta integración.
 5. Ejecutar `scripts/infrastructure/prepare.ps1` en Windows o `scripts/infrastructure/prepare.sh` en Linux. Por defecto inspeccionan requisitos, sin instalaciones ni modificaciones.
 
 El script PowerShell admite `-AllowedRoot`, `-Directories` y `-PrepareDirectories`. Sólo prepara rutas bajo la raíz expresamente autorizada, rechaza reparse points y solicita confirmación mediante ShouldProcess. No cambia recursivamente permisos ni sobrescribe directorios. Preparar ACL y montajes siguiendo la política corporativa, con el usuario responsable.
@@ -57,7 +57,23 @@ Los errores de origen son códigos permitidos, sin stderr ni secretos. No se gua
 
 ## VPN y red
 
-En el paso VPN introducir interfaz real, IP/prefijo privado, puerto UDP, clave pública local, claves públicas de peers, endpoints, redes permitidas y keepalive. Importar los datos públicos mediante la plantilla JSON/exportación y confirmar sus campos en el asistente; las claves privadas se generan y permanecen en los equipos correspondientes.
+### Interpretar estados y errores
+
+| Resultado | Significado y diagnóstico |
+|---|---|
+| Pendiente de configuración | Faltan parámetros; no demuestra túnel caído ni instalado. Completar sólo datos públicos conocidos. |
+| Servicio de supervisión no disponible | Falta observación legible/autenticada o el colector no funciona. Revisar montaje read-only, permisos y ejecución autorizada. |
+| `STALE_OR_INVALID_AGENT_MESSAGE` | Observación fuera de frescura, formato o autenticidad admitidos. Revisar relojes UTC, firma HMAC y frecuencia; no mostrar ni reemplazar la clave para silenciarlo. |
+| WireGuard pendiente/no verificado | No se acreditan herramienta, interfaz, identidad/configuración o handshake. Revisar el túnel en el host sin activar rutas desde el panel. |
+| Desconectada | Sólo usar cuando existe observación válida que acredita pérdida de conexión. No deducirlo de ausencia de agente. |
+| Conectada | Requiere evidencia actual y coincidencia de interfaz/peers. No acredita SFTP ni última copia correcta. |
+| Destino inaccesible o error de autenticación | Revisar independientemente peer/red, pin SSH, identidad, ruta, permisos y espacio. No basta ping ni handshake. |
+
+Los códigos internos se conservan para auditoría; la interfaz presenta mensajes
+comprensibles sin convertir desconocido en PASS. Actualizar una pantalla no
+instala el colector ni modifica servicios del anfitrión.
+
+En **Conexiones VPN → Configuración de conexión VPN**, introducir adaptador real, IP/prefijo privado, puerto UDP, clave pública local, claves públicas de equipos autorizados, endpoints, redes permitidas y keepalive. Las observaciones verificadas sólo completan campos vacíos y no reemplazan configuración existente; varios adaptadores requieren selección. Revise y guarde. La descarga pública representa lo guardado, no cambios pendientes ni claves privadas. No instala ni activa un túnel ni constituye una importación automática.
 
 No se asume `wg0` ni una dirección de empresa. No se admiten rutas `/0`, claves privadas, rutas relativas ni peers con redes solapadas incompatibles. Añadir las redes corporativas no detectables al inventario de redes reservadas. La comprobación compara el rango de la VPN con redes locales/Docker observadas y con esas reservas. Si el inventario no es completo, la comprobación no se acredita.
 
@@ -76,6 +92,112 @@ Para rutas locales preparar mounts y `BACKUP_LOCAL_ALLOWED_ROOTS` usando el sepa
 Los destinos externos de producción requieren IP privada coincidente, known_hosts y una observación autenticada con handshake reciente para la red del destino. La excepción sin VPN se utiliza exclusivamente en la red sintética de E2E, donde se verifica SFTP real. No copiar esa configuración a producción.
 
 Sólo destinos activados reciben réplicas. Todos OFF impide crear la copia. Los completos y deltas mantienen manifiestos, dependencia de cadena, cifrado e integridad. Una réplica se descarga y verifica antes de registrar éxito; fallos parciales no son éxito global. No se eliminan backups por desactivar un destino. La publicación local evita sobrescribir un archivo existente.
+
+## Servidores externos: WireGuard y SFTP
+
+El [inventario de instaladores](../scripts/backup-external/README.md) contiene las
+rutas reales, parámetros y dependencias. Se integraron el servidor Windows y
+el servidor Linux. Por indicación del usuario, su integración no depende del
+ZIP ni incluye clientes personalizados/lanzadores no disponibles. Ambos
+servidores generan el archivo WireGuard del peer y las claves SSH/known_hosts
+para configurar el cliente oficial; pueden incluir scripts cliente revisados
+si el técnico los aporta, pero su ausencia no bloquea preparar el servidor.
+Los prechecks de privilegios, red, rutas, servicios y confirmación se conservan.
+
+Cada servidor requiere autorización del técnico y una revisión previa de red,
+almacenamiento, SSH y firewall. Los ejemplos `51820/UDP`, `22222/TCP`,
+`10.203.77.1/30` y `10.203.77.2/30` son valores iniciales modificables.
+El instalador comprueba solapamientos con rutas IPv4 del host de backups;
+el técnico debe comprobar también Docker, LAN, otras VPN y redes corporativas
+en el host UASSpain. Para el segundo servidor elegir **otra subred /30** y
+distintos nombres de interfaz/archivos del cliente; no activar dos clientes
+con el mismo nombre o dirección. La configuración del cliente oficial se
+realiza siguiendo los pasos de entrega; no se presenta como una instalación
+automática del peer ni como una conexión ya validada.
+
+Windows exige un destino nuevo en disco local, sin reparse points ni rutas
+del sistema/usuarios. Reutiliza binarios oficiales OpenSSH cuando es seguro;
+**no reemplaza un `sshd_config` preexistente, aunque el servicio esté parado**.
+Un SSH existente requiere host dedicado o adaptación supervisada fuera del
+instalador. Genera una cuenta local exclusiva, ACL por SID, claves Ed25519 y
+known_hosts a partir de la clave pública local. SFTP utiliza `internal-sftp`,
+chroot no escribible y `/incoming` escribible sólo por la cuenta de backup,
+según la [configuración de OpenSSH Windows](https://learn.microsoft.com/en-us/windows-server/administration/OpenSSH/openssh-server-configuration).
+Se valida la configuración con `sshd -t` antes de arrancar. El puerto SFTP
+se liga a la IP VPN y su regla a la interfaz VPN detectada y al peer concreto.
+El puerto UDP sólo permite la IP física UASSpain. No se abren puertos del router.
+
+Linux requiere systemd, apt-get o dnf según la distribución, iproute2,
+herramientas POSIX y soporte WireGuard del kernel. Instala sólo dependencias
+ausentes, usa un servicio SFTP independiente y su propia clave de host,
+conservando el SSH principal existente. Antes de instalar un SSH ausente,
+comprueba que sus unidades también estén ausentes y las enmascara temporalmente
+para impedir autoarranque TCP/22 desde el gestor de paquetes. Tras instalar,
+deshabilita únicamente esos servicios/sockets generales nuevos y retira sus
+masks runtime, sin arrancarlos, antes de activar SFTP dedicado. Si falla esa
+fase se conservan los masks protectores para revisión técnica. El directorio
+nuevo se limita a `/srv` o `/mnt`, con
+padres root no escribibles por otros y sin symlinks. No se declara compatible
+con todas las distribuciones: SELinux/AppArmor, soporte del kernel y versiones
+del sistema deben revisarse en el equipo real; SELinux enforcing bloquea
+este instalador hasta una adaptación autorizada, sin deshabilitar protección.
+
+La tabla nftables propia se valida y aplica como un lote atómico, sin reset del
+ruleset global. UFW/firewalld activos reciben sólo permisos para los pares
+IP/puerto; firewalld añade reglas runtime y persistentes sin recargar reglas
+ajenas. Una tabla propia existente se reemplaza únicamente desde el servicio
+ya provisionado, evitando que un arranque acepte una tabla parcial. Una
+política externa de firewall puede seguir impidiendo conectividad: el
+arranque del servicio no acredita una transferencia remota.
+
+El usuario SFTP usa autenticación exclusivamente por clave, sin shell, TTY ni
+forwarding. El servidor genera un **paquete privado** de aprovisionamiento
+para el cliente: incluye claves privadas SSH/WireGuard protegidas por ACL o
+permisos 0600. Transportarlo por un medio cifrado aprobado, fuera de Git,
+OneDrive, correo y logs; instalarlo con permisos mínimos en el host UASSpain.
+La copia fuente de los instaladores contiene código, no claves generadas.
+Verificar fuera de banda la huella de la clave SSH: no usar `ssh-keyscan`
+como sustituto de esa comprobación ni desactivar `StrictHostKeyChecking`.
+
+Para configurar el cliente oficial en el host UASSpain, el técnico autorizado
+instala WireGuard conforme a la [guía oficial](https://www.wireguard.com/install/)
+y traslada el paquete privado mediante el canal cifrado aprobado. En Windows,
+importar `UASSpainBackupCliente.conf` desde la aplicación oficial y verificar
+que IP, peer público, endpoint y redes permitidas corresponden al servidor.
+En Linux, preparar la configuración bajo `/etc/wireguard` con propietario root
+y permisos 0600; usar un nombre de interfaz único de hasta 15 caracteres,
+por ejemplo `uas-backup1.conf` y `uas-backup2.conf`, conforme al
+[parser oficial de wg-quick](https://git.zx2c4.com/wireguard-tools/tree/src/wg-quick/linux.bash).
+No sobrescribir una
+configuración previa. El nombre generado `UASSpainBackupCliente.conf` debe
+renombrarse para ese uso Linux. Activar y programar el túnel mediante el
+mecanismo disponible y autorizado en el anfitrión, sin ejecutarlo desde el
+backend ni ampliar rutas a `/0`. Consultar la [guía WireGuard](https://www.wireguard.com/quickstart/).
+Estas operaciones de cliente quedan pendientes de realizar y probar en el
+equipo real; no se crean scripts de cliente ficticios.
+
+Tras comprobar el cliente y el handshake, configurar cada destino
+desde **Backups → Destinos** y la VPN desde **Infraestructura → Configuración
+inicial**. Introducir nombre, host VPN, puerto SFTP, identidad técnica, ruta
+remota `/incoming`, peer y activación independiente. La ruta física del
+servidor Windows/Linux no es la ruta remota del chroot. Provisionar las claves
+de externo 1/2 y known_hosts en el almacén ya montado de sólo lectura;
+comprobar acceso del UID del backend y mantener `BACKUP_REQUIRE_VPN=true`.
+La dirección VPN del host puede necesitar un montaje/enrutamiento Docker
+autorizado y una observación firmada actual del agente: no basta rellenar el
+panel ni recibir ping.
+
+Aceptar el destino sólo tras handshake, autenticación y pin SSH correctos,
+capacidad, escritura/lectura/borrado de su archivo temporal y transferencia
+cifrada con integridad. Probar local, externo 1 y externo 2, y la selección
+independiente de destinos. Verificar un FULL y un delta con toda su cadena y
+realizar recuperación aislada de PostgreSQL y media antes de producción.
+Consultar [programación/retención](BACKUPS_SIMPLIFIED.md) y
+[recuperación](BACKUP_RESTORE.md); no eliminar backups previos ni inventar
+plazos/RPO/RTO. Un fallo parcial detiene aceptación; una segunda ejecución
+del instalador bloquea ante recursos previos en lugar de sobrescribirlos.
+Guardar la fase/error y revisar el estado parcial sin borrar claves, datos,
+usuarios ni configuración para intentar forzar una instalación.
 
 ## Arranque, migración y recuperación
 
@@ -104,3 +226,41 @@ Consultar programación/inventario existentes para frecuencia, completos/deltas,
 ## Checklist corporativo pendiente
 
 Confirmar plataforma/motor, FUSE y protección de claves; identidades/ACL; rutas y mounts; DNS/IP y puertos; peers e inventario de redes; WireGuard/firewall revisados; colector autenticado programado; destinos SFTP/known_hosts/cuotas; matriz de activación; copia completa y delta; recuperación aislada; reinicios; salud y regresión. Documentar por separado Windows Server, distribuciones Linux y NAS que realmente se prueben. No declarar PRODUCTION_READY mientras falten esas comprobaciones externas.
+
+## Guía de configuración y puesta en producción
+
+1. Registrar responsable, plataforma real, motor compatible y recursos. El
+   inventario de instaladores externos tiene validación estática, **no una
+   instalación Windows/Linux certificada**. Los dos servidores generan el
+   paquete necesario para el cliente oficial; no se exige un ZIP. Si se usan
+   scripts cliente personalizados opcionales, revisarlos antes de ejecutarlos.
+2. Planificar dominio, origen público confiable, HTTPS y certificados internos
+   y externos conforme a [despliegue](DEPLOYMENT.md). `uasspain.com` mantiene
+   una web anterior: esta preparación no autoriza cambios DNS, MX, A, AAAA,
+   CNAME, DKIM, Return-Path o nameservers. Sólo el corte corporativo autorizado
+   podrá aplicar los registros reales y verificar resolución/TLS.
+3. Introducir datos corporativos y preparar secretos fuera de Git e imágenes.
+   Conservar DPAPI, claves de recuperación, PostgreSQL cifrado y volúmenes;
+   no trasladar claves DPAPI como si fueran claves Linux en claro.
+4. Completar [SMTP, OTP y Postmark](mail-api-smtp-operations.md#errores-conocidos-y-validación-corporativa):
+   seleccionar un transporte, remitente verificado y destinatario autorizado;
+   comprobar recepción, cabeceras, Reply-To y los flujos reales de verificación
+   y login. API exclusiva prohíbe SMTP/fallback. No habilitar OTP obligatorio
+   para nuevas cuentas/roles antes de acreditar la entrega, ni desactivar
+   controles existentes para intentar superar las pruebas.
+5. Autorizar y preparar los servidores externos y sus clientes VPN. Elegir
+   subredes sin conflictos, IP, puertos, usuarios y rutas; registrar huellas
+   SSH y revisar permisos, firewall, servicios automáticos y conectividad
+   después de reiniciar. No ejecutar el instalador en el PC de desarrollo.
+6. Configurar ambos destinos y el local desde administración, agente firmado,
+   activación independiente, programación y retención aprobadas. Generar
+   copias cifradas, comprobar todas sus réplicas y efectuar una restauración
+   aislada con validación de PostgreSQL, media e integridad histórica.
+7. Aplicar cambios runtime sólo con autorización, backup verificado y arranque
+   oficial; comprobar cinco servicios saludables, los cuatro endpoints de
+   salud HTTPS, sesiones, WSS, permisos, persistencia y regresión Docker.
+8. Entregar inventario de versiones/parámetros públicos, responsables y custodia
+   separada de secretos; evidencias de cada servidor y transporte, trabajos
+   de mantenimiento y recuperación, incidencias y límites. Marcar pendientes
+   como BLOCKED/NOT_RUN. La configuración local y pruebas simuladas no permiten
+   declarar `PRODUCTION_READY` sin estas comprobaciones corporativas.

@@ -1,14 +1,20 @@
-# Backups desde el panel de administración
+# Copias de seguridad desde el panel de administración
 
 El módulo reutiliza las tablas, rutas API, servicios y mecanismos de cifrado de
 UASSpain. Ofrece cuatro bloques: estado, destinos, programación e historial con
 restauración. Las operaciones y su autorización se comprueban en Rust.
 
+Abra **Administrador → Copias de seguridad**. El editor de los tres servidores
+está únicamente aquí; **Configuración inicial** y **Conexiones VPN** muestran
+resúmenes/enlaces. Los nombres predeterminados son **Copias de seguridad
+locales**, **Servidor externo de copias 1** y **2**. Los nombres personalizados
+se conservan. No habilite destinos sin configurar/verificar.
+
 ## Uso
 
 1. Configurar un destino desde su tarjeta. El asistente solicita nombre, tipo,
    dirección, usuario y carpeta; para almacenamiento local solicita tres pasos.
-2. Guardar y pulsar **Probar conexión**. La prueba escribe, lee y elimina un
+2. Guardar y pulsar **Verificar conexión con el servidor**. La prueba escribe, lee y elimina un
    archivo temporal. Un destino inválido permanece desactivado. Cambiar sus
    parámetros invalida la prueba y requiere probarlo otra vez.
 3. Activarlo. El servidor vuelve a comprobar la conexión antes de aceptarlo.

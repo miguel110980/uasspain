@@ -25,8 +25,9 @@ Solo Nginx publica `127.0.0.1:80/443`. Compruebe `https://127.0.0.1/healthz` y `
 Configure `SITE_URL` con el origen HTTPS público definitivo. Compose usa ese
 valor tanto en el build del frontend (`VITE_SITE_URL`) como en el backend:
 canonical, Open Graph, robots y sitemaps deben coincidir. Cambiarlo exige
-reconstruir el frontend. El build prerenderiza los componentes de las 16 rutas
-públicas; 13 se incluyen en `sitemap-static.xml`. El índice `sitemap.xml`
+reconstruir el frontend. El build descubre las rutas públicas en `App.tsx`;
+compruebe su número en cada build, sin fijarlo al de una versión anterior.
+El índice `sitemap.xml`
 incluye también `sitemap-courses.xml`, actualizado desde los cursos publicados.
 Nginx valida la existencia del curso y compone su HTML público con SSI; los
 cursos pendientes conservan su página informativa sin indexación y los inexistentes
@@ -49,10 +50,11 @@ no cambia datos ni omite la verificación TLS.
 - TLS: los certificados internos se generan localmente; las claves privadas nunca se versionan.
 
 El acceso se realiza con correo y contraseña y, cuando la política lo exige,
-código OTP. También está disponible la integración Google Identity Services;
-requiere un Client ID web y el origen autorizado. Consulte la
-[guía de activación](GOOGLE_AUTH.md). Se conserva la migración histórica
-para mantener el esquema y los checksums de SQLx.
+código OTP por el canal centralizado API/SMTP. Google requiere Authorization
+Code con PKCE, secreto cifrado, origen confiable, verificación real y vínculo
+previo por sub: [guía de activación](google-oauth-operations.md). Un Client ID
+por sí solo no permite activar el flujo seguro. Las migraciones históricas y
+sus checksums se conservan.
 
 ## Videollamadas WebRTC
 
@@ -70,38 +72,32 @@ Utilice credenciales limitadas y rotables. El archivo se monta como secreto y el
 
 La migración `0005_exam_attempts.sql` guarda intentos, preguntas y respuestas. `POST /api/examenes/{id}/intentos/` inicia o recupera un intento; `PUT /api/intentos-examen/{id}/` guarda respuestas. El resultado requiere `attempt_id`: el servidor calcula la nota y el tiempo, aplica prerrequisitos y devuelve el mismo resultado ante reintentos. Pasado el plazo de 40 minutos solo puntúa las respuestas guardadas antes de vencer. La modalidad libre conserva su intento sin fecha límite.
 
-La migración `0006_domain_deletion.sql` define el borrado de preguntas/bloqueos con su examen y conserva resultados históricos sin su referencia al examen. Al eliminar un perfil se borran sus filas dependientes, se mantienen contenidos y auditorías compartidos y se desasignan sus alumnos. La cuenta de autenticación queda inactiva en la misma transacción. El runtime del backend usa Ubuntu 26.04 actualizado y herramientas PostgreSQL 18; los builds y las comprobaciones se ejecutan localmente con los comandos de README y los escaneos de los cinco servicios.
+La migración histórica `0006_domain_deletion.sql` conserva contratos de borrado
+de entidades; no es el procedimiento de baja. La baja actual es **lógica y
+reversible**, conserva relaciones e históricos y revoca acceso:
+[operación](account-lifecycle-operations.md). Ninguna actualización autoriza
+eliminar perfiles reales para validar. Las imágenes fijan versiones/digests en
+sus Dockerfiles; compruebe los cinco IDs ejecutados, no sólo tags.
 
 Antes de ejecutar `scripts/e2e/run-e2e.ps1`, instale `npm ci` y `npx playwright install chromium` en `frontend`. El runner recrea exclusivamente el proyecto `uasspain-e2e`, verifica backups/restauraciones locales y SFTP y recorre los tres paneles en Chromium. `-SkipBrowser` omite únicamente el navegador; `-Keep` conserva la pila aislada para investigar un fallo.
 
 ## Reconstruccion PostgreSQL desde migraciones
 
-La reconstruccion usa exclusivamente las siete migraciones de
-`backend-rust/migrations/`, ejecutadas por SQLx en orden. No restaura un esquema
-alternativo. `docker-compose.encrypted.yml` monta un volumen gocryptfs dedicado;
-`docker-compose.rebuild.yml`, aplicado al final, crea una pila independiente
-en HTTPS `localhost:8447`. Use siempre un proyecto `uasspain-rebuild-*`.
+El esquema procede exclusivamente de `backend-rust/migrations/`, ejecutadas
+por SQLx en orden con el rol migrador al arrancar el backend. No restaure un
+esquema alternativo ni edite checksums de migraciones aplicadas. Para actualizar:
+backup cifrado, descifrado y recuperación aislada verificables, expansión
+compatible y arranque oficial con `-Build`. Compruebe tablas, filas, claves,
+relaciones, privilegios y checksums antes/después, no sólo el número de versión.
 
-```powershell
-node tools/postgres-rebuild.mjs backup uasspain-rebuild-20261003
-docker compose -p uasspain-rebuild-20261003 -f docker-compose.yml -f docker-compose.encrypted.yml -f docker-compose.rebuild.yml build
-docker compose -p uasspain-rebuild-20261003 -f docker-compose.yml -f docker-compose.encrypted.yml -f docker-compose.rebuild.yml up -d postgres
-.\scripts\unlock-postgres-storage.ps1 -Project uasspain-rebuild-20261003
-docker compose -p uasspain-rebuild-20261003 -f docker-compose.yml -f docker-compose.encrypted.yml -f docker-compose.rebuild.yml up -d --no-build --wait --wait-timeout 180
-node tools/postgres-rebuild.mjs restore-admin uasspain-rebuild-20261003
-node tools/verify-postgres-storage.mjs uasspain-rebuild-20261003
-node tools/postgres-rebuild.mjs verify uasspain-rebuild-20261003
-```
-
-Este procedimiento requiere exactamente un administrador existente. Conserva
-su UUID, hash Argon2id, indices ciegos y campos AES-256-GCM; no crea cuentas de
-prueba ni cambia la contrasena. La copia completa se cifra en memoria antes de
-escribirse en `.run/<proyecto>/original-database.pgcustom.enc`. Mantenga la clave
-de campos por un canal independiente: perderla impide descifrar datos y backup.
-El verificador compara columnas, PK/FK/UNIQUE/CHECK e indices, checksums SQLx,
-privilegios y TLS y restaura el backup completo en una base temporal aislada.
-No sobrescribe copias existentes: para repetir la reconstruccion use otro
-nombre de proyecto y conserve sus evidencias en el directorio correspondiente.
+La promoción inicial de octubre se conserva como [evidencia histórica](LOCAL_VALIDATION.md).
+`tools/postgres-rebuild.mjs` y el overlay de reconstrucción son herramientas
+especializadas con supuestos antiguos, incluida una recuperación limitada a un
+administrador; **no son un procedimiento general para recuperar esta base con
+varios usuarios**. No vuelva a promover el proyecto fechado ni ejecute
+`restore-admin` sobre la instalación activa. La recuperación actual completa se
+documenta en [backup y restauración](BACKUP_RESTORE.md), con autorización e
+integridad comprobadas. Mantenga claves y datos por canales independientes.
 
 TLS PostgreSQL exige `verify-full`, CA y hostname, y rechaza conexiones sin TLS.
 Los roles de runtime no tienen privilegios DDL; backup solo lee y SQLx solo
@@ -177,31 +173,13 @@ cero capacidades efectivas; PostgreSQL tampoco conserva `SYS_ADMIN`. Esto
 permite cerrar la base, persistir el AOF y detener Nginx sin el error fatal
 `EPERM` del supervisor.
 
-Antes de activar deben pasar tambien login, datos personales, panel admin y aislamiento multirrol desde
-la aplicacion real; conserve su evidencia local sin credenciales en
-`application-verification.json`. La activacion comprueba esa evidencia y vuelve
-a verificar PostgreSQL antes de cambiar los volumenes:
-
-```powershell
-.\scripts\activate-postgres-rebuild.ps1 -Project uasspain-rebuild-20261003
-```
-
-La activacion configura los dos archivos Compose en `.env` y marca el volumen
-cifrado promovido como externo para protegerlo de la eliminacion por Compose.
-Los proyectos nuevos conservan nombres independientes incluso con esa `.env`.
-El desbloqueo rechaza dos servidores activos que compartan el mismo volumen.
-Si falla la activacion, conserva la configuracion y datos anteriores y solo
-recupera automaticamente un destino anterior ya cifrado; no permite volver a
-produccion en claro.
-
-Los cuatro volumenes anteriores se han retirado con autorizacion expresa tras
-crear archivos AES-256-GCM en `.run/uasspain/retired-postgres/` y comprobar una
-restauracion fisica con PostgreSQL. Estos archivos usan una subclave de archivo
-derivada de la clave DPAPI de almacenamiento; conserve tambien ese blob/perfil.
-`tools/archive-postgres-volumes.mjs` crea/verifica los archivos y realiza el drill;
-no elimina volumenes. El rollback actual se realiza restaurando el archivo
-cifrado en otro volumen cifrado, nunca reactivando copias en claro. Nunca use
-`down -v` sobre la instalacion real.
+El volumen cifrado ya promovido está marcado externo para preservarlo. No lo
+cambie por el nombre de un ejemplo ni permita dos servidores sobre el mismo
+volumen. Las herramientas históricas de activación/archivo no forman parte de
+una actualización habitual. Conserve las copias cifradas anteriores y su
+recuperación de claves; cualquier restauración requiere autorización, impacto
+revisado y ensayo aislado. Nunca reactive una copia en claro ni use `down -v`
+sobre la instalación real.
 
 ## Traslado de la instalacion
 
@@ -217,6 +195,114 @@ docker compose config --services
 
 Ejecute los gates de [README.md](../README.md) y [SECURITY.md](../SECURITY.md). No publique mientras Gitleaks sobre el historial no sea 0 o existan credenciales antiguas sin revocar.
 
-La reescritura remota requiere autorizacion explicita, congelar merges, capturar refs, usar `--force-with-lease` y verificar el resultado con un clon nuevo. Nunca use `--force` ni reescriba con trabajo local sin consolidar.
+No reescriba el remoto ni use force. Si hay divergencia, preserve ambas ramas,
+revise los cambios e integre mediante el procedimiento autorizado; no elimine
+trabajo remoto para publicar una documentación.
 
 Rollback: restaure refs desde un bundle verificado y el worktree desde su snapshot; cualquier recuperacion remota necesita una nueva autorizacion.
+
+## Mapa técnico de la aplicación
+
+El contrato de rutas está en [app.rs](../backend-rust/src/app.rs); la autoridad
+del esquema son [las migraciones SQLx](../backend-rust/migrations). Este mapa
+agrupa las APIs sin duplicar cada definición ni inventar una especificación
+OpenAPI inexistente. Todas las rutas privadas validan identidad y autorización
+en su handler/extractor, no por el prefijo de URL ni por React.
+
+```mermaid
+flowchart LR
+  B[Navegador] -->|HTTPS / WSS| N[Nginx edge]
+  N -->|TLS| F[Frontend compilado]
+  N -->|TLS API / WS| R[Backend Rust]
+  R -->|TLS verify-full| P[PostgreSQL cifrado]
+  R -->|TLS y ACL| C[Redis eventos y caché]
+  R -->|HTTPS API o SMTP TLS| M[Proveedor de correo configurado]
+  R -->|SFTP por red autorizada| S[Servidores externos de copias]
+  A[Colector del anfitrión] -->|Observación HMAC en montaje de lectura| R
+```
+
+Correo, servidores externos y colector son integraciones externas, no servicios
+Docker permanentes adicionales. VPN se gestiona en el anfitrión; una observación
+no concede al contenedor administración del sistema operativo.
+
+### Backend, APIs y errores
+
+| Módulos Rust | Contrato y responsabilidad |
+|---|---|
+| `main`, `app`, `db` | Inicio TLS, router/middleware, pool PostgreSQL, migrador y permisos; tareas de correo, contenido, cuentas y backups. |
+| `auth`, `registration`, `security`, `google_oauth`, `google_oidc` | `/api/auth/*`, `/api/system/auth-policy/`, `/api/system/google-oauth/*`; credenciales, sesiones/ventana, cifrado, OTP y OAuth. |
+| `users`, `instructors`, `instructor_access`, `academic_scope` | `/api/profiles/*` y recursos de instructor; identidad, roles, asignaciones y alcance. |
+| `account_lifecycle`, `student_directory` | `/api/account/deactivate/`, `/api/admin/students/*`; baja, reactivación, histórico, filtros, CSV y contadores. |
+| `exams`, `exam_admin`, `exam_import`, `materials`, `material_text` | `/api/examenes/*`, `/api/intentos-examen/*`, materiales/importaciones; intentos, respuestas, notas y texto PDF. |
+| `chat`, `connections`, `video` | Chat, conexiones, invitaciones, ICE y `/ws/chat/{room_id}/`, `/ws/videollamada/{id}/`; permisos por participante. |
+| `content`, `services`, `seo`, `content_images`, `service_images`, `content_realtime` | `/api/blog/posts`, `/api/courses`, `/api/services`, sus editores admin, SEO y `/ws/public-content/`. |
+| `email`, `mail_config`, `mail_provider`, `mail_queue`, `mail_migration`, `contact` | Contacto, `/api/system/mail/*`, transporte exclusivo, secretos cifrados, outbox, reconciliación y evidencias. |
+| `backups`, `backup_operations`, `backup_delta`, `backup_artifacts` | `/api/backups/*`; trabajos, inventario, destinos, cadenas, cifrado y recuperación. |
+| `infrastructure`, `vpn` | `/api/infrastructure/*`, `/api/vpn/status/`; configuración, adaptadores, evidencias y observación auténtica. |
+| `uploads`, `cache`, `dashboard`, `system_status`, `observability`, `error` | Archivos privados, bus Redis, agregados, salud, logs JSON y errores seguros. |
+
+`error.rs` devuelve HTTP, `code`, detalle seguro y `correlation_id`; los errores
+de base no exponen consultas ni valores personales. Nginx aplica límites por
+ruta y el backend sus controles específicos. No copie cuerpos completos de
+autenticación/callback ni secretos al diagnosticar.
+
+### Frontend y estado
+
+`frontend/src/App.tsx` define React Router; `pages/` separa páginas públicas y
+paneles. Los paneles cargan secciones bajo demanda; `ProtectedRoute` mejora la
+navegación, pero no sustituye permisos Rust. `api/apiClient.ts` centraliza Axios,
+cookies, binding de ventana y refresh coordinado; `services/` contiene contratos
+del dominio. Contextos/hooks gestionan identidad, cargas y suscripción a eventos;
+React Query se utiliza donde el componente lo requiere, no como una base de datos.
+
+`components/ui/` aporta modales, botones y avisos; `components/admin/` comparte
+editores y tablas. `lib/infrastructure.ts` traduce estados sin alterar códigos
+backend, preserva datos concurrentes y no rellena información desconocida.
+`GoogleOAuthCallback` y el handoff retiran el código de la URL antes del arranque.
+Tailwind/variables de tema y componentes adaptables conservan claro/oscuro;
+Playwright prueba tamaños y teclado concretos. `scripts/prerender.mjs` y
+`verify-build.mjs` verifican HTML y assets generados. Los uploads no se sirven
+como un directorio público general.
+
+### Modelo de datos, Redis y ficheros
+
+| Entidades PostgreSQL | Relaciones y persistencia |
+|---|---|
+| `auth_user`, `accounts_userprofile`, `auth_tab_session` | Cuenta, perfil, roles/estado y sesiones por ventana; PII cifrada e índices de búsqueda protegidos. |
+| `account_lifecycle*`, `student_membership`, `student_course_registration` | Baja/eventos y pertenencia académica histórica sin depender sólo del rol actual. |
+| `examenes_*`, `materiales_*` | Exámenes, preguntas, intentos/resultados, materiales y permisos; no se eliminan por una baja lógica. |
+| `conexiones_*` y auditoría | Mensajes, conexiones y actividad; las relaciones exactas están en migraciones, no en nombres inferidos desde la UI. |
+| `courses`, publicaciones, `services`, `service_routes`, `content_*` | Oferta pública, slugs, imágenes, revisiones y notificación transaccional de contenidos. |
+| `core_systemsetting`, `core_systemsecret`, `mail_*` | Configuración, secretos cifrados, cola y transiciones/evidencia de migración de correo. |
+| `backups_*`, `infrastructure_config`, `infrastructure_evidence` | Operaciones, réplicas/configuración y verificaciones; un estado guardado no prueba una conexión actual. |
+| `google_oauth_flow`, `google_oauth_event` | Migración aditiva 0030: estado efímero cifrado/consumible y evidencia protegida; conserva identidades anteriores. |
+
+Los nombres con `*` agrupan tablas; consulte SQL para nombres, claves, índices y
+constraints exactos. Las tablas Django heredadas no implican un runtime Django.
+Runtime, migrador, backup, restauración y monitor tienen identidades separadas;
+no conceda DDL a la cuenta de aplicación para evitar un error de migración.
+
+Redis distribuye eventos por Pub/Sub y mantiene caché/conectividad; usa TLS, ACL
+y el volumen `redis_data` con AOF configurado. **No es la cola persistente de
+correo ni el almacén definitivo de mensajes**: esos datos viven en PostgreSQL.
+No se promete recuperación de un evento Pub/Sub perdido como si fuera durable.
+Archivos privados viven en media; el frontend conserva assets con hash anteriores
+para pestañas abiertas. Backups/claves y ciphertext tienen volúmenes separados.
+
+### Verificación y mantenimiento
+
+Antes de migrar: inspección, backup cifrado/checksum, descifrado y restauración
+aislada con comparación. Aplique EXPAND sin editar migraciones anteriores ni
+retirar columnas. Tras arranque oficial con `-Build`, compruebe cinco healthy,
+cuatro HTTP 200, versión/binario/manifest y función sobre Docker. Una prueba
+de aceptación aislada debe identificar que usa las mismas imágenes finales;
+no puede presentarse como escritura sobre la instancia real.
+
+Ejecute el target Rust `audit`, tipos/lint/unitarias/build frontend y la suite
+E2E pertinente. Las pruebas destructivas/restauraciones sólo usan fixtures.
+Los scripts de aceptación adicionales están en `scripts/e2e/` y los escenarios
+de navegador en `frontend/e2e/`; el runner general no ejecuta automáticamente
+todos los nuevos escenarios especializados. Selecciónelos de forma explícita.
+El gate de seguridad es `scripts/verify-production-security.ps1`, con informes
+fuera de Git. Publique después de todos los gates, mediante fetch/push normal;
+compare SHA y repita salud/función. No borre volúmenes para limpiar pruebas.

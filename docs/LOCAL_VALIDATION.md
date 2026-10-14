@@ -1,6 +1,241 @@
-# Validación local — 2 de octubre de 2026
+# Validación local y catálogo de evidencias
 
-## Estado vigente — 4 de octubre de 2026: reparación del login
+## Entrega documental validada localmente — 14 de octubre de 2026
+
+Estado funcional: **VALIDATED_LOCAL**, con dependencias externas de producción
+pendientes. La publicación requiere además seguridad final y coincidencia de
+HEAD/origin/main; los SHA se entregan después del push. El encargo autoriza Docker local,
+commits y push normal; no instalaciones externas, cambios DNS ni escrituras de
+prueba sobre cuentas reales. El VBS local ajeno se excluye de la publicación.
+
+La inspección inventarió **47 documentos Markdown** y **169 rutas Rust**.
+Se reutilizan README, ADMIN, SECURITY y las guías operativas: no se crea otro
+manual paralelo. Se corrigen rutas administrativas inexistentes, el consejo
+antiguo de activar Google sólo con Client ID, la dependencia exclusiva de SMTP
+para recuperación y los dos editores duplicados de VPN/destinos. Los informes
+históricos conservan sus resultados; no se actualizan sus PASS retroactivamente.
+
+| Comprobación de esta entrega | Evidencia observada |
+|---|---|
+| Recuperación y rebuild oficial | Cinco servicios saludables; arranque con `-Build` y verificador de almacenamiento PASS. Reconstrucción final 14/10 09:53 UTC; caché sólo con inputs iguales. La política específica del callback está activa en el edge. |
+| Backup previo | AES-GCM, checksum, descifrado y restauración sin red/volúmenes: **62 tablas, 1.242 filas idénticas**, 14/10 08:09 UTC; cero perfiles creados. |
+| Seguridad de las imágenes finales | Gitleaks árbol/historial 0; Trivy cinco imágenes ejecutadas y lockfiles 0 HIGH/CRITICAL (14/10 09:51 UTC). Se vuelve a verificar el árbol documental final antes del commit y el historial nuevo antes del push. |
+| Frontend actual | Tipos, lint, **86 tests / 17 archivos** y build PASS, 14/10; 10 páginas públicas, seis indexables, 152 entradas de manifiesto. |
+| Rust actual | Nueva ejecución del 14/10 con `--no-cache-filter test,audit`: 143 tests, fmt, check y Clippy PASS; se reutiliza sólo compilación/dependencias donde los inputs coinciden. |
+| API integral, 14/10 | 137/137 PASS en datos iniciales nuevos; autenticación/OTP, roles, asignaciones, cursos, contenido, backups FULL/delta, inventario 184 casos, concurrencia, canales/vídeo y recuperación de dependencias PASS. |
+| OAuth aislado, 14/10 | 61 comprobaciones integradas y nueve escenarios de navegador PASS sobre las imágenes finales; proveedor sintético explícito. [Informe de origen](audits/2026-10-13-google-oauth.md); no acredita Google real. |
+| Correo, bajas e infraestructura, 14/10 | 34 comprobaciones correo interno, 102 ciclo de cuenta y suite de infraestructura PASS; sin entregas externas ni escrituras MAIN. |
+| Navegador aislado completo, 14/10 | **136/136 casos, 29 archivos y 44 grupos PASS** en el build `5d6501f0`, sin omisiones ni reintentos; mismo frontend/backend que MAIN durante esa ejecución. Después se retiró sólo una línea vacía final de `googleAuthorization.ts` (comparación SHA reconstruida del contenido anterior). El build final repitió los **12 casos OAuth/VPN/copias** y los **36 públicos MAIN**, todos PASS; no se presenta la suite anterior como repetida en el build nuevo. |
+| Navegador MAIN, 14/10 | 36 casos PASS de responsive, teclado, navegación y temas. No se usa una cuenta real para pruebas. |
+| HTTP/SEO MAIN, 14/10 | Seis páginas estáticas, siete servicios dinámicos, cursos publicados, 404/noindex, TLS y callback no-store/no-referrer PASS. Sin puntuación Lighthouse nueva. |
+| Regresión después de limpiar | Protección de administradores, roles ordinarios, logout, aviso/reconexión WSS, cero residuos propios y perfiles ajenos idénticos PASS en la pila aislada (14/10 09:51 UTC). |
+| Preservación MAIN | 1.242 registros previos idénticos, archivos de media/backups, volúmenes y clave DPAPI conservados. Adiciones: metadato SQLx 0030 y cuatro filas de dos conexiones concurrentes Firefox/Windows, ajenas a las pruebas y conservadas por IDs exactos. No se declara ausencia de actividad del usuario. |
+| Instaladores externos | Nuevos parser PowerShell/Bash, 18 validadores PowerShell, 20 Linux y tres copias opcionales Linux PASS; seis casos de copias opcionales de ambas plataformas constan en 13/10. Instalación real NOT_RUN. |
+| Enlaces | 253 referencias internas y anclas PASS; inventario revisado contra los archivos entregados. |
+
+Evidencia privada: `.run/documentation-release-20261014/`, sin dumps en claro,
+claves ni datos personales en Git. La revisión automática de permisos que
+impidió los scans del día anterior ya no bloqueó esta ejecución: los scans
+previos del 14/10 sí terminaron. Las comprobaciones posteriores se informan por
+separado, sin convertir la autorización de publicación en evidencia de push.
+
+### Versión observada en los contenedores
+
+Frontend final: `b0f6f666-6dfa-4dd4-81c8-94eb2c67871a`. Backend SHA-256: `ef186fe65e2ed190738f23f8e5ef46e74d0adca9568462928bcafe2a89f014b3`.
+Esquema SQLx: **30**. La aceptación autenticada usa los mismos manifests de
+frontend/backend en la pila aislada; MAIN se comprueba por HTTPS/WSS sin
+escrituras de prueba sobre cuentas reales. Los tags no sustituyen estos IDs.
+
+| Servicio | Manifest de la plataforma ejecutada | Inicio UTC |
+|---|---|---|
+| `nginx` | `sha256:ccc71cacb89c8e9c06d1144228c7ac51839f34d5160e2d760c21d1a9ed0b035c` | 2026-10-14T08:48:38.052313389Z |
+| `frontend` | `sha256:2ed7326551fa220f497dae508fd879c260f38cfabe970b90b5184dc680908574` | 2026-10-14T09:53:34.849732813Z |
+| `backend` | `sha256:10c73c9ac8d3795ee024e5f47448bf247278e539820c404bfa9d772664b00e43` | 2026-10-14T08:24:02.9063779Z |
+| `postgres` | `sha256:aae694d2425a70d17ed124512323790c419ea07a846b0469105bb7bb9e3550a9` | 2026-10-14T08:08:19.496647674Z |
+| `redis` | `sha256:df78b20020e4bb220cf4763fea7e524d9a02a36c4f90a0ca42dce3c185987f8e` | 2026-10-14T08:08:26.684195992Z |
+
+### Fallos reproducidos y correcciones de esta entrega
+
+- El runner reutilizado conservaba resultados académicos y destinos anteriores:
+  falló la preparación de un destino y luego el caso de prerrequisitos. Se
+  repitió con volúmenes sintéticos nuevos, conservando todos los anteriores;
+  137/137 PASS sin cambiar controles ni borrar datos MAIN.
+- El runner conservador nuevo tuvo errores de montaje, comillas y referencia
+  a un índice OCI local sin tag. Se corrigieron sus auxiliares privados, se
+  retuvieron tags propios y se completaron los casos pendientes; no se retiró
+  cobertura ni se confundió falta de imagen con caída del backend.
+- El archivo «public» incluía logins E2E: se detuvo en MAIN después de un intento
+  con cuenta inexistente. No hubo sesión creada, modificación de filas ni
+  adiciones inesperadas. Allí sólo se seleccionan casos públicos revisados;
+  la autenticación se prueba en la pila aislada.
+- Un selector dependía de un nombre fijo de curso retirado del catálogo. Ahora
+  verifica foco, viewport y cierre del último curso real, sin quitar el test.
+  Las expectativas de activar Google sin verificar se sustituyen por UI
+  deshabilitada y API manipulada rechazada.
+- El verificador de sitemap esperaba diez rutas estáticas antiguas. Ahora
+  exige las seis actuales sin duplicados y comprueba también servicios
+  dinámicos, cursos y las protecciones previas.
+- Nginx ocultaba el `no-referrer` del callback y aplicaba su política general.
+  Se añadió política específica en el edge, conservando HSTS/nosniff/DENY y
+  sin registrar la ruta. Rebuild y nueva prueba HTTPS PASS; no se relajó la
+  aserción para aceptar el defecto.
+- Un test de moderación asumía abierto el canal Alumnos aunque hubiera mensajes
+  del personal. Selecciona ahora ese canal explícitamente antes de comprobar
+  limpieza, cancelación, foco y accesibilidad; no cambia el chat del producto.
+- El test de actualización de cursos exigía 14 registros. Ahora compara los
+  IDs de PostgreSQL en todos los estados visibles (incluidos borradores,
+  excluidos los eliminados lógicamente), y valida creación/retirada con un
+  registro sintético único. No se modifica el catálogo para obtener un PASS.
+- Los builds tienen un UUID incorporado a HTML/JavaScript: no se aceptó una
+  supuesta equivalencia de archivos entre builds distintos. Se excluyó
+  `frontend/e2e` del contexto de imagen, manteniendo los 136 casos en la suite
+  del host; cambios de selectores reutilizan ahora la misma imagen y versión.
+  La aceptación final identifica imágenes iguales en MAIN y E2E.
+
+- El test de categorías eliminaba el curso A2 de la semilla y rompía ejecuciones
+  posteriores. Ahora elimina sólo su curso TEMP por ID exacto, restaura la
+  categoría editada y contrasta el catálogo con PostgreSQL. No se repone una
+  semilla ni se oculta una diferencia para forzar el resultado.
+- Los contextos manuales del examen apuntaban al puerto de desarrollo 8011.
+  Usan ahora el origen HTTPS de producción de Playwright; ambos exámenes PASS.
+- El estado VPN coincidía con el texto de dos destinos externos. El selector
+  ahora identifica el párrafo VPN; los tres casos de supervisión, permisos y
+  responsive PASS sin cambiar el estado mostrado por la aplicación.
+
+Dos logins normales de Firefox/Windows crearon sus sesiones y conexiones durante
+la auditoría. Se contrastaron actor, rol, fecha y relación por IDs exactos sin
+mostrar identidades, cookies ni claves. No se cerraron ni modificaron. La
+comparación de registros anteriores sigue sin diferencias; sólo se exceptúan
+esas cuatro adiciones conocidas y el metadato SQLx, no tablas ni rangos de fechas.
+
+### Archivos incluidos en la entrega
+
+**Documentación reutilizada o integrada**
+
+- [ADMIN.md](../ADMIN.md)
+- [README.md](../README.md)
+- [SECURITY.md](../SECURITY.md)
+- [docs/BACKUPS_SIMPLIFIED.md](BACKUPS_SIMPLIFIED.md)
+- [docs/BACKUP_RESTORE.md](BACKUP_RESTORE.md)
+- [docs/DEPLOYMENT.md](DEPLOYMENT.md)
+- [docs/GOOGLE_AUTH.md](GOOGLE_AUTH.md)
+- [docs/LOCAL_VALIDATION.md](LOCAL_VALIDATION.md)
+- [docs/audits/2026-10-13-google-oauth.md](audits/2026-10-13-google-oauth.md)
+- [docs/google-oauth-operations.md](google-oauth-operations.md)
+- [docs/infrastructure-operations.md](infrastructure-operations.md)
+- [docs/mail-api-smtp-operations.md](mail-api-smtp-operations.md)
+- [scripts/backup-external/README.md](../scripts/backup-external/README.md)
+
+**Instaladores incorporados**
+
+- [scripts/backup-external/linux/instalar-servidor-backup-linux.sh](../scripts/backup-external/linux/instalar-servidor-backup-linux.sh)
+- [scripts/backup-external/windows/Instalar-Servidor-Backup-UASSpain.ps1](../scripts/backup-external/windows/Instalar-Servidor-Backup-UASSpain.ps1)
+
+**Código, configuración y regresión previamente autorizados**
+
+- [.dockerignore](../.dockerignore)
+- [backend-rust/migrations/0030_google_oauth_authorization_code.sql](../backend-rust/migrations/0030_google_oauth_authorization_code.sql)
+- [backend-rust/src/app.rs](../backend-rust/src/app.rs)
+- [backend-rust/src/auth.rs](../backend-rust/src/auth.rs)
+- [backend-rust/src/db.rs](../backend-rust/src/db.rs)
+- [backend-rust/src/google_oauth.rs](../backend-rust/src/google_oauth.rs)
+- [backend-rust/src/google_oidc.rs](../backend-rust/src/google_oidc.rs)
+- [backend-rust/src/lib.rs](../backend-rust/src/lib.rs)
+- [backend-rust/src/runtime_config.rs](../backend-rust/src/runtime_config.rs)
+- [docker-compose.google-e2e.yml](../docker-compose.google-e2e.yml)
+- [frontend/e2e/admin-courses-refresh.spec.ts](../frontend/e2e/admin-courses-refresh.spec.ts)
+- [frontend/e2e/backups.spec.ts](../frontend/e2e/backups.spec.ts)
+- [frontend/e2e/course-categories.spec.ts](../frontend/e2e/course-categories.spec.ts)
+- [frontend/e2e/google-auth.spec.ts](../frontend/e2e/google-auth.spec.ts)
+- [frontend/e2e/google-oauth-admin.spec.ts](../frontend/e2e/google-oauth-admin.spec.ts)
+- [frontend/e2e/infrastructure.spec.ts](../frontend/e2e/infrastructure.spec.ts)
+- [frontend/e2e/panel-modals.spec.ts](../frontend/e2e/panel-modals.spec.ts)
+- [frontend/e2e/panels.spec.ts](../frontend/e2e/panels.spec.ts)
+- [frontend/e2e/public.spec.ts](../frontend/e2e/public.spec.ts)
+- [frontend/e2e/vpn-backups-ui.spec.ts](../frontend/e2e/vpn-backups-ui.spec.ts)
+- [frontend/nginx.conf](../frontend/nginx.conf)
+- [frontend/src/App.tsx](../frontend/src/App.tsx)
+- [frontend/src/api/apiClient.ts](../frontend/src/api/apiClient.ts)
+- [frontend/src/components/admin/AdminSidebar.tsx](../frontend/src/components/admin/AdminSidebar.tsx)
+- [frontend/src/components/admin/AdminTopbar.tsx](../frontend/src/components/admin/AdminTopbar.tsx)
+- [frontend/src/components/admin/BackupDestinationForm.tsx](../frontend/src/components/admin/BackupDestinationForm.tsx)
+- [frontend/src/components/admin/BackupHistory.tsx](../frontend/src/components/admin/BackupHistory.tsx)
+- [frontend/src/components/admin/BackupInventory.tsx](../frontend/src/components/admin/BackupInventory.tsx)
+- [frontend/src/components/admin/GoogleOAuthForm.tsx](../frontend/src/components/admin/GoogleOAuthForm.tsx)
+- [frontend/src/components/auth/AuthModal.tsx](../frontend/src/components/auth/AuthModal.tsx)
+- [frontend/src/components/auth/GoogleSignInButton.tsx](../frontend/src/components/auth/GoogleSignInButton.tsx)
+- [frontend/src/lib/backups.ts](../frontend/src/lib/backups.ts)
+- [frontend/src/lib/googleAuthorization.ts](../frontend/src/lib/googleAuthorization.ts)
+- [frontend/src/lib/googleCallbackHandoff.test.ts](../frontend/src/lib/googleCallbackHandoff.test.ts)
+- [frontend/src/lib/googleCallbackHandoff.ts](../frontend/src/lib/googleCallbackHandoff.ts)
+- [frontend/src/lib/infrastructure.test.ts](../frontend/src/lib/infrastructure.test.ts)
+- [frontend/src/lib/infrastructure.ts](../frontend/src/lib/infrastructure.ts)
+- [frontend/src/main.tsx](../frontend/src/main.tsx)
+- [frontend/src/pages/AdminPanel.tsx](../frontend/src/pages/AdminPanel.tsx)
+- [frontend/src/pages/GoogleOAuthCallback.tsx](../frontend/src/pages/GoogleOAuthCallback.tsx)
+- [frontend/src/pages/admin/AdminBackups.tsx](../frontend/src/pages/admin/AdminBackups.tsx)
+- [frontend/src/pages/admin/AdminConfiguracion.tsx](../frontend/src/pages/admin/AdminConfiguracion.tsx)
+- [frontend/src/pages/admin/AdminInfrastructure.tsx](../frontend/src/pages/admin/AdminInfrastructure.tsx)
+- [frontend/src/pages/admin/AdminVpn.tsx](../frontend/src/pages/admin/AdminVpn.tsx)
+- [nginx/allowed_hosts.conf](../nginx/allowed_hosts.conf)
+- [nginx/nginx.conf](../nginx/nginx.conf)
+- [scripts/e2e/e2e-google-oauth.mjs](../scripts/e2e/e2e-google-oauth.mjs)
+- [scripts/e2e/e2e_api.py](../scripts/e2e/e2e_api.py)
+- [scripts/e2e/google-oidc-provider.mjs](../scripts/e2e/google-oidc-provider.mjs)
+- [scripts/e2e/realtime-nginx.conf](../scripts/e2e/realtime-nginx.conf)
+- [scripts/e2e/verify-public-site.mjs](../scripts/e2e/verify-public-site.mjs)
+
+El archivo local `scripts/start-watch-hidden.vbs` se conserva sin incluirlo; no
+se eliminan archivos históricos, backups ni secretos para preparar los commits.
+
+### Catálogo documental y prioridad
+
+Las referencias operativas son actuales; describen capacidades y requisitos,
+no una certificación de que todos los servicios empresariales estén activos.
+
+| Documento de referencia | Finalidad y revisión |
+|---|---|
+| [README](../README.md), [ADMIN](../ADMIN.md) | Entrada única, inventario y procedimientos de los tres roles; actualizados contra rutas/componentes. |
+| [SECURITY](../SECURITY.md) | Controles por módulo, evidencia y riesgos pendientes; separa baseline histórica. |
+| [Despliegue](DEPLOYMENT.md) | Operación, arquitectura, APIs y entidades; reconstrucción histórica expresamente separada del arranque actual. |
+| [REPAIR_WORKFLOW](REPAIR_WORKFLOW.md), [AGENTS](../AGENTS.md) | Gates obligatorios; conservados sin cambiar permisos ni relajar pruebas. |
+| [Backup/recovery](BACKUP_RESTORE.md), [copias simplificadas](BACKUPS_SIMPLIFIED.md) | Destinos, FULL/deltas, inventario y recuperación; se complementan, no son dos motores. |
+| [Infraestructura](infrastructure-operations.md) | Plataformas, agente, VPN, destinos y entrega al técnico; navegación de editores actualizada. |
+| [Instaladores](../scripts/backup-external/README.md) | Inventario, parámetros, instalación Windows/Linux y límites de verificación; dos scripts disponibles. |
+| [Correo](mail-api-smtp-operations.md) | API/SMTP, cola, estados, diagnóstico 400/503 y validación corporativa pendiente. |
+| [Google OAuth](google-oauth-operations.md), [entrada de compatibilidad](GOOGLE_AUTH.md) | Una sola guía de activación segura; la segunda conserva enlaces sin duplicar el procedimiento antiguo. |
+| [Ciclo de cuenta](account-lifecycle-operations.md) | Baja lógica, reactivación, auditoría, conservación y retención pendiente. |
+| [Asignaciones](STUDENT_INSTRUCTOR_ASSIGNMENT.md) | Relación alumno/instructor y permisos existentes; sin reasignaciones automáticas inventadas. |
+| [Cursos públicos](COURSE_PUBLIC_PAGES.md) | Publicación, slugs, estados y temario; no matrícula ni compra automática. |
+| [Assets](FRONTEND_ASSETS.md) | Publicación de chunks y recuperación de pestañas; separado de mediciones históricas. |
+| [Cuentas locales](TEST_ACCOUNTS.md) | Referencia operativa restringida; no publica contraseñas ni autoriza usar datos reales en tests. |
+| [Incidentes](../infra/monitoring/INCIDENT-RUNBOOK.md) | Diagnóstico, preservación de evidencia y recuperación supervisada. |
+| [Excepciones Rust](../backend-rust/SECURITY_ADVISORY_EXCEPTIONS.md) | Alcance/condiciones del advisory; no sustituye escaneo actual. |
+
+Informes históricos conservados como evidencia fechada; su alcance se revisa en
+el contexto de su commit/imagen, no como instrucciones nuevas:
+
+| Área | Documentos y finalidad |
+|---|---|
+| Auditorías iniciales | [Login](../01_UASSPAIN_AUDITORIA_COMPLETA_LOGIN.md), [paneles](../02_UASSPAIN_AUDITORIA_PANELES_ADMIN_INSTRUCTOR_ALUMNO.md), [SEO/seguridad](../UASSPAIN_SEO_DOCKER_LOGIN_SECURITY_AUDIT.md): diagnóstico y pruebas anteriores. |
+| Frontend y publicación anterior | [Frontend 04/10](FRONTEND_AUDIT.md), [assets](FRONTEND_ASSETS_REVALIDATION.md), [Docker 06/10](DOCKER_REDEPLOY_VALIDATION_20261006.md), [responsive 09/10](audits/2026-10-09-responsive.md), [release 13/10](audits/2026-10-13-docker-github-release.md). |
+| Comunicación | [General](COMMUNICATIONS_VALIDATION.md), [sesión/chat/vídeo](SESSION_CHAT_VIDEO_VALIDATION.md), [paralelo](PARALLEL_STUDENT_CHAT_VALIDATION.md), [concurrencia](CONCURRENT_SESSIONS_VALIDATION.md), [privado](PRIVATE_CHAT_CONCURRENCY_VALIDATION.md), [09/10](audits/2026-10-09-chat-video.md). |
+| Instructor y alumno | [Instructor 09/10](audits/2026-10-09-instructor.md), [accesos 10/10](audits/2026-10-10-instructor-access.md), [alumno 10/10](audits/2026-10-10-student-panel.md). |
+| Autenticación y contacto | [Arranque](audits/2026-10-09-startup-login.md), [sesiones independientes](audits/2026-10-11-independent-sessions.md), [contacto fase 05](audits/2026-10-10-contact.md), [OAuth aislado](audits/2026-10-13-google-oauth.md). |
+| Operación | [Backups 09/10](audits/2026-10-09-backups.md), [inventario 12/10](audits/2026-10-12-backup-inventory.md), [correo](audits/2026-10-12-mail-system.md), [bajas](audits/2026-10-12-account-lifecycle.md), [infraestructura](audits/2026-10-12-infrastructure.md). |
+
+Los tres archivos de auditoría de raíz se mantienen por referencias/contexto;
+no reemplazan las guías vigentes. El inventario mecánico privado registra para
+cada documento título, finalidad, clase, secciones y enlaces; su comprobación
+no se presenta como repetición de todas las pruebas históricas.
+
+## Evidencias históricas anteriores
+
+Los apartados que siguen describen el estado de sus fechas. Las siete
+migraciones, recuentos, políticas Google y rutas antiguas mencionadas no son
+el procedimiento vigente; prevalecen el código actual y las guías enlazadas.
+
+## Estado histórico — 4 de octubre de 2026: reparación del login
 
 Se reprodujo en Chromium sobre Docker real: PostgreSQL esperaba su clave
 protegida tras un reinicio, el backend no arrancaba y login/configuración

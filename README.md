@@ -1,103 +1,140 @@
 # UASSpain
 
-Plataforma de formacion UAS con frontend React 19/TypeScript, API Rust con Axum, PostgreSQL 18, Redis 8 y Nginx. El despliegue soportado es Docker Compose; Django y el backend Python ya no forman parte del runtime.
+UASSpain combina una web pública de formación y servicios UAS con un entorno
+privado para administración, instructores y alumnos. El centro publica su oferta,
+gestiona usuarios y materiales, realiza exámenes y mantiene comunicaciones e
+históricos. Este repositorio contiene la aplicación existente; no acredita
+certificaciones empresariales ni servicios externos por el texto de su web.
 
-## Funciones actuales
+La arquitectura utiliza **React 19, TypeScript, Vite, Rust/Axum, PostgreSQL 18,
+Redis 8 y Nginx**, con exactamente cinco servicios permanentes Docker Compose.
+Python sólo aparece en herramientas de pruebas/operación, no como backend web.
+Separar interfaz, autorización y persistencia permite aplicar permisos en el
+servidor y actualizar contenedores conservando datos y claves.
 
-- Autenticacion por correo y contraseña, OTP, Google Identity Services y roles `admin`, `instructor` y `alumno`.
-- Gestion de usuarios, examenes, materiales, resultados, conexiones, chat y videollamadas.
-- Blog y catalogo de formacion dinamicos administrados desde la SPA.
-- Backups cifrados locales/SFTP, comprobacion, retencion y restauracion auditada.
+## Cómo leer los estados
 
-## Arranque local
+- **IMPLEMENTADO:** respaldado por código/configuración. No implica despliegue.
+- **VERIFICADO:** prueba identificada por fecha, entorno, imagen y alcance.
+- **PENDIENTE:** falta configuración, autorización o una comprobación concreta.
+- **NO DISPONIBLE:** capacidad ausente; no debe sustituirse por datos simulados.
 
-Requisitos: Docker Desktop con el plugin actual de Compose, FUSE y secretos locales en `.secrets/`.
-PostgreSQL exige un volumen gocryptfs cifrado; en WSL configure `swap=0`.
-Los `.env*` reales, claves y secretos estan excluidos de Git. La clave de
-almacenamiento se protege con DPAPI del usuario Windows y se entrega solo a
-tmpfs; conserve ese perfil y la recuperacion de claves fuera de Git.
+La evidencia vigente se centraliza en [validación local](docs/LOCAL_VALIDATION.md).
+Los informes fechados conservan resultados históricos; no acreditan un build
+posterior. La entrega no se considera completa hasta validar Docker y GitHub.
 
-El build, arranque y validacion se realizan localmente con Docker Desktop. No requieren GitHub Actions ni imagenes publicadas en un registro de GitHub.
+## Inventario funcional
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-encrypted-stack.ps1 -Build
-docker compose -f docker-compose.yml -f docker-compose.encrypted.yml ps
-```
-
-Entrada unica:
-
-- `http://127.0.0.1` redirige a HTTPS.
-- `https://127.0.0.1` sirve SPA, API y WebSocket.
-- PostgreSQL, Redis, frontend y backend no publican puertos al host.
-
-En una instalacion nueva, con volumen vacio y sin clave existente, añada
-`-InitializeKey`. Tras reiniciar PostgreSQL, el mismo script entrega la clave
-protegida. Para recuperarlo automaticamente al reiniciar Docker Desktop, ejecute
-una vez `scripts/install-encrypted-autostart.ps1` con el usuario Windows dueño
-de la clave DPAPI. La tarea tiene privilegios limitados, conserva el cifrado y
-respeta las paradas manuales; se puede retirar con `-Uninstall`.
-Sin clave PostgreSQL permanece bloqueado. Las migraciones Rust siguen
-siendo la unica fuente del esquema. Consulte [despliegue](docs/DEPLOYMENT.md).
-
-Para habilitar Google, configure un Client ID web y el origen autorizado como
-se explica en [acceso con Google](docs/GOOGLE_AUTH.md). Las
-[cuentas de prueba locales](docs/TEST_ACCOUNTS.md) están disponibles con contraseña.
-
-## Arquitectura
-
-| Servicio | Implementacion | Exposicion |
+| Función implementada | Uso, usuarios y dependencias | Evidencia y límites |
 |---|---|---|
-| `nginx` | Edge TLS y reverse proxy | `127.0.0.1:80/443` |
-| `frontend` | React compilado y Nginx interno TLS | Red `edge` |
-| `backend` | Rust/Axum con TLS interno | Redes `edge` y `data` |
-| `postgres` | PostgreSQL 18, volumen cifrado, TLS y roles separados | Red interna `data` |
-| `redis` | Redis 8, TLS y ACL | Red interna `data` |
+| Web pública, servicios y formación | Visitante: navegación, categorías, plantillas dinámicas, imágenes y blog. Administración publica y ordena contenidos. | `App.tsx`, `content.rs`, `services.rs`, `seo.rs`; [páginas de curso](docs/COURSE_PUBLIC_PAGES.md). Catálogo no equivale a compra/matrícula automática. |
+| Acceso y sesiones | Registro, contraseña, OTP, recuperación, sesiones por ventana, roles y 900 s de inactividad. | `auth.rs`, `registration.rs`; [sesiones](docs/audits/2026-10-11-independent-sessions.md). La entrega corporativa de códigos sigue pendiente. |
+| Google OAuth | Configuración administrativa, secreto cifrado, PKCE, verificación, vínculo por sub y desvinculación. Requiere cliente Google autorizado. | [Operación](docs/google-oauth-operations.md), [pruebas aisladas](docs/audits/2026-10-13-google-oauth.md). Autenticación real externa pendiente; no conceder roles por email. |
+| Gestión de usuarios | ADMIN gestiona perfiles, asignaciones, permisos, activos/bajas y CSV autorizado; instructor opera su alcance. | `users.rs`, `student_directory.rs`, `instructor_access.rs`; [manual](ADMIN.md). Datos persistidos, sin contadores ficticios. |
+| Baja y reactivación | Los tres roles pueden solicitar baja propia reforzada; ADMIN reactiva según permisos. | [Operación](docs/account-lifecycle-operations.md). Baja lógica, revocación y protección del último administrador; retención corporativa pendiente. |
+| Material y exámenes | Instructor gestiona PDF, preguntas y asignaciones; alumno consulta material, realiza intentos y revisa resultados. | `materials.rs`, `exams.rs`, `exam_import.rs`; [auditoría alumno](docs/audits/2026-10-10-student-panel.md). No se generan preguntas con IA; OCR no acreditado. |
+| Chat, presencia y videollamada | Canales autorizados, WSS, persistencia de mensajes, PDF/moderación y medios WebRTC. | `chat.rs`, `video.rs`; [comunicaciones](docs/COMMUNICATIONS_VALIDATION.md). Medios locales no acreditan TURN entre redes externas. |
+| Seguridad y supervisión | ADMIN revisa sesiones, conexiones, auditoría, alertas y disponibilidad. Protección de todas las cuentas ADMIN frente a bloqueo/cierre forzoso. | `connections.rs`, `security.rs`, [seguridad](SECURITY.md). Visibilidad de detalles y logout voluntario se conservan. |
+| Correo centralizado | API Postmark o SMTP, cola persistente, reintentos seguros, circuito y monitor. Contacto usa From técnico, To corporativo y Reply-To visitante. | [API/SMTP](docs/mail-api-smtp-operations.md). Aceptación no equivale a entrega; sin fallback SMTP en API exclusiva. |
+| Copias de seguridad | ADMIN configura tres destinos independientes, programación, FULL/delta, inventario y recuperación auditada. | [Backup/recovery](docs/BACKUP_RESTORE.md). Sólo destinos activados; restaurar exige procedimiento y autorización. |
+| Infraestructura y VPN | Asistente, adaptadores, observación autenticada del anfitrión y editores únicos de VPN/destinos. | [Infraestructura](docs/infrastructure-operations.md). No instala ni activa VPN; plataformas no probadas no se declaran compatibles. |
+| Instaladores externos | Scripts de servidor Windows/Linux, OpenSSH/SFTP/WireGuard, rutas y puertos parametrizados. | [Inventario y pruebas](scripts/backup-external/README.md). Integrados; instalación real pendiente. No necesitan ZIP ni clientes personalizados ausentes. |
 
-Persistencia: `postgres_ciphertext`, `redis_data`, `uasspain_media_data`,
-`backups_data`, `backup_keys` y `frontend_static`. Este último es externo y
-conserva los assets con hash de versiones anteriores para las pestañas abiertas;
-el script de arranque lo crea cuando falta. El volumen PostgreSQL cifra PGDATA, WAL,
-temporales y logs, incluidos los nombres de archivo.
+El [manual de los tres paneles](ADMIN.md) explica finalidad, pasos, permisos,
+datos, verificación y errores habituales. El [mapa técnico](docs/DEPLOYMENT.md#mapa-técnico-de-la-aplicación)
+relaciona módulos, APIs, entidades y herramientas.
 
-## Validacion
+## Web pública
 
-Todas las reparaciones deben seguir la [regla obligatoria de Docker y GitHub](docs/REPAIR_WORKFLOW.md),
-persistida para los agentes en [AGENTS.md](AGENTS.md): tests, rebuild con
-`scripts/start-encrypted-stack.ps1 -Build`, cinco servicios saludables, E2E y
-funcion real sobre Docker, seguridad, commit y push. Una imagen antigua deja el
-cambio incompleto. Despues del push, verificar SHA remoto y salud local.
+`/` contiene Hero, radar/dron y accesos a servicios y contacto. La navegación
+enlaza `/nosotros`, `/tecnologia`, `/blog`, `/contacto` y `/formacion`.
+`/servicios/:slug` y `/formacion/*` utilizan registros publicados del backend;
+los cambios se notifican por el canal público de contenido. Las páginas legales
+explican las políticas publicadas, que requieren revisión empresarial y no
+certifican cumplimiento legal por existir.
 
-Las imágenes base usan versiones explícitas y digest: Node 22.23.2 LTS,
-Nginx 1.30.5/Alpine 3.24, PostgreSQL 18.6, Redis 8.2.10 (rama Extended),
-Rust 1.99.0 y Ubuntu 26.04. El auxiliar `gosu` se compila con Go 1.27.1.
-Se verificaron con las publicaciones oficiales de
-[Rust](https://blog.rust-lang.org/2026/10/01/Rust-1.99.0/),
-[Go](https://go.dev/doc/devel/release), [Alpine](https://alpinelinux.org/releases/),
-[Nginx](https://nginx.org/), [PostgreSQL](https://www.postgresql.org/docs/release/18.6/)
-y [la política de versiones de Redis](https://redis.io/docs/latest/operate/oss_and_stack/install/version-mgmt/).
-El escáner comprueba las imágenes realmente ejecutadas mediante su ID inmutable.
+Contacto valida campos y controles antispam/rate limiting y utiliza el backend
+Rust y el canal de correo configurado. Registro, acceso y recuperación son
+formularios reales; necesitan los servicios indicados en el manual. Temas claro
+y oscuro, navegación por teclado y responsive se comprueban por escenarios y
+tamaños concretos, no como garantía universal de accesibilidad.
+
+Vite genera assets con hash y HTML público prerenderizado; Nginx integra las
+páginas dinámicas y sus sitemaps. Privados y callbacks llevan noindex. Los
+metadatos se generan desde la configuración del sitio. No se atribuyen aquí
+puntuaciones Lighthouse actuales ni un posicionamiento garantizado.
+
+## Arquitectura e instalación local
+
+| Servicio | Función y exposición |
+|---|---|
+| `nginx` | Entrada HTTPS y proxy; único publicado en `127.0.0.1:80/443`. |
+| `frontend` | SPA React compilada y Nginx interno TLS; red `edge`. |
+| `backend` | API Rust, autorización y WSS con TLS; redes `edge`/`data`. |
+| `postgres` | Persistencia PostgreSQL, TLS, roles separados y volumen cifrado; red interna `data`. |
+| `redis` | Bus de eventos/caché, TLS y ACL; red interna `data`. |
+
+Requisitos: motor de contenedores Linux y Compose compatibles, FUSE, recursos
+verificados por el técnico, certificados/secretos locales y acceso al perfil
+propietario de DPAPI en el despliegue Windows actual. No asuma Docker Desktop
+en Windows Server ni que probar un contenedor Linux acredita otro anfitrión.
+Véanse [plataformas](docs/infrastructure-operations.md#plataformas).
+
+Con los secretos ya provisionados y **preservando la clave existente**:
 
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.encrypted.yml config --quiet
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-encrypted-stack.ps1 -Build
-npm.cmd --prefix frontend run typecheck
-npm.cmd --prefix frontend run lint
-npm.cmd --prefix frontend run build
-npm.cmd --prefix frontend test -- --run
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/e2e/run-e2e.ps1
-node scripts/e2e/e2e-home-rendering.mjs
-node scripts/e2e/e2e-home-lighthouse.mjs
-powershell.exe -NoProfile -File scripts/verify-production-security.ps1
+powershell.exe -NoProfile -File scripts/start-encrypted-stack.ps1 -Build
+docker compose -p uasspain -f docker-compose.yml -f docker-compose.encrypted.yml ps
 ```
 
-La suite E2E crea un proyecto aislado con `docker-compose.e2e.yml` y cubre API, autorizacion, WebSocket, uploads, recovery, los tres paneles en escritorio/movil y medios WebRTC entre tres participantes. Requiere `npm ci` y `npx playwright install chromium` en `frontend`. El gate Rust completo se ejecuta con `docker build --target audit backend-rust`. Consulte el [resultado y alcance de la validación local](docs/LOCAL_VALIDATION.md).
+Abra `https://localhost`. Compruebe los cinco servicios y los cuatro endpoints
+de salud del [procedimiento obligatorio](docs/REPAIR_WORKFLOW.md). Sin clave,
+PostgreSQL queda bloqueado. **Nunca use `-InitializeKey` sobre una base existente**,
+ni `down -v`, prune de volúmenes o recreación de base para resolver un fallo.
+El [despliegue](docs/DEPLOYMENT.md) explica primer arranque, recuperación, traslado,
+TLS y persistencia. El script no sustituye la preparación segura de secretos.
 
-## Documentacion
+## CONFIGURACIONES PENDIENTES ANTES DE PRODUCCIÓN
 
-- [Administracion](ADMIN.md)
-- [Despliegue y publicacion](docs/DEPLOYMENT.md)
-- [Backup y recovery](docs/BACKUP_RESTORE.md)
-- [Seguridad](SECURITY.md)
-- [Respuesta a incidentes](infra/monitoring/INCIDENT-RUNBOOK.md)
+| Servicio | Estado y trabajo pendiente |
+|---|---|
+| **SMTP** | **PENDIENTE DE CONFIGURACIÓN Y VALIDACIÓN.** Proveedor, host, puerto, TLS/STARTTLS, identidad, secreto, remitente y destinatarios autorizados; comprobar envío y recepción. |
+| **OTP** | **PENDIENTE DE VALIDACIÓN FINAL.** Generación, hash, 15 minutos de caducidad, cinco intentos y consumo único implementados; falta entrega corporativa y completar acceso/registro con el código recibido. |
+| **Postmark** | **PENDIENTE DE CONFIGURACIÓN FINAL Y ENTREGA REAL.** Server Token protegido, remitente/dominio autorizado y verificaciones del proveedor; comprobar recepción y destinatario al pulsar Responder. |
+| **Google** | Cliente web, correo corporativo informativo, origen/callback, secreto protegido e interacción real de verificación/vinculación. Mantener desactivado hasta verificar. No cambia correo API/SMTP. |
+| **WireGuard/SFTP** | Equipos, redes, claves, agente, destinos y conectividad reales por verificar. Los scripts no se han instalado en servidores corporativos. |
+| **TURN y retención** | Relay de medios entre redes externas y política empresarial de conservación/supresión pendientes de validación/aprobación. |
 
-No use `manage.py`, servidores Python ni despliegues nativos: son tecnologia retirada.
+Postmark es un servicio en la nube especializado en correo transaccional por
+API o SMTP. Su adaptador está implementado; **no se declara operativo** aquí.
+Se observaron HTTP 400 en `PUT /api/system/mail/` y HTTP 503 en
+`POST /api/system/mail/test/`. El [diagnóstico](docs/mail-api-smtp-operations.md#errores-conocidos-y-validación-corporativa)
+separa esos resultados históricos de una reproducción nueva; no se envía correo
+ni se cambia configuración real sólo para actualizar un informe.
+
+**API exclusiva conserva SMTP y prohíbe su fallback.** Un token configurado o
+una aceptación del proveedor no acreditan el buzón. No modificar DNS, DKIM,
+Return-Path, MX, A, AAAA, CNAME o nameservers de la web corporativa antigua.
+
+## Índice de documentación y mantenimiento
+
+| Necesidad | Documento de referencia |
+|---|---|
+| Utilizar los tres paneles | [Manual de usuario y administración](ADMIN.md) |
+| Instalar, entender arquitectura y actualizar | [Despliegue y mapa técnico](docs/DEPLOYMENT.md) |
+| Controles, secretos y riesgos | [Seguridad](SECURITY.md) y [excepciones Rust](backend-rust/SECURITY_ADVISORY_EXCEPTIONS.md) |
+| Gates Docker/Git y cierre obligatorio | [REPAIR_WORKFLOW](docs/REPAIR_WORKFLOW.md), [AGENTS](AGENTS.md) |
+| Configurar empresa y anfitrión | [Infraestructura y puesta en producción](docs/infrastructure-operations.md) |
+| Preparar servidores externos | [Instaladores Windows/Linux](scripts/backup-external/README.md) |
+| Copias, cadenas, restauración | [Backup y recovery](docs/BACKUP_RESTORE.md), [operación simplificada](docs/BACKUPS_SIMPLIFIED.md) |
+| Correo transaccional y diagnóstico | [API/SMTP](docs/mail-api-smtp-operations.md) |
+| Google Cloud y OAuth | [Google OAuth](docs/google-oauth-operations.md) |
+| Bajas e históricos | [Ciclo de cuenta](docs/account-lifecycle-operations.md) |
+| Incidentes y continuidad | [Runbook](infra/monitoring/INCIDENT-RUNBOOK.md) |
+| Pruebas y documentos históricos | [Validación e índice de evidencias](docs/LOCAL_VALIDATION.md) |
+
+Las guías operativas son la referencia actual; los informes fechados conservan
+contexto y no deben copiarse como instrucciones de despliegue. Revalide después
+de cada build, mantenga backups y recuperación de claves independientes y
+publique únicamente después de los gates. No ejecute herramientas históricas
+de reconstrucción o instaladores externos en la instancia real por rutina.

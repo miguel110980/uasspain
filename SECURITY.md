@@ -15,7 +15,36 @@
   postmaster funciona sin capacidades Linux efectivas. Consulte el
   [procedimiento cifrado](docs/DEPLOYMENT.md#reconstruccion-postgresql-desde-migraciones).
 
-## Riesgos abiertos
+## Estado de controles y límites de evidencia
+
+La revisión documental del 14 de octubre distingue código, pruebas y producción.
+Los resultados actuales se enlazan desde [validación](docs/LOCAL_VALIDATION.md);
+los recuentos fechados más abajo no sustituyen un nuevo scan.
+
+| Control implementado | Evidencia / comprobación | Pendiente o límite |
+|---|---|---|
+| Contraseñas Argon2id, OTP con hash/expiración/intentos y recuperación de un uso | `auth.rs`, `registration.rs`, suites aisladas. | Entrega corporativa no verificada. No registrar códigos ni credenciales. |
+| Sesiones por ventana, cookies Secure/HttpOnly/SameSite, cuenta/rol y caducidad 900 s | `auth.rs`, `windowSession.ts`; pruebas de logout, refresh y permisos. | No confiar en roles del navegador ni restaurar tokens revocados. |
+| ADMIN protegido frente a bloqueo/cierre forzoso; baja protege último administrador | `connections.rs`, `account_lifecycle.rs`; transacciones y pruebas negativas. | Baja propia reforzada y logout normal tienen reglas distintas. |
+| OAuth PKCE/state/nonce, RS256/JWKS/claims, sub único y reautenticación | `google_oauth.rs`, `google_oidc.rs`; proveedor sintético aislado, replay y concurrencia. | Google real pendiente; email coincidente no vincula ni concede roles. |
+| RBAC y autorización de recursos, archivos, canales y llamadas | `academic_scope.rs`, `uploads.rs`, `chat.rs`, `video.rs`; E2E de IDOR/aislamiento. | Ocultar botones no protege una API. |
+| Consultas parametrizadas, validación y límites de carga | SQLx, validadores Rust y límites Nginx por ruta. | SQL dinámico necesita allowlist/citado; prueba local no acredita resistencia DDoS ni ausencia absoluta de inyección. |
+| XSS y errores seguros | React escapa texto; SEO escapa HTML/JSON; CSP y `error.rs` con correlación. | Revisar cualquier uso de HTML; CSP no sustituye validación. |
+| CSRF, CORS y WSS | Cookies restringidas, origen/ventana y autorización de sockets, allowlists Rust/Nginx. | No relajar orígenes/TLS para obtener PASS; revisar origen real tras proxy. |
+| SSRF y rutas | Endpoint de proveedor controlado, SFTP validado contra peer, raíces permitidas y rechazo de traversal/enlaces. | Red/VPN/DNS corporativos por verificar; no aceptar rutas a secretos. |
+| TLS entre servicios | CA/hostname, PostgreSQL verify-full, Redis TLS/ACL y proxy TLS. | Certificado público y redes empresariales por configurar sin versionar claves. |
+| Cifrado persistente | gocryptfs PostgreSQL, AES-GCM de campos/secretos/backups y DPAPI en Windows actual. | No cifra todo el host ni prueba borrado forense; recuperación de claves independiente. |
+| Docker segmentado y permisos limitados | Cinco servicios, edge/data, read-only, tmpfs, límites y no-new-privileges. | FUSE/SYS_ADMIN sólo para montar; postmaster sin capacidades. No todo entrypoint es no root. |
+| Supervisión WireGuard autenticada | HMAC, frescura e identidad; sin comandos arbitrarios ni claves privadas. | Sin observación válida: BLOCKED/desconocido; no equivale a túnel conectado. |
+| Correo persistente | Outbox cifrada, reservas transaccionales, reintentos clasificados y UNKNOWN tras resultado incierto. | Sin promesa de exactamente una vez ni DELIVERED sin evidencia; sin fallback SMTP en API exclusiva. |
+| Auditoría y datos personales | Eventos protegidos, CSV autorizado/limitado, secretos no devueltos y errores redactados. | Retención/supresión empresarial por aprobar; no certifica RGPD/ISO/OWASP. |
+
+**NO APLICABLES a esta entrega local:** cambios de DNS, apertura de firewall
+externo y revocación remota automática; se excluyen por alcance, no se marcan
+verificados. VPN real, SFTP corporativo, TURN, Google y entrega de correo siguen
+**PENDIENTES** donde falte evidencia externa.
+
+## Riesgos y resultados históricos
 
 Al 2026-10-02:
 
@@ -42,9 +71,11 @@ El gate de publicacion Git de la baseline limpia es independiente. El gate de de
 
 No muestre valores en documentacion, commits, argumentos, logs ni tickets.
 
-## Baseline publica y preservacion local
+## Historial público y preservación local
 
-La baseline publica se crea como un nuevo commit raiz y no importa objetos del historial local anterior. El bundle Git, el parche del worktree y el snapshot completo se conservan fuera del repositorio como rollback verificable. Antes de publicar, ejecute:
+La baseline de octubre se creó sin importar el historial local anterior. Ese
+hecho histórico **no autoriza crear otra raíz ni reescribir Git ahora**.
+Conserve bundles y snapshots existentes. Antes de publicar, ejecute:
 
 ```powershell
 git fsck --full
@@ -52,7 +83,9 @@ gitleaks dir . --config .gitleaks.toml --redact
 gitleaks git . --config .gitleaks.toml --redact
 ```
 
-Revalide Rust, frontend, Compose, E2E y recovery. La publicacion inicial usa un `push` normal a un remoto vacio; no requiere ni autoriza `--force`.
+Revalide Rust, frontend, Compose, E2E y recovery. La publicación actual usa
+fetch y push normal a la rama existente, sin force; compruebe SHA, salud y
+función después de publicar.
 
 ## Respuesta y divulgacion
 

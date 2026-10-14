@@ -55,3 +55,98 @@ PRODUCTION_READY=NOT_COMPLETE
 El responsable con acceso deberá confirmar el remitente, autorizar la prueba, comprobar recepción y cabeceras y pulsar Responder sin enviar la respuesta para verificar el destinatario. Los valores DKIM o Return-Path deben obtenerse del panel autorizado; esta documentación no inventa registros DNS.
 
 No hay commit, push, envío real corporativo ni despliegue remoto autorizados para esta implementación.
+
+## Errores conocidos y validación corporativa
+
+**SMTP — PENDIENTE DE CONFIGURACIÓN Y VALIDACIÓN.** La empresa debe aportar
+proveedor, host, puerto, TLS/STARTTLS admitido, usuario/autenticación compatible,
+secreto protegido, remitente autorizado y destinatario corporativo. Introducir
+la configuración desde **Administración → Configuración → SMTP / Correo**,
+manteniendo la contraseña cifrada y los secretos fuera de Git, imágenes y
+logs. Un campo de secreto vacío conserva el anterior. Elegir SMTP expresamente
+cuando proceda, autorizar el destinatario y verificar envío y recepción reales.
+No cambiar a SMTP para ocultar un fallo del modo API exclusivo.
+
+**OTP — PENDIENTE DE CONFIGURACIÓN Y VALIDACIÓN FUNCIONAL.** La lógica existe
+en `registration.rs`, `auth.rs`, `mail_queue.rs` y `email.rs` del backend:
+
+- Código aleatorio de seis dígitos, hash Argon2 en la cuenta y contenido del
+  correo cifrado en outbox. No registrar ni exportar el código en texto claro.
+- Registro y login OTP caducan a los 15 minutos, con máximo cinco intentos
+  por código y consumo único mediante actualización condicional PostgreSQL.
+- Reenvío/emisión respeta el intervalo de un minuto. Los endpoints aplican
+  rate limiting de diez peticiones por clave IP/operación/email en cinco
+  minutos; además conservar los controles del proxy y sesión.
+- La política administrativa existente determina roles que requieren OTP.
+  El login no emite sesión antes de completar los requisitos de la cuenta.
+  Un fallo de entrega obligatoria invalida el OTP de login y devuelve error;
+  no entrega sesiones para intentar compensar una caída del correo.
+- Emisión y trabajo de correo comparten transacción; los trabajos caducados
+  no se reenvían. La cola conserva errores/estado seguro, límites y resultados
+  inciertos sin reenviar automáticamente ni cambiar de transporte.
+
+Estos controles fueron probados con fixtures aislados en auditorías anteriores;
+esta integración **inspecciona código y documenta**, no vuelve a ejecutar
+registro, login ni envíos. Para cerrar OTP corporativo: confirmar el canal,
+autorizar una cuenta de prueba aislada/destinatario, recibir el mensaje real,
+verificar el código desde la interfaz, comprobar caducidad/consumo único y
+errores sin afectar cuentas reales. No declarar entrega funcional porque un
+proveedor haya aceptado el mensaje o porque exista un fichero de fixture.
+
+**POSTMARK — PENDIENTE DE CONFIGURACIÓN FINAL Y VALIDACIÓN REAL.** Es un
+servicio especializado de correo transaccional mediante API o SMTP. UASSpain
+ha implementado su API HTTPS y conserva SMTP como alternativa seleccionable.
+Preparar una cuenta/servidor Live autorizado y el Server API Token protegido;
+no mostrar ni solicitar tokens por el chat. No confundir ese token con el
+Account API Token para consultas de dominios/remitentes.
+
+Confirmar la Sender Signature o dominio y el remitente corporativo desde el
+panel autorizado, siguiendo el [inicio de Postmark](https://postmarkapp.com/support/article/1002-getting-started-with-postmark).
+El servidor utiliza `no-reply@uasspain.com` como propuesta, no como prueba de
+verificación. Conservar `info@uasspain.com` como destino corporativo acordado,
+y verificar antes la configuración vigente. Contacto debe enviar From del
+remitente autorizado, To corporativo y Reply-To del visitante.
+
+Revisar DKIM, SPF y política DMARC corporativos sin modificar DNS en esta fase.
+Postmark autentica SPF para su Return-Path; el alineamiento SPF requiere el
+Return-Path corporativo apropiado, y DMARC acepta SPF o DKIM alineados.
+No añadir un SPF inventado/duplicado: obtener los registros exactos del panel
+y coordinar el corte de producción con el operador de la web anterior.
+Consultar [SPF de Postmark](https://postmarkapp.com/support/article/how-do-i-set-up-spf-for-postmark)
+y [Return-Path](https://postmarkapp.com/support/article/910-how-do-i-add-a-custom-return-path).
+
+Incidencias observadas y pendientes de cierre:
+
+| Operación | Resultado conocido | Diagnóstico y condición para cerrar |
+|---|---|---|
+| `PUT /api/system/mail/` | HTTP 400, `validation_error` | El backend impide activar API antes de guardar y verificar una credencial/remitente. Ese guard puede producir el 400; falta conservar el `detail`/payload redactado de la petición original para atribuir su causa exacta. No desactivar el guard ni declarar reparada la incidencia sólo al guardar configuración. |
+| `POST /api/system/mail/test/` | HTTP 503, `service_unavailable` | La prueba histórica terminó `FAILED/provider_rejected`. El Server API respondió 200 en una consulta de diagnóstico, lo que acredita acceso al servidor, no remitente ni permiso de envío. El código de rechazo original de Postmark no se conservó, por lo que no se atribuye una causa específica ni se declara envío correcto. |
+
+El diagnóstico es histórico. La revisión documental del 14/10 no reenvía correo
+ni repite PUT sobre configuración corporativa para intentar reproducirlo:
+ambas operaciones escribirían datos reales y el envío carece de remitente
+confirmado. Las pruebas aisladas de errores/configuración no cierran esos dos
+incidentes de la instancia principal; su reproducción real queda **BLOCKED_EXTERNAL**
+hasta disponer de remitente y destinatario autorizados. No se declara que el
+400/503 siga ocurriendo en una petición nueva. Registrar correlación,
+estado de outbox y código redactado del proveedor cuando se autorice una
+prueba nueva; distinguir rechazo permanente, circuito abierto, timeout y
+entrega desconocida. Conservar credenciales antiguas y SMTP; no habilitar
+fallback, resetear la cola ni reenviar estados UNKNOWN a ciegas.
+
+La exclusividad se comprobó por lectura en `mail_queue::enqueue`,
+`mail_config` y el servicio de entrega centralizado: cuando `api_exclusive`
+está persistido, se selecciona Postmark y no se incluye transporte SMTP;
+si falta verificación/clave se rechaza el envío. Esto aplica al OTP, Contacto,
+recuperación y notificaciones. Las pruebas de candidato y de reversión SMTP
+son operaciones administrativas explícitas, no fallback automático. No se
+ha detectado un incumplimiento de esa política en la lectura; su prueba real
+corporativa permanece pendiente.
+
+Antes de producción, resolver los errores conocidos con una prueba autorizada,
+comprobar recepción real y cabeceras, pulsar Responder para verificar destinatario
+(sin necesidad de enviar la respuesta), revisar rechazos/rebotes, monitorización
+y límites, y probar OTP completo. Guardar evidencias sin secretos. La
+[guía de puesta en producción](infrastructure-operations.md#guía-de-configuración-y-puesta-en-producción)
+integra estos pasos con HTTPS y backups. `PRODUCTION_READY=NOT_COMPLETE` mientras
+falten las comprobaciones reales.

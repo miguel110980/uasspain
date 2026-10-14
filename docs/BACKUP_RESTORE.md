@@ -1,6 +1,12 @@
 # Backup y recuperación
 
-La implementación activa vive en el backend Rust y se opera desde `/admin/backups` o la API autenticada de administración. Protege PostgreSQL y media, usa AES-256-GCM con nonce aleatorio y una subclave exclusiva del dominio backup, SHA-256, manifiestos versionados, un destino local y hasta dos destinos SFTP independientes.
+La implementación vive en el backend Rust y se opera desde **Administrador →
+Copias de seguridad** (`/admin?section=backups`) o la API autenticada de
+administración. `/admin/backups` no es una ruta del router actual. Protege
+PostgreSQL y media mediante AES-256-GCM con nonce aleatorio y una subclave del
+dominio backup, SHA-256, manifiestos versionados, un destino local y dos SFTP
+independientes. Consulte [validación local](LOCAL_VALIDATION.md) para la versión
+y el alcance realmente probado.
 
 Los datos persisten en `backups_data`; las identidades SSH y `known_hosts`, en `backup_keys`; la media, en `uasspain_media_data`. Las claves de cifrado llegan mediante Docker secrets y nunca se escriben en el manifiesto: solo se registra un `key_id` derivado y no secreto.
 
@@ -21,6 +27,15 @@ una mejora pendiente.
 - Retención y eliminación rechazan cualquier FULL/parent con descendientes, además del último punto bueno.
 
 ## Destinos remotos y VPN
+
+Los dos instaladores de servidor encontrados se conservan como copias revisadas
+en [scripts/backup-external](../scripts/backup-external/README.md). Consulte ese
+inventario para parámetros, dependencias ausentes y pruebas estáticas. Su
+integración no instala ni valida equipos externos. Los instaladores generan
+configuración para WireGuard oficial y no exigen clientes personalizados ni ZIP;
+las pruebas autorizadas sobre hosts dedicados siguen pendientes.
+La [guía de infraestructura](infrastructure-operations.md#servidores-externos-wireguard-y-sftp)
+explica cómo preparar cada servidor y configurar sus destinos desde administración.
 
 En producción `BACKUP_REQUIRE_VPN=true`: `sftp_host` debe coincidir con la IP privada configurada en `vpn_ip`. SFTP exige autenticación por clave, `BatchMode`, `StrictHostKeyChecking` y un archivo `known_hosts` absoluto. Cada artefacto sube con nombre `.partial` y solo aparece con su nombre final después de `rename`.
 
@@ -76,7 +91,9 @@ Limitaciones conocidas:
 
 - Los deltas son de archivos lógicos; no ofrecen WAL/PITR ni reducen el coste de generar `pg_dump`.
 - Los dos destinos remotos y sus VPN reales deben provisionarse y probarse fuera del laboratorio Docker.
-- Falta alerting externo y una comprobacion de capacidad libre en cada peer.
+- Falta alerting externo corporativo. La comprobación de capacidad está
+  implementada mediante statvfs SFTP y probada con peers aislados; falta
+  validarla en cada servidor externo real, junto con sus cuotas.
 - La subclave de backup esta separada por dominio, pero la raiz operacional debe independizarse y someterse a un drill de rotacion.
 
 `RPO_RTO=NOT_ESTABLISHED`: sin SLA aprobado ni ciclos productivos medidos no se declara un objetivo cumplido. Como punto de partida para aprobacion de negocio puede evaluarse 24 h/4 h en servicio normal y 4 h/2 h en periodos criticos; son propuestas, no resultados.
