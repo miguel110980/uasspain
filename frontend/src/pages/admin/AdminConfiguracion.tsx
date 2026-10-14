@@ -4,7 +4,7 @@ import {
   Settings, Shield, Mail, Users, Plug, ScrollText, Loader2,
 } from 'lucide-react';
 import authService from '@/services/authService';
-import RuntimeIntegrationForm from '@/components/admin/RuntimeIntegrationForm';
+import GoogleOAuthForm from '@/components/admin/GoogleOAuthForm';
 import MailIntegrationForm from '@/components/admin/MailIntegrationForm';
 import type { SystemStatusResponse } from '@/api/systemStatus';
 import { websocketServiceStatus } from '@/lib/systemStatus';
@@ -23,7 +23,7 @@ const badge = (ok) => (ok
   : 'border-warning-border bg-warning-soft text-warning');
 
 export default function AdminConfiguracion() {
-  const [activa, setActiva] = useState('general');
+  const [activa, setActiva] = useState(() => new URLSearchParams(window.location.search).get('tab') === 'integraciones' ? 'integraciones' : 'general');
   const [status, setStatus] = useState<SystemStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -135,7 +135,7 @@ export default function AdminConfiguracion() {
             ))}
           </ul>
           {activa === 'smtp' && <MailIntegrationForm onSaved={() => { void authService.getSystemStatus().then(setStatus).catch(() => setStatus(null)); }} />}
-          {activa === 'integraciones' && <RuntimeIntegrationForm kind="google" onSaved={() => { void authService.getSystemStatus().then(setStatus).catch(() => setStatus(null)); }} />}
+          {activa === 'integraciones' && <GoogleOAuthForm onSaved={() => { void authService.getSystemStatus().then(setStatus).catch(() => setStatus(null)); }} />}
         </div>
       </div>
     </motion.div>

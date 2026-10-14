@@ -25,6 +25,7 @@ const AlumnoPanel = lazy(() => import('./pages/AlumnoPanel'));
 const InstructorPanel = lazy(() => import('./pages/InstructorPanel'));
 const PanelChoice = lazy(() => import('./pages/PanelChoice'));
 const RestablecerContrasena = lazy(() => import('./pages/RestablecerContrasena'));
+const GoogleOAuthCallback = lazy(() => import('./pages/GoogleOAuthCallback'));
 const PoliticaPrivacidad = lazy(() => import('./pages/PoliticaPrivacidad'));
 const AvisoLegal = lazy(() => import('./pages/AvisoLegal'));
 const PoliticaCookies = lazy(() => import('./pages/PoliticaCookies'));
@@ -97,6 +98,7 @@ function App({ initialHome }: { initialHome?: ComponentType } = {}) {
             <Route path="/formacion/*" element={<CursoDinamico />} />
             <Route path="/elegir-panel" element={<PanelChoice />} />
             <Route path="/restablecer-contrasena" element={<RestablecerContrasena />} />
+            <Route path="/auth/google/callback" element={<GoogleOAuthCallback />} />
             <Route path="/admin" element={<ProtectedRoute role="admin"><AdminPanel /></ProtectedRoute>} />
             <Route path="/instructor" element={<ProtectedRoute role="instructor"><InstructorPanel /></ProtectedRoute>} />
             <Route path="/alumno" element={<ProtectedRoute role="alumno"><AlumnoPanel /></ProtectedRoute>} />

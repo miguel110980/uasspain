@@ -165,7 +165,7 @@ async fn run_migrations(pool: &PgPool) -> Result<(), AppError> {
         sqlx::query("REVOKE INSERT, UPDATE, DELETE ON public._sqlx_migrations FROM uasspain_app")
             .execute(pool)
             .await?;
-        sqlx::query("REVOKE UPDATE, DELETE ON public.account_lifecycle_event, public.infrastructure_evidence FROM uasspain_app")
+        sqlx::query("REVOKE UPDATE, DELETE ON public.account_lifecycle_event, public.infrastructure_evidence, public.google_oauth_event FROM uasspain_app")
             .execute(pool)
             .await?;
     }

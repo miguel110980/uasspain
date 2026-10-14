@@ -161,6 +161,9 @@ test.describe('panel modals and data consistency', { tag: '@panel-modals' }, () 
     await expect(studentConfirmation).toHaveCount(0);
     await expect(page.getByText(message, { exact: true })).toBeVisible();
     await section(instructor, 'Chat');
+    // Existing unread staff messages can legitimately select Administración.
+    // Choose the student channel explicitly before testing its moderation.
+    await instructor.locator('main').getByRole('button', { name: /^Alumnos(?:\s+\d+)?$/ }).click();
     await instructor.locator('main button').filter({ has: instructor.getByText('E2E Alumno', { exact:true }) }).filter({ visible:true }).click();
     const conversation = instructor.getByRole('region', { name:'Conversación con E2E Alumno', exact:true });
     await conversation.getByRole('button', { name:'Limpiar conversación', exact:true }).click();

@@ -172,16 +172,11 @@ pub async fn setting(state: &AppState, key: &str) -> Result<Option<Value>, AppEr
     )
 }
 pub async fn google(state: &AppState) -> Result<GoogleConfig, AppError> {
-    if let Some(value) = setting(state, "google_oauth").await? {
-        return serde_json::from_value(value).map_err(|_| AppError::Internal);
-    }
-    let client_id = std::env::var("GOOGLE_CLIENT_ID")
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
+    let config = crate::google_oauth::config(state).await?;
+    let secret = secret(state, "google_oauth_client_secret").await?.is_some();
     Ok(GoogleConfig {
-        enabled: !client_id.is_empty(),
-        client_id,
+        enabled: config.enabled && config.verified() && secret,
+        client_id: config.client_id,
     })
 }
 pub async fn google_client_id(state: &AppState) -> Result<String, AppError> {

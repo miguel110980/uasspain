@@ -1,0 +1,21 @@
+# Temporary synthetic provider; layer exclusively over uasspain-e2e.
+services:
+  backend-e2e:
+    environment:
+      GOOGLE_OIDC_SYNTHETIC_TESTS: "true"
+      FRONTEND_URL: https://localhost:8444
+  google-oidc-e2e:
+    image: node:22.23.2-alpine3.24@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85
+    command: [node, /fixture/google-oidc-provider.mjs]
+    user: '1000:1000'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    volumes: ['./scripts/e2e/google-oidc-provider.mjs:/fixture/google-oidc-provider.mjs:ro']
+    ports: ['127.0.0.1:8072:8080']
+    networks: [e2e_net]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20

@@ -7,6 +7,9 @@ let cancelEarlyClicks = () => {};
 // Keep the prerendered home visible while its code loads instead of replacing
 // its heading with a fullscreen loader on the first paint.
 async function mount() {
+  if (window.location.pathname === '/auth/google/callback') {
+    (await import('@/lib/googleCallbackHandoff')).prepareGoogleCallback();
+  }
   const root = document.getElementById('root');
   // Record styles already delivered inline so Vite's lazy loader does not
   // append and apply a second copy. Set disabled before href/append to avoid

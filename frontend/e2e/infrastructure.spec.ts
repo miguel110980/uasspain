@@ -7,6 +7,7 @@ test('infrastructure wizard persists progress and never invents external readine
   expect(testInfo.project.use.baseURL).toBe('https://localhost:8444');
   const admin = await adminClient();
   const before = sql('SELECT to_jsonb(c) FROM infrastructure_config c WHERE id=1');
+  const schemaBefore = sql('SELECT MAX(version) FROM _sqlx_migrations WHERE success');
   const namespace = 'TEMP Browser Infrastructure ' + randomUUID();
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   const q = value => "'" + String(value).replaceAll("'", "''") + "'";
@@ -30,8 +31,8 @@ test('infrastructure wizard persists progress and never invents external readine
     await scene.getByLabel('Dirección IP o dominio', { exact: true }).fill('infrastructure-fixture.test');
     await scene.getByLabel('Zona horaria IANA', { exact: true }).fill('Europe/Madrid');
     await scene.getByLabel('Tipo de instalación').selectOption('unknown');
-    await scene.getByRole('button', { name: 'Guardar progreso', exact: true }).click();
-    await expect(scene.getByRole('status')).toContainText('Progreso guardado');
+    await scene.getByRole('button', { name: 'Guardar configuración', exact: true }).click();
+    await expect(scene.getByRole('status')).toContainText('Configuración guardada');
     expect((await admin.call('/api/infrastructure/')).body.config.server_name).toBe(namespace);
     await page.reload(); await page.locator('aside:visible nav').getByRole('button', { name: 'Configuración inicial', exact: true }).click();
     await expect(scene.getByLabel('Nombre del servidor', { exact: true })).toHaveValue(namespace);
@@ -51,22 +52,23 @@ test('infrastructure wizard persists progress and never invents external readine
     }
     await page.setViewportSize({ width: 1440, height: 900 });
     await scene.getByRole('button', { name: 'Guardar y ejecutar comprobaciones', exact: true }).click();
-    await expect(scene.getByText('Estado de preparación: BLOCKED', { exact: true })).toBeVisible();
-    await expect(scene.getByRole('region', { name: 'Evidencias de preparación' })).toContainText('BLOCKED');
-    const download = page.waitForEvent('download'); await scene.getByRole('button', { name: 'Exportar configuración pública', exact: true }).click();
+    await expect(scene.getByText('Estado de configuración: Configuración pendiente o servicio no disponible.', { exact: true })).toBeVisible();
+    await expect(scene.getByRole('region', { name: 'Evidencias de preparación' })).toContainText('Configuración pendiente o servicio no disponible.');
+    await page.locator('aside:visible nav').getByRole('button', { name: 'Conexiones VPN', exact: true }).click();
+    const download = page.waitForEvent('download'); await page.getByRole('region', { name: 'Configuración de conexión VPN', exact: true }).getByRole('button', { name: 'Descargar configuración de conexión', exact: true }).click();
     const exported = await download; expect(exported.suggestedFilename()).toBe('UASSpain-infraestructura-publica.json');
     const data = await exported.createReadStream(); const chunks: Buffer[] = []; for await (const chunk of data!) chunks.push(chunk);
     const payload = JSON.parse(Buffer.concat(chunks).toString()); expect(payload.secrets_included).toBe(false); expect(payload.config.server_name).toBe(namespace);
     expect(Object.keys(payload.config.vpn)).not.toContain('private_key'); expect(errors).toEqual([]);
-    expect(sql('SELECT MAX(version) FROM _sqlx_migrations WHERE success')).toBe('29');
+    expect(sql('SELECT MAX(version) FROM _sqlx_migrations WHERE success')).toBe(schemaBefore);
     configure(false); temporarilyDisabled = true;
     await page.reload(); await page.locator('aside:visible nav').getByRole('button', { name: 'Configuración inicial', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Infraestructura temporalmente deshabilitada' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Guardar progreso', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Guardar configuración', exact: true })).toHaveCount(0);
     expect((await admin.call('/api/infrastructure/')).body.config.server_name).toBe(namespace);
     configure(true); temporarilyDisabled = false;
     await page.reload(); await page.locator('aside:visible nav').getByRole('button', { name: 'Configuración inicial', exact: true }).click();
-    await expect(scene.getByRole('button', { name: 'Guardar progreso', exact: true })).toBeVisible();
+    await expect(scene.getByRole('button', { name: 'Guardar configuración', exact: true })).toBeVisible();
   } finally {
     if (temporarilyDisabled) configure(true);
     const current = sql("SELECT config->>'server_name' FROM infrastructure_config WHERE id=1");

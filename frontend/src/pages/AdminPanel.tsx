@@ -71,8 +71,8 @@ const NAV_GROUPS = [
     items: [
       { id: 'monitorizacion', label: 'Monitorización', icon: Server },
       { id: 'notificaciones', label: 'Notificaciones', icon: Bell },
-      { id: 'backups', label: 'Backups', icon: DatabaseBackup },
-      { id: 'vpn', label: 'VPN', icon: ShieldCheck },
+      { id: 'backups', label: 'Copias de seguridad', icon: DatabaseBackup },
+      { id: 'vpn', label: 'Conexiones VPN', icon: ShieldCheck },
       { id: 'configuracion', label: 'Configuración', icon: Settings },
     ],
   },
@@ -94,14 +94,18 @@ function AdminUserSections() {
 }
 
 export default function AdminPanel() {
-  const [section, setSection] = useState('dashboard');
+  const initialSection = () => {
+    const selected = new URLSearchParams(window.location.search).get('section');
+    return ['configuracion', 'vpn', 'backups', 'infraestructura-setup'].includes(selected) ? selected : 'dashboard';
+  };
+  const [section, setSection] = useState(initialSection);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, profile: authProfile } = usePanelAuthContext();
   const [pendingCount, setPendingCount] = useState(0);
   const [staffUnread, setStaffUnread] = useState(0);
   const [videoIncoming, setVideoIncoming] = useState(0);
   const [accountProfile, setAccountProfile] = useState(null);
-  const [visitedTabs, setVisitedTabs] = useState(() => new Set(['dashboard']));
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set([initialSection()]));
 
   const handleStaffUnreadChange = useCallback((count) => {
     setStaffUnread(typeof count === 'number' ? count : 0);
@@ -110,6 +114,11 @@ export default function AdminPanel() {
   const handleSelectSection = (id) => {
     setSection(id);
     setVisitedTabs((prev) => new Set(prev).add(id));
+    const url = new URL(window.location.href);
+    if (['configuracion', 'vpn', 'backups', 'infraestructura-setup'].includes(id)) url.searchParams.set('section', id);
+    else url.searchParams.delete('section');
+    url.hash = '';
+    window.history.replaceState(window.history.state, '', url.pathname + url.search);
   };
 
   useEffect(() => {
@@ -216,8 +225,8 @@ export default function AdminPanel() {
     monitorizacion: <PanelSection><AdminMonitorizacion /></PanelSection>,
     notificaciones: <PanelSection><AdminNotificaciones /></PanelSection>,
     backups: <PanelSection><AdminBackups /></PanelSection>,
-    vpn: <PanelSection><AdminVpn /></PanelSection>,
-    'infraestructura-setup': <PanelSection><AdminInfrastructure /></PanelSection>,
+    vpn: <PanelSection><AdminVpn active={section === 'vpn'} onNavigate={handleSelectSection} /></PanelSection>,
+    'infraestructura-setup': <PanelSection><AdminInfrastructure active={section === 'infraestructura-setup'} onNavigate={handleSelectSection} /></PanelSection>,
     configuracion: <PanelSection><AdminConfiguracion /></PanelSection>,
     cuenta: <PanelSection><AdminCuenta profile={accountProfile ?? authProfile} onProfileUpdate={setAccountProfile} /></PanelSection>,
   };

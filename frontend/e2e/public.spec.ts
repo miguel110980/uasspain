@@ -36,7 +36,11 @@ for (const viewport of [{ width: 320, height: 480 }, { width: 390, height: 320 }
     if (mobile) await page.getByRole('button', { name: 'Abrir menú', exact: true }).click();
     await page.getByRole('button', { name: 'Formación', exact: true }).filter({ visible: true }).click();
     const menu = page.locator(mobile ? '#main-mobile-menu' : '[id^="desktop-menu-"]').filter({ visible: true });
-    const last = menu.getByRole('link', { name: 'Formación Continua', exact: true });
+    // The catalogue is managed in PostgreSQL; test the actual final course,
+    // without requiring a particular business record to exist.
+    const courses = menu.locator('a[href^="/formacion/"]');
+    await expect(courses.first()).toBeVisible();
+    const last = courses.last();
     await last.focus();
     await expect(last).toBeInViewport();
     expect(await menu.evaluate(node => node.getBoundingClientRect().bottom <= innerHeight + 1)).toBe(true);

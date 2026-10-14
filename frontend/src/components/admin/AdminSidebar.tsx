@@ -67,7 +67,7 @@ export default function AdminSidebar({ groups, section, onSelect, isOpen, onClos
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
-                    <span className="truncate">{item.label}</span>
+                    <span className={['vpn', 'backups'].includes(item.id) ? 'min-w-0 whitespace-normal break-words text-left leading-snug' : 'truncate'}>{item.label}</span>
                     {item.badge != null && item.badge > 0 && (
                       <span className="ml-auto min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-bold">
                         {item.badge}

@@ -117,7 +117,7 @@ export default function AdminTopbar({
         <Menu className="w-5 h-5" />
       </button>
 
-      <h1 className="font-heading text-base md:text-lg font-semibold text-foreground truncate">{title}</h1>
+      <h1 className={`font-heading text-base md:text-lg font-semibold text-foreground ${['Conexiones VPN', 'Copias de seguridad', 'Configuración inicial'].includes(title) ? 'min-w-0 whitespace-normal break-words leading-tight' : 'truncate'}`}>{title}</h1>
 
       <div className="relative ml-auto hidden md:flex items-center gap-2 px-3 h-9 w-64 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30 transition-colors">
         <Search className="w-4 h-4 text-muted-foreground/60" />

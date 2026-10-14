@@ -1,3 +1,5 @@
+import { backupDisplayName } from './infrastructure';
+
 export const backupState = (job) => {
   if (job.status === 'creating' || job.status === 'running') return 'En proceso';
   if (job.status === 'partial') return 'Parcial';
@@ -27,7 +29,7 @@ export const backupReplicas = (job) => {
     .filter(([, destination]: [string, any]) => destination.status === 'success')
     .map(([role, destination]: [string, any]) => ({
       id: role === 'local' ? 'local' : destination.server_id || role,
-      name: destination.server_name || (role === 'local' ? 'Servidor local' : role === 'external_1' ? 'Servidor externo 1' : 'Servidor externo 2'),
+      name: backupDisplayName(destination.server_name, role),
     }));
   if (job.historical_local_available && !replicas.some(replica => replica.id === 'local')) {
     replicas.unshift({ id: 'local', name: 'Almacenamiento histórico local' });

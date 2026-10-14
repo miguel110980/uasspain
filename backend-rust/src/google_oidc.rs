@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 
 use crate::error::AppError;
 
-type KeyCache = RwLock<Option<(Instant, JwkSet)>>;
+type KeyCache = RwLock<Option<(String, Instant, JwkSet)>>;
 static KEYS: OnceLock<KeyCache> = OnceLock::new();
 
 pub async fn verified_token(token: &str, client_id: &str) -> Result<serde_json::Value, AppError> {
@@ -22,8 +22,10 @@ pub async fn verified_token(token: &str, client_id: &str) -> Result<serde_json::
         .ok_or(AppError::Unauthorized)?;
     let cache = KEYS.get_or_init(|| RwLock::new(None));
     let mut cached = cache.write().await;
-    let refresh = cached.as_ref().is_none_or(|(fetched, keys)| {
-        fetched.elapsed() > Duration::from_secs(3600)
+    let endpoint = crate::google_oauth::oidc_endpoint("certs")?;
+    let refresh = cached.as_ref().is_none_or(|(source, fetched, keys)| {
+        source != &endpoint
+            || fetched.elapsed() > Duration::from_secs(3600)
             || (keys.find(&kid).is_none() && fetched.elapsed() > Duration::from_secs(60))
     });
     if refresh {
@@ -32,7 +34,7 @@ pub async fn verified_token(token: &str, client_id: &str) -> Result<serde_json::
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| AppError::Unavailable)?
-            .get("https://www.googleapis.com/oauth2/v3/certs")
+            .get(&endpoint)
             .send()
             .await
             .map_err(|_| AppError::Unavailable)?;
@@ -42,11 +44,11 @@ pub async fn verified_token(token: &str, client_id: &str) -> Result<serde_json::
             return Err(AppError::Unavailable);
         }
         let keys: JwkSet = response.json().await.map_err(|_| AppError::Unavailable)?;
-        *cached = Some((Instant::now(), keys));
+        *cached = Some((endpoint, Instant::now(), keys));
     }
     let jwk = cached
         .as_ref()
-        .and_then(|(_, keys)| keys.find(&kid))
+        .and_then(|(_, _, keys)| keys.find(&kid))
         .ok_or(AppError::Unauthorized)?;
     let key = DecodingKey::from_jwk(jwk).map_err(|_| AppError::Unauthorized)?;
     drop(cached);

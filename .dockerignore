@@ -11,6 +11,9 @@
 frontend/dist
 frontend/test-results
 frontend/playwright-report
+# Browser fixtures run from the host against the production image. They are
+# not build inputs; editing a selector must not regenerate the release ID.
+frontend/e2e
 backend-rust/target
 **/__pycache__
 **/*.py[cod]

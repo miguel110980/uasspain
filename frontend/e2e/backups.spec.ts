@@ -14,15 +14,15 @@ test('simplified backups: wizard, schedule, real copy, history and reinforced re
   await page.getByLabel('Contraseña *', { exact: true }).fill('E2eAdmin_2026!'); // pragma: allowlist secret - isolated fixture
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await expect(page).toHaveURL(/\/admin$/);
-  await page.locator('aside:visible nav').getByRole('button', { name: 'Backups', exact: true }).click();
-  const targets = page.getByRole('region', { name: 'Destinos de backup', exact: true });
+  await page.locator('aside:visible nav').getByRole('button', { name: 'Copias de seguridad', exact: true }).click();
+  const targets = page.getByRole('region', { name: 'Servidores de copias de seguridad', exact: true });
   await expect(targets.getByRole('article')).toHaveCount(3);
   await expect(page.getByText('IP privada del peer VPN', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Ruta de la clave privada montada', { exact: true })).toHaveCount(0);
-  const local = targets.getByRole('article', { name: 'Servidor local', exact: true });
-  await expect(local.getByRole('checkbox', { name: 'Activo: Servidor local' })).toBeDisabled();
+  const local = targets.getByRole('article', { name: 'Copias de seguridad locales', exact: true });
+  await expect(local.getByRole('checkbox', { name: 'Servicio habilitado: Copias de seguridad locales' })).toBeDisabled();
   await local.getByRole('button', { name: 'Configurar' }).click();
-  let dialog = page.getByRole('dialog', { name: 'Configurar Servidor local', exact: true });
+  let dialog = page.getByRole('dialog', { name: 'Configurar Copias de seguridad locales', exact: true });
   await dialog.getByLabel('Nombre del destino').fill('Copias de la instalación');
   await dialog.getByRole('button', { name: 'Continuar' }).click();
   await expect(dialog.getByLabel('Tipo de destino')).toHaveValue('local');
@@ -31,14 +31,14 @@ test('simplified backups: wizard, schedule, real copy, history and reinforced re
   await dialog.getByRole('button', { name: 'Guardar', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(local.getByRole('status')).toHaveText('Destino guardado. Prueba la conexión antes de activarlo.');
-  await local.getByRole('button', { name: 'Comprobar conexión' }).click();
+  await local.getByRole('button', { name: 'Verificar conexión con el servidor' }).click();
   await expect(local.getByRole('status')).toHaveText('Conexión correcta.');
   // The controlled switch changes only after the server confirms activation.
-  await local.getByRole('checkbox', { name: 'Activo: Servidor local' }).click();
+  await local.getByRole('checkbox', { name: 'Servicio habilitado: Copias de seguridad locales' }).click();
   await expect(local.getByRole('status')).toHaveText('Destino activado.');
-  await expect(local.getByRole('checkbox', { name: 'Activo: Servidor local' })).toBeChecked();
-  await targets.getByRole('article', { name: 'Servidor externo 1', exact: true }).getByRole('button', { name: 'Configurar' }).click();
-  dialog = page.getByRole('dialog', { name: 'Configurar Servidor externo 1', exact: true });
+  await expect(local.getByRole('checkbox', { name: 'Servicio habilitado: Copias de seguridad locales' })).toBeChecked();
+  await targets.getByRole('article', { name: 'Servidor externo de copias 1', exact: true }).getByRole('button', { name: 'Configurar' }).click();
+  dialog = page.getByRole('dialog', { name: 'Configurar Servidor externo de copias 1', exact: true });
   await dialog.getByLabel('Nombre del destino').fill('Copias externas');
   await dialog.getByRole('button', { name: 'Continuar' }).click();
   await dialog.getByRole('button', { name: 'Continuar' }).click();
@@ -54,7 +54,7 @@ test('simplified backups: wizard, schedule, real copy, history and reinforced re
   await expect(dialog.getByLabel(/known_hosts|clave privada/i)).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Guardar', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  const external = targets.getByRole('article', { name: 'Servidor externo 1', exact: true });
+  const external = targets.getByRole('article', { name: 'Servidor externo de copias 1', exact: true });
   await expect(external.getByRole('checkbox')).not.toBeChecked();
   const schedule = page.getByRole('form', { name: 'Programación de copias', exact: true });
   await schedule.getByRole('combobox', { name: 'Frecuencia', exact: true }).selectOption('weekly');
@@ -66,7 +66,7 @@ test('simplified backups: wizard, schedule, real copy, history and reinforced re
   await schedule.getByRole('button', { name: 'Guardar programación' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Programación guardada.' })).toBeVisible();
   await page.reload();
-  await page.locator('aside:visible nav').getByRole('button', { name: 'Backups', exact: true }).click();
+  await page.locator('aside:visible nav').getByRole('button', { name: 'Copias de seguridad', exact: true }).click();
   await expect(schedule.getByRole('combobox', { name: 'Día de la semana', exact: true })).toHaveValue('2');
   await expect(schedule.getByLabel('Hora', { exact: false })).toHaveValue('04:20');
   await expect(schedule.getByRole('combobox', { name: 'Conservar copias durante', exact: true })).toHaveValue('60');
@@ -135,7 +135,7 @@ test('simplified backups: wizard, schedule, real copy, history and reinforced re
   await expect(page.getByRole('status').filter({ hasText: 'Historial visible limpiado. Las copias se conservan.' })).toBeVisible();
   expect(await inventory.locator('[data-backup-id]').evaluateAll(rows => rows.map(row => row.getAttribute('data-backup-id')))).toEqual(idsBeforeClear);
   await page.reload();
-  await page.locator('aside:visible nav').getByRole('button', { name: 'Backups', exact: true }).click();
+  await page.locator('aside:visible nav').getByRole('button', { name: 'Copias de seguridad', exact: true }).click();
   await expect.poll(() => inventory.locator('[data-backup-id]').evaluateAll(rows => rows.map(row => row.getAttribute('data-backup-id')))).toEqual(idsBeforeClear);
   for (const theme of ['light', 'dark']) {
     await page.evaluate(value => { document.documentElement.classList.toggle('dark', value === 'dark'); }, theme);

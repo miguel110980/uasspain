@@ -236,7 +236,31 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/system/google-oauth/",
-            get(crate::runtime_config::google_get).put(crate::runtime_config::google_put),
+            get(crate::google_oauth::get).put(crate::google_oauth::put),
+        )
+        .route(
+            "/api/system/google-oauth/verify/",
+            post(crate::google_oauth::verify_start),
+        )
+        .route(
+            "/api/system/google-oauth/link/",
+            post(crate::google_oauth::link_start),
+        )
+        .route(
+            "/api/system/google-oauth/complete/",
+            post(crate::google_oauth::admin_complete),
+        )
+        .route(
+            "/api/system/google-oauth/unlink/",
+            post(crate::google_oauth::unlink),
+        )
+        .route(
+            "/api/auth/google/oauth/start/",
+            post(crate::google_oauth::login_start),
+        )
+        .route(
+            "/api/auth/google/oauth/complete/",
+            post(crate::google_oauth::login_complete),
         )
         .route("/api/vpn/status/", get(crate::vpn::status))
         .route(

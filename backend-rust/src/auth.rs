@@ -215,6 +215,13 @@ pub async fn google_challenge(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     crate::runtime_config::google_client_id(&state).await?;
+    if crate::google_oauth::config(&state)
+        .await?
+        .verification_flow_id
+        .is_some()
+    {
+        return Err(AppError::Validation("Google utiliza Authorization Code con PKCE. Actualice la ventana e inicie el flujo seguro.".into()));
+    }
     enforce_login_rate(&headers, "google-challenge")?;
     let nonce = Uuid::new_v4().simple().to_string();
     let proof = state
@@ -268,6 +275,13 @@ pub async fn google_login(
     Json(input): Json<GoogleLoginRequest>,
 ) -> Result<Response, AppError> {
     let client_id = crate::runtime_config::google_client_id(&state).await?;
+    if crate::google_oauth::config(&state)
+        .await?
+        .verification_flow_id
+        .is_some()
+    {
+        return Err(AppError::Validation("Google utiliza Authorization Code con PKCE. Actualice la ventana e inicie el flujo seguro.".into()));
+    }
     window_id(&headers)?;
     if !(16..=8192).contains(&input.id_token.len()) {
         return Err(AppError::Validation("Token de Google no válido.".into()));
@@ -279,17 +293,34 @@ pub async fn google_login(
         return Err(AppError::Unauthorized);
     }
     consume_google_proof(&proof, Utc::now().timestamp() as usize)?;
-    let email = validated_google_email(&token, &client_id, Utc::now().timestamp())?;
-    let lookup = state.cipher.blind_index(&email)?;
+    let mut response = google_verified_login(&state, &headers, &token, &client_id).await?;
+    response.headers_mut().append(
+        SET_COOKIE,
+        format!(
+            "{}=; Path=/api/auth/google/; HttpOnly; SameSite=Strict; Max-Age=0",
+            google_nonce_cookie(&headers)?
+        )
+        .parse()
+        .map_err(|_| AppError::Internal)?,
+    );
+    Ok(response)
+}
+
+pub(crate) async fn google_verified_login(
+    state: &AppState,
+    headers: &HeaderMap,
+    token: &serde_json::Value,
+    client_id: &str,
+) -> Result<Response, AppError> {
+    validated_google_email(token, client_id, Utc::now().timestamp())?;
     let subject_lookup = state.cipher.blind_index(&format!(
         "google:{}",
         token["sub"].as_str().ok_or(AppError::Unauthorized)?
     ))?;
     let row = sqlx::query_as::<_, LoginRow>(
         "SELECT p.id, p.user_id, u.password, u.is_active, p.status, p.role, p.roles, p.otp_verified, p.login_otp_hash, p.login_otp_created_at, p.login_otp_attempts, p.login_2fa_enabled_override,p.username AS profile_username,p.nombre AS profile_nombre,p.apellidos AS profile_apellidos,p.email AS profile_email \
-         FROM accounts_userprofile p JOIN auth_user u ON u.id = p.user_id WHERE p.google_subject_lookup=$2 OR (p.google_subject_lookup IS NULL AND p.email_lookup=$1) ORDER BY (p.google_subject_lookup=$2) DESC NULLS LAST LIMIT 1",
+         FROM accounts_userprofile p JOIN auth_user u ON u.id = p.user_id WHERE p.google_subject_lookup=$1 LIMIT 1",
     )
-    .bind(lookup)
     .bind(subject_lookup.clone())
     .fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?)
     .await?
@@ -309,26 +340,12 @@ pub async fn google_login(
     ) {
         return Err(AppError::Validation("Tu cuenta requiere verificación adicional. Accede con correo, contraseña y código temporal.".into()));
     }
-    let linked = sqlx::query("UPDATE accounts_userprofile SET google_subject_lookup=$1 WHERE id=$2 AND (google_subject_lookup IS NULL OR google_subject_lookup=$1)").bind(subject_lookup).bind(row.id).execute(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
-    if linked.rows_affected() != 1 {
-        return Err(AppError::Unauthorized);
-    }
     let role = row.role.clone();
-    let mut response = finish_login(&state, &headers, &row, &role, "google").await?;
-    response.headers_mut().append(
-        SET_COOKIE,
-        format!(
-            "{}=; Path=/api/auth/google/; HttpOnly; SameSite=Strict; Max-Age=0",
-            google_nonce_cookie(&headers)?
-        )
-        .parse()
-        .map_err(|_| AppError::Internal)?,
-    );
-    Ok(response)
+    finish_login_bound(state, headers, &row, &role, "google", Some(&subject_lookup)).await
 }
 
 // Google JWKS verifies the signature; bind its claims to this application.
-fn validated_google_email(
+pub(crate) fn validated_google_email(
     token: &serde_json::Value,
     client_id: &str,
     now: i64,
@@ -359,7 +376,11 @@ fn validated_google_email(
         || !token
             .get("sub")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|subject| !subject.is_empty())
+            .is_some_and(|subject| {
+                !subject.is_empty()
+                    && subject.len() <= 255
+                    && !subject.chars().any(char::is_control)
+            })
     {
         return Err(AppError::Unauthorized);
     }
@@ -368,14 +389,9 @@ fn validated_google_email(
         .and_then(serde_json::Value::as_str)
         .ok_or(AppError::Unauthorized)?;
     let email = crate::registration::normalize_email(email).map_err(|_| AppError::Unauthorized)?;
-    if !email.ends_with("@gmail.com")
-        && !token
-            .get("hd")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|domain| !domain.is_empty())
-    {
-        return Err(AppError::Unauthorized);
-    }
+    // A verified email is descriptive. Only the immutable signed subject can
+    // select a previously linked UASSpain identity; Workspace membership is not
+    // required and email/domain coincidence never creates a link or a role.
     Ok(email)
 }
 
@@ -385,6 +401,17 @@ async fn finish_login(
     row: &LoginRow,
     role: &str,
     method: &str,
+) -> Result<Response, AppError> {
+    finish_login_bound(state, headers, row, role, method, None).await
+}
+
+async fn finish_login_bound(
+    state: &AppState,
+    headers: &HeaderMap,
+    row: &LoginRow,
+    role: &str,
+    method: &str,
+    expected_google_subject: Option<&str>,
 ) -> Result<Response, AppError> {
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let session_key = Uuid::new_v4().simple().to_string();
@@ -403,8 +430,8 @@ async fn finish_login(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(AppError::Unauthorized)?;
-    let eligible: Option<bool> = sqlx::query_scalar("SELECT u.password=$2 AND u.is_active AND p.status='activo' AND p.otp_verified AND (p.role=$3 OR p.roles ? $3) FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1")
-        .bind(row.id).bind(&row.password).bind(role).fetch_optional(&mut *tx).await?;
+    let eligible: Option<bool> = sqlx::query_scalar("SELECT u.password=$2 AND u.is_active AND p.status='activo' AND p.otp_verified AND (p.role=$3 OR p.roles ? $3) AND ($4::text IS NULL OR p.google_subject_lookup=$4) FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.id=$1")
+        .bind(row.id).bind(&row.password).bind(role).bind(expected_google_subject).fetch_optional(&mut *tx).await?;
     if eligible != Some(true) {
         return Err(AppError::Unauthorized);
     }
@@ -570,7 +597,7 @@ fn context_cookie_name(state: &AppState) -> &'static str {
     }
 }
 
-fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+pub(crate) fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers
         .get(COOKIE)?
         .to_str()
@@ -829,6 +856,8 @@ pub async fn validate_active_session(
                 | "/api/auth/register/"
                 | "/api/auth/google/"
                 | "/api/auth/google/challenge/"
+                | "/api/auth/google/oauth/start/"
+                | "/api/auth/google/oauth/complete/"
                 | "/api/auth/verify-otp/"
                 | "/api/auth/resend-otp/"
                 | "/api/auth/password-reset/"
@@ -1196,7 +1225,7 @@ mod tests {
         }
         let mut external_email = valid.clone();
         external_email.as_object_mut().unwrap().remove("hd");
-        assert!(validated_google_email(&external_email, "client-id", 1000).is_err());
+        assert!(validated_google_email(&external_email, "client-id", 1000).is_ok());
         external_email["email"] = serde_json::json!("user@gmail.com");
         assert!(validated_google_email(&external_email, "client-id", 1000).is_ok());
         let mut absent_audience = valid;

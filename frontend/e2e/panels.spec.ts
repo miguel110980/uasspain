@@ -6,7 +6,7 @@ const roles = [
     'Dashboard', 'Actividad en tiempo real', 'Estadísticas', 'Conexiones en vivo',
     'Registro de Conexiones', 'Seguridad', 'Auditoría', 'Chat', 'Gestión de Usuarios',
     'Instructores', 'Blog / Publicaciones', 'Formación / Cursos', 'Monitorización',
-    'Notificaciones', 'Backups', 'VPN', 'Configuración', 'Mi cuenta',
+    'Notificaciones', 'Copias de seguridad', 'Conexiones VPN', 'Configuración', 'Mi cuenta',
   ] },
   { role: 'instructor', email: 'instructor.e2e@test.local', password: 'E2eInstr_2026!', sections: [ // pragma: allowlist secret - isolated fixture
     'Dashboard', 'Alumnos', 'Exámenes', 'Material', 'Resultados', 'Estadísticas',
@@ -49,30 +49,33 @@ test('admin runtime settings and all three empty backup slots are editable', asy
   expect(view).not.toHaveProperty('ciphertext');
   await page.getByRole('button', { name: 'Integraciones', exact: true }).click();
   const google = page.getByRole('form', { name: 'Configuración Google OAuth', exact: true });
-  await expect(google.getByRole('button', { name: 'Guardar configuración' })).toBeEnabled();
+  await expect(google.getByRole('button', { name: 'Guardar configuración Google', exact: true })).toBeEnabled();
   await google.getByLabel('Google OAuth Client ID').fill('123456-ui_fixture.apps.googleusercontent.com');
-  await google.getByLabel('Habilitado', { exact: true }).check();
-  await google.getByRole('button', { name: 'Guardar configuración' }).click();
-  await expect(google.getByRole('status')).toHaveText('Configuración guardada.');
-  await google.getByRole('button', { name: 'Generar challenge OAuth' }).click();
-  await expect(google.getByRole('status')).toHaveText('Challenge OAuth generado correctamente.');
-  await google.getByLabel('Habilitado', { exact: true }).uncheck();
-  await google.getByLabel('Google OAuth Client ID').fill('');
-  await google.getByRole('button', { name: 'Guardar configuración' }).click();
-  await expect(google.getByRole('status')).toHaveText('Configuración guardada.');
+  await expect(google.getByLabel('Habilitar acceso Google verificado')).toBeDisabled();
+  await google.getByRole('button', { name: 'Guardar configuración Google', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Google OAuth administrativo', exact: true }).getByRole('status')).toHaveText('Configuración guardada. Complete la verificación real con Google antes de activar.');
+  const googleView = await (await page.request.get('/api/system/google-oauth/', { headers })).json();
+  expect(googleView.enabled).toBe(false);
+  expect(googleView).not.toHaveProperty('client_secret');
+  // A manipulated request must not bypass real-provider verification.
+  expect((await page.request.put('/api/system/google-oauth/', { headers, data: {
+    client_id: googleView.client_id, corporate_email: googleView.corporate_email,
+    client_secret: '', enabled: true, expected_revision: googleView.revision,
+  } })).status()).toBe(400);
+  expect((await (await page.request.get('/api/system/google-oauth/', { headers })).json()).enabled).toBe(false);
 
   // Delete only fixtures in the isolated E2E installation.
   const servers = await (await page.request.get('/api/backups/servers/', { headers })).json();
   for (const server of servers) expect((await page.request.delete(`/api/backups/servers/${server.id}/`, { headers })).status()).toBe(204);
-  await page.locator('aside:visible nav').getByRole('button', { name: 'Backups', exact: true }).click();
-  for (const label of ['Servidor local', 'Servidor externo 1', 'Servidor externo 2']) {
+  await page.locator('aside:visible nav').getByRole('button', { name: 'Copias de seguridad', exact: true }).click();
+  for (const label of ['Copias de seguridad locales', 'Servidor externo de copias 1', 'Servidor externo de copias 2']) {
     const card=page.getByRole('article',{name:label,exact:true});
     await card.getByRole('button',{name:'Configurar',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'Configurar '+label,exact:true});
     await dialog.getByLabel('Nombre del destino').fill('Fixture '+label);
     await dialog.getByRole('button',{name:'Continuar',exact:true}).click();
     await dialog.getByRole('button',{name:'Continuar',exact:true}).click();
-    if(label!=='Servidor local') {
+    if(label!=='Copias de seguridad locales') {
       await dialog.getByLabel('Servidor o dirección').fill(label.endsWith('1')?'sftp-ext1-e2e':'sftp-ext2-e2e');
       await dialog.getByRole('button',{name:'Continuar',exact:true}).click();
       await dialog.getByLabel('Usuario',{exact:true}).fill(label.endsWith('1')?'backupsftp':'offsite');
@@ -85,7 +88,7 @@ test('admin runtime settings and all three empty backup slots are editable', asy
     await expect(dialog).toHaveCount(0);
     await expect(card.getByRole('status')).toHaveText('Destino guardado. Prueba la conexión antes de activarlo.');
     const connection=page.waitForRequest(request=>request.url().endsWith('/api/backups/test-connection/'));
-    await card.getByRole('button',{name:'Comprobar conexión',exact:true}).click();
+    await card.getByRole('button',{name:'Verificar conexión con el servidor',exact:true}).click();
     const request=await connection;
     const saved=await(await page.request.get('/api/backups/servers/',{headers})).json();
     expect(request.postDataJSON().server_id).toBe(saved.find(server=>server.name==='Fixture '+label).id);
@@ -154,6 +157,7 @@ test('chat messages appear bidirectionally without a page reload', async ({ brow
     await login(instructor, roles[1]);
     await login(student, roles[2]);
     for (const page of [instructor, student]) await page.locator('aside:visible nav').getByRole('button', { name: 'Chat', exact: true }).click();
+    await instructor.locator('main').getByRole('button', { name: /^Alumnos(?:\s+\d+)?$/ }).click();
     await instructor.locator('main button').filter({ has: instructor.getByText('E2E Alumno', { exact: true }) }).click();
     const outgoing = `Mensaje instructor ${Date.now()}`;
     await instructor.getByPlaceholder('Escribe un mensaje...').filter({ visible: true }).fill(outgoing);
@@ -263,9 +267,11 @@ test('admin creates, publishes, edits and deletes a dynamic course from the UI',
   } finally { await page.request.delete(`/api/admin/courses/${course.id}`, { headers: await windowHeaders(page), timeout: 5000 }).catch(() => {}); }
 });
 
-test('student saves, resumes and submits an exam through the UI', async ({ browser }) => {
-  const staffContext = await browser.newContext({ baseURL: 'http://127.0.0.1:8011' });
-  const studentContext = await browser.newContext({ baseURL: 'http://127.0.0.1:8011' });
+test('student saves, resumes and submits an exam through the UI', async ({ browser }, testInfo) => {
+  const baseURL = testInfo.project.use.baseURL;
+  expect(['https://localhost:8444', 'http://127.0.0.1:8011']).toContain(baseURL);
+  const staffContext = await browser.newContext({ baseURL });
+  const studentContext = await browser.newContext({ baseURL });
   let examId = '';
   try {
     const instructor = await staffContext.newPage();

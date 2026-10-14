@@ -10,7 +10,6 @@ import ForgotPasswordModal from './ForgotPasswordModal';
 import { Checkbox } from '@/components/ui/checkbox';
 import { loadRememberedLogin, saveRememberedLogin, clearRememberedLogin } from '@/lib/rememberLogin';
 import { useGoogleConfig } from '@/lib/googleOAuth';
-import GoogleAuthShell from '@/components/auth/GoogleAuthShell';
 import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
 export default function AuthModal({ isOpen, onClose }) {
@@ -133,36 +132,8 @@ export default function AuthModal({ isOpen, onClose }) {
     }
   };
 
-  const handleGoogleSuccess = async (credentialResponse) => {
-    if (submission.current) return;
-    submission.current = true;
-    setError('');
-    setLoading(true);
-    try {
-      const credential = credentialResponse?.credential;
-      if (!credential) {
-        throw new Error('Google no devolvió credenciales.');
-      }
-      await authService.loginWithGoogleCredential(credential);
-      await authService.redirectAfterLogin();
-    } catch (err) {
-      const code = err?.response?.data?.code;
-      let message = extractErrorMessage(err, 'No se pudo completar el acceso con Google.');
-      if ([502, 503, 504].includes(err?.response?.status)) {
-        message = 'El servicio de acceso con Google está temporalmente no disponible. Vuelve a intentarlo en unos instantes.';
-      } else if (code === 'not_found') {
-        message =
-          'No hay cuenta UASSPAIN con ese email de Google. Regístrate primero o usa email y contraseña.';
-      }
-      setError(message);
-    } finally {
-      submission.current = false;
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleError = () => {
-    setError('Acceso con Google cancelado o no disponible en este navegador.');
+  const handleGoogleError = (message: string) => {
+    setError(message);
   };
 
   if (!isOpen) return null;
@@ -335,10 +306,8 @@ export default function AuthModal({ isOpen, onClose }) {
               </div>
             </div>
 
-            <GoogleAuthShell clientId={google.clientId} onScriptLoadError={() => setGoogleScriptError(true)}>
             {google.clientId && !googleScriptError ? <GoogleSignInButton
                 disabled={loading}
-                onSuccess={handleGoogleSuccess}
                 onError={handleGoogleError}
             /> : <div className="space-y-2 text-center">
               <button type="button" disabled className="w-full inline-flex items-center justify-center gap-3 border border-border-strong px-4 py-3 text-sm text-muted-foreground">
@@ -355,7 +324,6 @@ export default function AuthModal({ isOpen, onClose }) {
               </p>
               {!google.loading && <button type="button" disabled={loading} onClick={() => { setGoogleScriptError(false); setGoogleAttempt(value => value + 1); }} className="text-xs text-primary underline">Comprobar disponibilidad</button>}
             </div>}
-            </GoogleAuthShell>
           </>
         )}
 

@@ -6,12 +6,13 @@ import apiClient from '@/api/apiClient';
 import endpoints from '@/api/endpoints';
 import { extractErrorMessage } from '@/lib/errors';
 import { backupReplicas } from '@/lib/backups';
+import { infrastructureMessage } from '@/lib/infrastructure';
 import BackupHistory from '@/components/admin/BackupHistory';
 import BackupInventory from '@/components/admin/BackupInventory';
 
 const DAYS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 const KINDS = { automatic: 'Automática recomendada', full: 'Completa', incremental: 'Incremental' };
-const STATES = { ok: 'Correcto', attention: 'Atención', error: 'Error', not_configured: 'No configurado' };
+const STATES = { ok: 'Correcto', attention: 'Atención', error: 'Error', not_configured: 'Pendiente de configuración' };
 const PAGE_SIZE = 10;
 const bytes = (value) => { const n = Number(value) || 0; return n >= 1073741824 ? `${(n / 1073741824).toFixed(2)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(2)} MB` : `${(n / 1024).toFixed(1)} KB`; };
 
@@ -56,7 +57,7 @@ export default function AdminBackups() {
         setRetentionChoice([7, 15, 30, 60, 90].includes(retention) ? String(retention) : 'custom'); initialized.current = true;
       }
       setError('');
-    } catch (err) { if (version === loadVersion.current) setError(extractErrorMessage(err, 'No se pudo actualizar el estado de las copias.')); }
+    } catch (err) { if (version === loadVersion.current) setError(infrastructureMessage(extractErrorMessage(err, 'No se pudo actualizar el estado de las copias.'))); }
     finally { if (version === loadVersion.current) setLoading(false); }
   }, [page, inventoryPage]);
   useEffect(() => {
@@ -72,7 +73,7 @@ export default function AdminBackups() {
     } else if (job.status === 'partial' && job.verified) {
       setNotice('Solo algunos destinos recibieron y verificaron la copia. Consulta sus resultados.');
     } else {
-      setNotice(''); setError(job.error || 'No se pudo crear la copia.');
+      setNotice(''); setError(infrastructureMessage(job.error, 'No se pudo crear la copia.'));
     }
   }, [inventory, pendingJob]);
   useEffect(() => {
@@ -95,7 +96,7 @@ export default function AdminBackups() {
     if (inFlight.current) return;
     inFlight.current = true; setBusy(true); setError(''); setNotice('');
     try { await action(); await load(); }
-    catch (err) { setError(extractErrorMessage(err, 'No se pudo completar la operación.')); }
+    catch (err) { setError(infrastructureMessage(extractErrorMessage(err, 'No se pudo completar la operación.'))); }
     finally { inFlight.current = false; setBusy(false); }
   };
   const saveSchedule = async (event) => {
@@ -148,18 +149,18 @@ export default function AdminBackups() {
   const button = 'rounded-md border border-border-subtle px-3 py-2 text-sm focus-visible:outline-primary disabled:opacity-50';
   const freq = schedule.frequency === 'manual' ? 'Manual' : schedule.frequency === 'weekly' ? `Cada ${DAYS[Number(schedule.day)]}` : schedule.frequency === 'daily' ? 'Diaria' : 'Programación anterior';
   return <div className="space-y-5 min-w-0">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-heading text-xl flex items-center gap-2"><DatabaseBackup className="w-5 h-5 text-primary" />Backups</h2><p className="text-sm text-muted-foreground mt-1">Configura, crea y recupera tus copias de seguridad.</p></div><button className={button} onClick={() => void load()}><RefreshCw className="inline w-4 h-4 mr-1" />Actualizar</button></div>
-    <nav aria-label="Secciones de copias de seguridad" className="flex flex-wrap gap-2">{[['backup-state', 'Estado de las copias'], ['backup-targets', 'Destinos de backup'], ['backup-schedule', 'Programación'], ['backup-history', 'Historial de copias'], ['backup-inventory', 'Copias almacenadas']].map(([id, label]) => <a key={id} className={button} href={`#${id}`}>{label}</a>)}</nav>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-heading text-xl flex items-center gap-2"><DatabaseBackup className="w-5 h-5 text-primary" />Copias de seguridad</h2><p className="text-sm text-muted-foreground mt-1">Configura, crea y recupera tus copias de seguridad.</p></div><button className={button} onClick={() => void load()}><RefreshCw className="inline w-4 h-4 mr-1" />Actualizar</button></div>
+    <nav aria-label="Secciones de copias de seguridad" className="flex flex-wrap gap-2">{[['backup-state', 'Estado de las copias'], ['backup-targets', 'Servidores de copias de seguridad'], ['backup-schedule', 'Programación'], ['backup-history', 'Historial de copias'], ['backup-inventory', 'Copias almacenadas']].map(([id, label]) => <a key={id} className={button} href={`#${id}`}>{label}</a>)}</nav>
     {loading && <p role="status">Cargando copias…</p>}{error && <p role="alert" className="rounded-md bg-danger-soft text-danger p-3">{error}</p>}{notice && <p role="status" className="rounded-md bg-success-soft text-success p-3">{notice}</p>}
     <section id="backup-state" aria-label="Estado de las copias" className="space-y-4 scroll-mt-4">
       <h3 className="font-heading font-semibold">Estado de las copias</h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">{[['Última copia correcta', date(status?.last_successful_backup)], ['Próxima copia programada', status?.next_backup ? date(status.next_backup) : 'Sin programación activa'], ['Estado general', STATES[status?.system_status] || 'No configurado'], ['Espacio utilizado', bytes(status?.storage_used_bytes)], ['Destinos activos', String(active.length)]].map(([label, value]) => <div key={label} className="glass-card p-4 min-w-0"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-2 font-semibold break-words ${label === 'Estado general' && status?.system_status === 'error' ? 'text-danger' : label === 'Estado general' && status?.system_status === 'attention' ? 'text-warning' : 'text-foreground'}`}>{value}</p></div>)}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">{[['Última copia realizada correctamente', date(status?.last_successful_backup)], ['Próxima copia programada', status?.next_backup ? date(status.next_backup) : 'Sin programación activa'], ['Estado general', STATES[status?.system_status] || 'Pendiente de configuración'], ['Espacio utilizado', bytes(status?.storage_used_bytes)], ['Servicios habilitados', String(active.length)]].map(([label, value]) => <div key={label} className="glass-card p-4 min-w-0"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-2 font-semibold break-words ${label === 'Estado general' && status?.system_status === 'error' ? 'text-danger' : label === 'Estado general' && status?.system_status === 'attention' ? 'text-warning' : 'text-foreground'}`}>{value}</p></div>)}</div>
       <button className={`${button} bg-primary/10 text-primary`} disabled={loading || operationBusy || !active.length} onClick={() => { setCreateKind(config?.job_type || 'automatic'); setConfirmation(true); }}>Crear copia ahora</button>
       {!active.length && !loading && <p className="text-sm text-muted-foreground">Configura, prueba y activa un destino para crear copias.</p>}
       {status?.operation && <div role="status" className="rounded-md bg-primary/10 p-3 text-sm space-y-1"><p>En curso</p><p>Inicio: {date(status.operation.started_at)}</p><p>Tipo: {KINDS[status.operation.job_type]}</p><p>Destinos: {active.map(server => server.name).join(', ')}</p></div>}
       {status?.restore_in_progress && <p role="status" className="text-sm text-warning">Restauración en curso.</p>}
     </section>
-    <section id="backup-targets" aria-label="Destinos de backup" className="space-y-3 scroll-mt-4"><h3 className="font-heading font-semibold">Destinos de backup</h3><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">{BACKUP_SLOTS.map(slot => <BackupDestinationForm key={slot.role} {...slot} server={servers.find(server => server.role === slot.role)} onSaved={load} operationBusy={operationBusy} />)}</div></section>
+    <section id="backup-targets" aria-label="Servidores de copias de seguridad" className="space-y-3 scroll-mt-4"><h3 className="font-heading font-semibold">Servidores de copias de seguridad</h3><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">{BACKUP_SLOTS.map(slot => <BackupDestinationForm key={slot.role} {...slot} server={servers.find(server => server.role === slot.role)} onSaved={load} operationBusy={operationBusy} />)}</div></section>
     <section id="backup-schedule" aria-label="Programación" className="glass-card p-4 space-y-4 scroll-mt-4">
       <h3 className="font-heading font-semibold">Programación</h3>
       {config?.retention_policy === 'legacy' && <p className="text-sm text-muted-foreground">La conservación anterior se mantiene hasta que guardes una nueva programación.</p>}
@@ -174,7 +175,7 @@ export default function AdminBackups() {
           <label className="space-y-1"><span className="text-sm">Conservar copias durante</span><select className={control} value={retentionChoice} onChange={event => { setRetentionChoice(event.target.value); if (event.target.value !== 'custom') setSchedule({ ...schedule, retention_days: Number(event.target.value) }); }}>{[7, 15, 30, 60, 90].map(day => <option key={day} value={day}>{day} días</option>)}<option value="custom">Personalizado</option></select></label>
           {retentionChoice === 'custom' && <label className="space-y-1"><span className="text-sm">Días de conservación</span><input required className={control} type="number" min={1} max={3650} value={schedule.retention_days} onChange={event => setSchedule({ ...schedule, retention_days: Number(event.target.value) })} /></label>}
         </div>
-        <p className="text-sm text-muted-foreground" aria-live="polite">{freq}{schedule.frequency !== 'manual' ? ` a las ${schedule.hour}` : ''} · {KINDS[schedule.job_type]} · Conservación: {schedule.retention_days} días · Destinos activos: {active.map(server => server.name).join(', ') || 'ninguno'}.</p>
+        <p className="text-sm text-muted-foreground" aria-live="polite">{freq}{schedule.frequency !== 'manual' ? ` a las ${schedule.hour}` : ''} · {KINDS[schedule.job_type]} · Conservación: {schedule.retention_days} días · Servicios habilitados: {active.map(server => server.name).join(', ') || 'ninguno'}.</p>
         <button className={`${button} text-primary bg-primary/10`} disabled={saving || loading || !['daily', 'weekly', 'manual'].includes(schedule.frequency)} type="submit">{saving ? 'Guardando…' : 'Guardar programación'}</button>
       </form>
     </section>

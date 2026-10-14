@@ -4,14 +4,11 @@ import PanelModal from '@/components/ui/PanelModal';
 import apiClient from '@/api/apiClient';
 import { endpoints } from '@/api/endpoints';
 import { extractErrorMessage } from '@/lib/errors';
+import { BACKUP_SLOTS, availableStorage, backupDisplayName, infrastructureMessage } from '@/lib/infrastructure';
 
-export const BACKUP_SLOTS = [
-  { role: 'local', label: 'Servidor local' },
-  { role: 'external_1', label: 'Servidor externo 1' },
-  { role: 'external_2', label: 'Servidor externo 2' },
-] as const;
+export { BACKUP_SLOTS };
 
-export default function BackupDestinationForm({ role, label, server, onSaved, operationBusy = false }) {
+export default function BackupDestinationForm({ role, label, server, onSaved, operationBusy = false, readOnly = false }) {
   const [form, setForm] = useState(null);
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -20,7 +17,7 @@ export default function BackupDestinationForm({ role, label, server, onSaved, op
   const local = form?.type === 'local';
   const steps = local ? ['Nombre', 'Tipo de destino', 'Carpeta'] : ['Nombre', 'Tipo de destino', 'Dirección', 'Usuario', 'Carpeta'];
   const control = 'w-full min-w-0 rounded-md border border-border-subtle bg-card px-3 py-2 text-sm text-foreground focus-visible:outline-primary';
-  const button = 'rounded-md border border-border-subtle px-3 py-2 text-sm focus-visible:outline-primary disabled:opacity-50';
+  const button = 'max-w-full whitespace-normal rounded-md border border-border-subtle px-3 py-2 text-sm focus-visible:outline-primary disabled:opacity-50';
   const open = () => {
     setError(''); setStep(0);
     setForm({ name: server?.name || label, type: server ? (server.transfer_protocol === 'sftp' ? 'external' : 'local') : role === 'local' ? 'local' : 'external',
@@ -31,7 +28,7 @@ export default function BackupDestinationForm({ role, label, server, onSaved, op
     if (busy) return;
     setBusy(true); setError(''); setNotice('');
     try { await action(); await onSaved(); }
-    catch (err) { setError(extractErrorMessage(err, 'No se pudo completar la operación.')); }
+    catch (err) { setError(infrastructureMessage(extractErrorMessage(err, 'No se pudo completar la operación.'))); }
     finally { setBusy(false); }
   };
   const save = () => run(async () => {
@@ -52,26 +49,26 @@ export default function BackupDestinationForm({ role, label, server, onSaved, op
     setNotice(server.is_active ? 'Destino desactivado.' : 'Destino activado.');
   });
   const field = (key, title, type = 'text') => <label className="block space-y-1" key={key}><span className="text-sm">{title}</span><input autoComplete="off" required className={control} type={type} value={form[key]} min={type === 'number' ? 1 : undefined} max={type === 'number' ? 65535 : undefined} onChange={event => setForm({ ...form, [key]: event.target.value })} /></label>;
-  const state = !server ? 'No configurado' : server.status === 'offline' ? 'Error' : server.is_active ? 'Activo' : 'Configurado';
+  const state = !server ? 'Pendiente de configuración' : server.status === 'offline' ? 'Conexión no disponible' : server.is_active ? 'Servicio habilitado' : 'Configuración guardada';
   return <article className="glass-card p-4 min-w-0 space-y-3" aria-label={label}>
-    <div className="flex flex-wrap justify-between gap-2"><h4 className="font-heading font-semibold break-words">{server?.name || label}</h4><span className={`text-xs ${state === 'Error' ? 'text-danger' : server?.is_active ? 'text-success' : 'text-muted-foreground'}`}>{state}</span></div>
+    <div className="flex flex-wrap justify-between gap-2"><h4 className="font-heading font-semibold break-words">{backupDisplayName(server?.name, role)}</h4><span className={`text-xs ${server?.status === 'offline' ? 'text-danger' : server?.is_active ? 'text-success' : 'text-muted-foreground'}`}>{state}</span></div>
     <p className="text-sm text-muted-foreground">{label} · {server?.transfer_protocol === 'sftp' || role !== 'local' ? 'Servidor externo' : 'Almacenamiento local'}</p>
-    <p className="text-sm break-all">{server?.sftp_host || (role === 'local' ? 'Esta instalación' : 'Sin dirección configurada')}</p>
+    <p className="text-sm break-all">{server?.sftp_host || (role === 'local' ? 'Esta instalación' : 'Dirección del servidor pendiente')}</p>
     <dl className="text-xs text-muted-foreground space-y-1">
       <div>Habilitado: {server?.is_active ? 'Sí' : 'No'} · Configuración: {server ? 'Guardada' : 'Pendiente'}</div>
-      <div>Conexión: {server?.configuration_validated ? 'Verificada' : 'No verificada'} · Última comprobación: {server?.connection_checked_at ? new Date(server.connection_checked_at).toLocaleString('es-ES') : 'Sin comprobar'}</div>
-      <div>Último backup correcto: {server?.last_backup ? new Date(server.last_backup).toLocaleString('es-ES') : 'Sin evidencia'}</div>
-      <div>Capacidad disponible: {server?.disk_total_bytes > 0 ? `${Math.max(0, server.disk_total_bytes - server.disk_used_bytes).toLocaleString('es-ES')} bytes` : 'No verificada'}</div>
-      {server?.error && <div className="text-danger">{server.error}</div>}
+      <div>Conexión: {server?.status === 'offline' ? 'No disponible en la última comprobación' : server?.configuration_validated ? 'Verificada en la última comprobación' : 'Pendiente de comprobación'} · Última comprobación: {server?.connection_checked_at ? new Date(server.connection_checked_at).toLocaleString('es-ES') : 'Sin comprobar'}</div>
+      <div>Última copia realizada correctamente: {server?.last_backup ? new Date(server.last_backup).toLocaleString('es-ES') : 'Sin evidencia'}</div>
+      <div>Espacio de almacenamiento disponible: {availableStorage(server)}</div>
+      {server?.error && <div className="text-danger break-words">{infrastructureMessage(server.error)}</div>}
     </dl>
-    <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy || operationBusy} onClick={open}><Settings2 className="inline w-4 h-4 mr-1" />Configurar</button><button type="button" className={button} disabled={busy || operationBusy || !server} onClick={test}>Comprobar conexión</button><label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`Activo: ${label}`} checked={Boolean(server?.is_active)} disabled={busy || operationBusy || !server || (!server.is_active && !server.configuration_validated)} onChange={toggle} />Activo</label></div>
+    {!readOnly && <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy || operationBusy} onClick={open}><Settings2 className="inline w-4 h-4 mr-1" />Configurar</button><button type="button" className={button} disabled={busy || operationBusy || !server} onClick={test}>Verificar conexión con el servidor</button><label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`Servicio habilitado: ${label}`} checked={Boolean(server?.is_active)} disabled={busy || operationBusy || !server || (!server.is_active && !server.configuration_validated)} onChange={toggle} />Servicio habilitado</label></div>}
     {(busy || notice) && <p role="status" className={`text-sm ${busy ? "" : "text-success"}`}>{busy ? "Comprobando destino…" : notice}</p>}{error && !form && <p role="alert" className="text-sm text-danger">{error}</p>}
-    {form && <PanelModal label={`Configurar ${label}`} onClose={() => !busy && setForm(null)}>
+    {!readOnly && form && <PanelModal label={`Configurar ${label}`} onClose={() => !busy && setForm(null)}>
       <div className="flex items-start justify-between gap-3"><h3 className="font-heading text-lg">Configurar destino</h3><button type="button" aria-label="Cerrar" className={button} disabled={busy} onClick={() => setForm(null)}><X className="w-4 h-4" /></button></div>
       <p className="text-sm text-muted-foreground my-3" aria-live="polite">Paso {step + 1} de {steps.length}: {steps[step]}</p>
       <form aria-label={`Asistente ${label}`} className="space-y-4" onSubmit={event => { event.preventDefault(); if (step === steps.length - 1) void save(); else setStep(step + 1); }}>
         {step === 0 && field('name', 'Nombre del destino')}
-        {step === 1 && <label className="block space-y-1"><span className="text-sm">Tipo de destino</span><select className={control} value={form.type} onChange={event => setForm({ ...form, type: event.target.value })}><option value="local" disabled={role !== 'local'}>Servidor local</option><option value="external">Servidor externo</option></select></label>}
+        {step === 1 && <label className="block space-y-1"><span className="text-sm">Tipo de destino</span><select className={control} value={form.type} onChange={event => setForm({ ...form, type: event.target.value })}><option value="local" disabled={role !== 'local'}>Copias de seguridad locales</option><option value="external">Servidor externo de copias</option></select></label>}
         {!local && step === 2 && field('sftp_host', 'Servidor o dirección')}
         {!local && step === 3 && field('sftp_user', 'Usuario')}
         {step === steps.length - 1 && (local ? <><label className="block space-y-1"><span className="text-sm">Almacenamiento local</span><select className={control} value={form.localStorage} onChange={event => setForm({ ...form, localStorage: event.target.value })}><option value="default">Almacenamiento de esta instalación</option><option value="custom">Carpeta preparada por el sistema</option></select></label>{form.localStorage === 'custom' && field('smb_share', 'Carpeta donde guardar las copias')}<p className="text-xs text-muted-foreground">Las copias se guardarán cifradas en el almacenamiento seleccionado.</p></>
