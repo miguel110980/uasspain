@@ -107,7 +107,7 @@ export default function ContactSection({ skipReveal = false }) {
       const fingerprint = JSON.stringify(payload);
       if (contactRequest.current?.payload !== fingerprint) contactRequest.current = { id: crypto.randomUUID(), payload: fingerprint };
       const result = await sendContactMessage({ ...payload, request_id: contactRequest.current.id });
-      setDeliveryNotice(result.state === 'UNKNOWN' ? 'Consulta registrada. Estamos comprobando el envío; no es necesario repetirla.' : result.delivery_accepted ? 'Consulta aceptada para su envío. Te contactaremos pronto.' : 'Consulta registrada y pendiente de envío. Te contactaremos pronto.');
+      setDeliveryNotice(result.state === 'DELIVERED' && result.delivery_confirmed ? 'Consulta entregada al servidor de correo según el proveedor. Te contactaremos pronto.' : result.state === 'UNKNOWN' ? 'Consulta registrada. Estamos comprobando el envío; no es necesario repetirla.' : result.delivery_accepted ? 'Consulta aceptada para su envío. Te contactaremos pronto.' : 'Consulta registrada y pendiente de envío. Te contactaremos pronto.');
       setSent(true);
       setForm(EMPTY_FORM);
       contactRequest.current = null;

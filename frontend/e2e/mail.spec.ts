@@ -3,7 +3,7 @@ import { sql, uuid } from '../../scripts/e2e/auth-fixtures.mjs';
 
 test('mail configuration preserves SMTP and refuses an unverified API sender', async ({ page }, testInfo) => {
   test.setTimeout(180000);
-  expect(['https://localhost:8444', 'http://127.0.0.1:8011']).toContain(testInfo.project.use.baseURL);
+  expect(['https://localhost:8444', 'https://localhost:18444', 'http://127.0.0.1:8011']).toContain(testInfo.project.use.baseURL);
   const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
   const keys = ['mail_api', 'mail_api_draft', 'mail_mode'];
   const settings = JSON.parse(sql(`SELECT COALESCE(jsonb_agg(to_jsonb(s)),'[]'::jsonb) FROM core_systemsetting s WHERE key IN (${keys.map(quote).join(',')})`));
@@ -33,12 +33,14 @@ test('mail configuration preserves SMTP and refuses an unverified API sender', a
     await api.getByLabel('Utilizar API de correo exclusivamente').check();
     await expect(legacy.getByLabel('Servidor SMTP', { exact: true })).toBeDisabled();
     await expect(legacy.getByLabel('Contraseña SMTP', { exact: true })).toBeDisabled();
-    await expect(api.getByLabel('Email remitente API', { exact: true })).toBeEnabled();
+    await expect(api.getByLabel('Email remitente API', { exact: true })).toHaveAttribute('readonly');
+    await expect(api).toContainText('Cambio de canal sin guardar');
+    await expect(api).toContainText('Sigue vigente SMTP');
     const denied = page.waitForResponse(response => response.url().endsWith('/api/system/mail/') && response.request().method() === 'PUT');
     await api.getByRole('button', { name: 'Guardar configuración API', exact: true }).click();
     expect((await denied).status()).toBe(400);
     await expect(api.getByRole('status')).toContainText('verifique credenciales y remitente');
-    await api.getByLabel('Utilizar API de correo exclusivamente').uncheck();
+    await expect(api.getByLabel('Utilizar API de correo exclusivamente')).not.toBeChecked();
     await expect(legacy.getByLabel('Servidor SMTP', { exact: true })).toBeEnabled();
     await page.reload();
     await page.locator('aside:visible nav').getByRole('button', { name: 'Configuración', exact: true }).click();
