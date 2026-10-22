@@ -45,6 +45,17 @@ try {
  const ciphertext=sql("SELECT ciphertext FROM core_systemsecret WHERE key='postmark_candidate'");
  gate(ciphertext.startsWith('v1:')&&!ciphertext.includes('isolated-mail-credential'),'candidate_ciphertext_at_rest');
  gate((await admin.call('/api/system/mail/','PUT',{api_exclusive:false,config:draft,api_key:''})).status===200&&sql("SELECT ciphertext FROM core_systemsecret WHERE key='postmark_candidate'")===ciphertext,'empty_secret_preserves_candidate');
+ for (const config of [{...draft,from_email:'info@uasspain.com'},{...draft,from_name:'Other Sender'},{...draft,contact_recipient:'other@example.invalid'}]) {
+  gate((await admin.call('/api/system/mail/','PUT',{api_exclusive:false,config,api_key:''})).status===400,'corporate_sender_and_recipient_cannot_be_redirected');
+ }
+ gate((await admin.call('/api/system/mail/','PUT',{api_exclusive:false,config:draft,api_key:'POSTMARK_API_TEST'})).status===400,'test_token_cannot_become_live_credential');
+ if(process.env.E2E_POSTMARK_VALIDATE==='true') {
+  const beforeOutbox=sql('SELECT count(*) FROM mail_outbox');
+  const checked=await admin.call('/api/system/mail/test/','POST',{recipient:'info@uasspain.com',dry_run:true});
+  gate(checked.status===200&&checked.body.state==='VALIDATED'&&checked.body.dry_run===true&&!checked.body.delivery_accepted&&!checked.body.live_credentials_verified,'real_POSTMARK_API_TEST_validates_without_delivery_or_live_proof');
+  gate(sql('SELECT count(*) FROM mail_outbox')===beforeOutbox&&sql("SELECT ciphertext FROM core_systemsecret WHERE key='postmark_candidate'")===ciphertext,'dry_run_does_not_queue_promote_or_change_secret');
+  gate((await admin.call('/api/system/mail/')).body.sender_status==='UNCONFIRMED','dry_run_does_not_verify_sender');
+ }
  gate((await admin.call('/api/system/mail/','PUT',{api_exclusive:true,config:draft,api_key:''})).status===400,'unverified_api_activation_denied');
  gate((await admin.call('/api/system/mail/test/','POST',{recipient,confirm_authorized_recipient:true})).status===400,'unconfirmed_sender_blocks_before_external_request');
  gate((await admin.call('/api/system/mail/test/','POST',{recipient,confirm_authorized_recipient:false})).status===400,'unauthorized_test_recipient_denied');
@@ -77,11 +88,14 @@ try {
  gate(sql("SELECT ciphertext FROM core_systemsecret WHERE key='postmark_server_token'")===activeKey&&sql("SELECT value::text FROM core_systemsetting WHERE key='mail_api'")===activeConfig,'rotation_does_not_replace_active_key_or_sender_before_verification');
  gate((await admin.call('/api/system/mail/test/','POST',{recipient,confirm_authorized_recipient:true})).status===400,'failed_candidate_prerequisite_does_not_send_or_promote');
  gate(sql("SELECT ciphertext FROM core_systemsecret WHERE key='postmark_server_token'")===activeKey,'failed_rotation_keeps_previous_secret');
- const contact=await admin.call('/api/contact/','POST',{nombre:'TEMP mail integration',empresa:'TEMP',email:recipient,telefono:'',servicio:'Otro',asunto:'TEMP '+owned,mensaje:'TEMP isolated enquiry '+owned,website:'',request_id:owned});
+ const contact=await anonymous.call('/api/contact/','POST',{nombre:'TEMP mail integration',empresa:'TEMP',email:recipient,telefono:'',servicio:'Otro',asunto:'TEMP '+owned,mensaje:'TEMP isolated enquiry '+owned,website:'',request_id:owned,to:'other@example.invalid',contact_recipient:'other@example.invalid'});
  gate(contact.status===200&&contact.body.internally_accepted&&!contact.body.delivery_accepted&&contact.body.state==='PENDING','contact_reports_queue_without_false_delivery');
  ids.push(uuid(contact.body.message_id));
+ const contactEnvelope=JSON.parse(decrypt(sql(`SELECT payload_ciphertext FROM mail_outbox WHERE id='${contact.body.message_id}'`)));
+ gate(contactEnvelope.from==='no-reply@uasspain.com'&&contactEnvelope.from_name==='UASSpain'&&contactEnvelope.to==='info@uasspain.com'&&contactEnvelope.reply_to===recipient&&contactEnvelope.subject==='TEMP '+owned,'contact_keeps_exact_corporate_headers_and_visitor_reply_to');
+ gate(['Nombre:','Empresa:','Email:','Teléfono:','Servicio:','Asunto:'].every(field=>contactEnvelope.body.includes(field)),'contact_includes_all_visitor_fields');
  gate(sql(`SELECT provider='postmark' AND attempts=0 FROM mail_outbox WHERE id='${contact.body.message_id}'`)==='t','open_api_circuit_does_not_fallback_to_smtp_or_dev_sink');
- const repeated=await admin.call('/api/contact/','POST',{nombre:'TEMP mail integration',empresa:'TEMP',email:recipient,telefono:'',servicio:'Otro',asunto:'TEMP '+owned,mensaje:'TEMP isolated enquiry '+owned,website:'',request_id:owned});
+ const repeated=await anonymous.call('/api/contact/','POST',{nombre:'TEMP mail integration',empresa:'TEMP',email:recipient,telefono:'',servicio:'Otro',asunto:'TEMP '+owned,mensaje:'TEMP isolated enquiry '+owned,website:'',request_id:owned});
  gate(repeated.body.message_id===contact.body.message_id,'repeated_submission_has_one_persistent_work_item');
  gate((await admin.call('/api/system/mail/','PUT',{api_exclusive:false,config:draft,api_key:''})).status===400,'rollback_requires_explicit_authorization');
  const monitor=(await admin.call('/api/system/mail/monitor/')).body;

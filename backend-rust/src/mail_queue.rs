@@ -93,6 +93,7 @@ pub async fn enqueue(
     let exclusive = crate::mail_config::api_exclusive(state).await?;
     let (provider, from, from_name, smtp) = if exclusive {
         let config = crate::mail_config::api_config(state, false).await?;
+        config.validate().map_err(|_| AppError::Unavailable)?;
         // Verified credentials remain usable after the test's activation window;
         // later failures open the circuit, never silently switch transports.
         if config.verified_at.is_none()
@@ -127,13 +128,18 @@ pub async fn enqueue(
             )
         }
     };
+    let body = if options.kind == "contact" {
+        body.to_owned()
+    } else {
+        format!("{body}\n\n{}", crate::mail_provider::AUTOMATED_NOTICE)
+    };
     let envelope = Envelope {
         from,
         from_name,
         to: to.into(),
         reply_to: reply_to.map(str::to_owned),
         subject: subject.into(),
-        body: body.into(),
+        body,
         smtp,
     };
     enqueue_explicit(state, tx, provider, &envelope, options).await
@@ -275,7 +281,12 @@ async fn finish(
     sqlx::query("UPDATE mail_outbox SET state=$2,external_id=$3,last_error=$4,next_attempt_at=$5,provider_latency_ms=$6,lease_until=NULL,updated_at=NOW() WHERE id=$1 AND state='PROCESSING'")
         .bind(job.id).bind(status).bind(external).bind(outcome.code()).bind(next).bind(latency.min(i64::MAX as u128) as i64).execute(&mut *tx).await?;
     if job.provider != "isolated" {
-        if matches!(outcome, Outcome::Accepted(_)) {
+        // An inactive recipient is a definitive provider response. It proves
+        // the transport recovered and must release a HALF_OPEN probe.
+        if matches!(
+            outcome,
+            Outcome::Accepted(_) | Outcome::Failed("recipient_invalid")
+        ) {
             sqlx::query("UPDATE mail_circuit SET state='CLOSED',failures=0,opened_at=NULL,checked_at=NOW(),last_error='' WHERE provider=$1").bind(&job.provider).execute(&mut *tx).await?;
         } else if outcome.affects_circuit() {
             sqlx::query("UPDATE mail_circuit SET failures=failures+1,last_error=$2,checked_at=NOW(),state=CASE WHEN failures+1>=3 OR state='HALF_OPEN' THEN 'OPEN' ELSE state END,opened_at=CASE WHEN failures+1>=3 OR state='HALF_OPEN' THEN NOW() ELSE opened_at END WHERE provider=$1")
@@ -371,6 +382,143 @@ pub fn spawn_worker(state: Arc<AppState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires a disposable E2E database with its delivery worker stopped"]
+    async fn persistent_circuit_probe_recovery_and_uncertainty() {
+        let url = std::env::var("MAIL_TEST_DATABASE_URL").expect("isolated database URL");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .unwrap();
+        let database: String = sqlx::query_scalar("SELECT current_database()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            database, "test_e2e_uasspain",
+            "never run mail fixtures against the real database"
+        );
+        let mut state = AppState::for_test();
+        state.pool = Some(pool.clone());
+        sqlx::query("UPDATE mail_circuit SET state='CLOSED',failures=0,opened_at=NULL WHERE provider='postmark'").execute(&pool).await.unwrap();
+        let payload = state
+            .cipher
+            .encrypt(
+                &serde_json::to_string(&Envelope {
+                    from: crate::mail_provider::AUTOMATED_FROM.into(),
+                    from_name: crate::mail_provider::FROM_NAME.into(),
+                    to: "circuit-fixture@example.invalid".into(),
+                    reply_to: None,
+                    subject: "Isolated circuit fixture".into(),
+                    body: "Never transported".into(),
+                    smtp: None,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let insert = |id: Uuid| {
+            let pool = pool.clone();
+            let payload = payload.clone();
+            async move {
+                sqlx::query("INSERT INTO mail_outbox(id,message_type,provider,payload_ciphertext,idempotency_key,state,expires_at) VALUES($1,'circuit_fixture','postmark',$3,$2,'PENDING',NOW()+INTERVAL '1 hour')")
+                .bind(id).bind(format!("circuit-fixture-{id}")).bind(payload).execute(&pool).await.unwrap();
+            }
+        };
+        let mut owned = Vec::new();
+        for n in 0..3 {
+            let id = Uuid::new_v4();
+            owned.push(id);
+            insert(id).await;
+            let job = claim(&state, Some(id), false).await.unwrap().unwrap();
+            finish(
+                &state,
+                &job,
+                &Outcome::Retry("provider_rate_limited", Some(60)),
+                1,
+            )
+            .await
+            .unwrap();
+            let circuit: (String, i32) =
+                sqlx::query_as("SELECT state,failures FROM mail_circuit WHERE provider='postmark'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                circuit,
+                (if n == 2 { "OPEN" } else { "CLOSED" }.into(), n + 1)
+            );
+            let row:(String,bool)=sqlx::query_as("SELECT state,next_attempt_at>NOW()+INTERVAL '59 seconds' FROM mail_outbox WHERE id=$1").bind(id).fetch_one(&pool).await.unwrap();
+            assert_eq!(row, ("RETRY_SCHEDULED".into(), true));
+        }
+        let probe_id = Uuid::new_v4();
+        owned.push(probe_id);
+        insert(probe_id).await;
+        assert!(
+            claim(&state, Some(probe_id), false)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        sqlx::query("UPDATE mail_circuit SET opened_at=NOW()-INTERVAL '121 seconds' WHERE provider='postmark'").execute(&pool).await.unwrap();
+        let probe = claim(&state, Some(probe_id), false).await.unwrap().unwrap();
+        let second_id = Uuid::new_v4();
+        owned.push(second_id);
+        insert(second_id).await;
+        assert!(
+            claim(&state, Some(second_id), false)
+                .await
+                .unwrap()
+                .is_none(),
+            "only one half-open probe may run"
+        );
+        finish(&state, &probe, &Outcome::Failed("recipient_invalid"), 1)
+            .await
+            .unwrap();
+        let circuit: (String, i32) =
+            sqlx::query_as("SELECT state,failures FROM mail_circuit WHERE provider='postmark'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            circuit,
+            ("CLOSED".into(), 0),
+            "an inactive recipient must release the recovered circuit"
+        );
+        let job = claim(&state, Some(second_id), false)
+            .await
+            .unwrap()
+            .unwrap();
+        finish(
+            &state,
+            &job,
+            &Outcome::Unknown("provider_result_unknown"),
+            1,
+        )
+        .await
+        .unwrap();
+        assert!(
+            claim(&state, Some(second_id), false)
+                .await
+                .unwrap()
+                .is_none(),
+            "an uncertain send must never be automatically resent"
+        );
+        let unknown: String = sqlx::query_scalar("SELECT state FROM mail_outbox WHERE id=$1")
+            .bind(second_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(unknown, "UNKNOWN");
+        sqlx::query("DELETE FROM mail_outbox WHERE id=ANY($1) AND message_type='circuit_fixture'")
+            .bind(&owned)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE mail_circuit SET state='CLOSED',failures=0,opened_at=NULL,last_error='' WHERE provider='postmark'").execute(&pool).await.unwrap();
+    }
+
     #[test]
     fn backoff_is_bounded_and_respects_retry_after() {
         assert!(retry_delay(2, None, 3) > retry_delay(1, None, 3));

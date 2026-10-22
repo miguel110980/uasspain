@@ -37,14 +37,14 @@ impl Default for ApiConfig {
     }
 }
 impl ApiConfig {
-    fn validate(&self) -> Result<(), AppError> {
+    pub fn validate(&self) -> Result<(), AppError> {
         if self.provider != "postmark"
-            || crate::mail_provider::address(&self.from_email)?.domain() != "uasspain.com"
-            || self.from_name.len() > 120
-            || self.from_name.chars().any(char::is_control)
+            || self.from_email != crate::mail_provider::AUTOMATED_FROM
+            || self.from_name != crate::mail_provider::FROM_NAME
+            || self.contact_recipient != crate::mail_provider::CONTACT_RECIPIENT
         {
             return Err(AppError::Validation(
-                "Seleccione Postmark y un remitente autorizado @uasspain.com.".into(),
+                "Use Postmark con UASSpain <no-reply@uasspain.com> y recepción de contacto en info@uasspain.com.".into(),
             ));
         }
         crate::mail_provider::address(&self.contact_recipient)?;
@@ -125,9 +125,20 @@ pub async fn get(
     admin(&state, &headers)?;
     let config = api_config(&state, true).await?;
     let key_configured = token(&state, true).await?.is_some();
+    let exclusive = api_exclusive(&state).await?;
+    let ready = if exclusive {
+        let active = api_config(&state, false).await?;
+        active.validate().is_ok()
+            && active.verified_at.is_some()
+            && active.verification_message_id.is_some()
+            && token(&state, false).await?.is_some()
+    } else {
+        let (smtp, password) = runtime_config::smtp(&state).await?;
+        smtp.enabled && runtime_config::validate_smtp(&smtp).is_ok() && password.is_some()
+    };
     Ok(Json(
-        json!({"api_exclusive":api_exclusive(&state).await?,"config":config,"key_configured":key_configured,
-        "sender_status":if config.verified(){"VERIFIED"}else if config.sender_panel_confirmed{"PENDING_VERIFICATION"}else{"UNCONFIRMED"},
+        json!({"api_exclusive":exclusive,"channel_ready":ready,"config":config,"key_configured":key_configured,
+        "sender_status":if config.validate().is_ok() && config.verified(){"VERIFIED"}else if config.sender_panel_confirmed{"PENDING_VERIFICATION"}else{"UNCONFIRMED"},
         "account_api":"NOT_PROVIDED","real_inbox_reception":"BLOCKED_EXTERNAL","real_reply_to_validation":"BLOCKED_EXTERNAL"}),
     ))
 }
@@ -296,16 +307,47 @@ pub async fn audit_tx(
 #[derive(Deserialize)]
 pub struct Test {
     pub recipient: String,
+    #[serde(default)]
     pub confirm_authorized_recipient: bool,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 pub async fn test(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(input): Json<Test>,
-) -> Result<Json<Value>, AppError> {
+) -> Result<(axum::http::StatusCode, Json<Value>), AppError> {
     let actor = admin(&state, &headers)?;
     crate::auth::enforce_login_rate(&headers, &format!("mail-api-test:{actor}"))?;
     crate::mail_provider::address(&input.recipient)?;
+    if input.dry_run {
+        let config = api_config(&state, true).await?;
+        config.validate()?;
+        let envelope = crate::mail_provider::Envelope {
+            from: config.from_email,
+            from_name: config.from_name,
+            to: input.recipient,
+            reply_to: None,
+            subject: "Validación sin entrega UASSpain".into(),
+            body: crate::mail_provider::AUTOMATED_NOTICE.into(),
+            smtp: None,
+        };
+        let result = crate::mail_provider::validate_payload(&envelope).await;
+        let valid = matches!(result, crate::mail_provider::Outcome::Accepted(None));
+        return Ok((
+            if valid {
+                axum::http::StatusCode::OK
+            } else {
+                axum::http::StatusCode::SERVICE_UNAVAILABLE
+            },
+            Json(json!({
+                "ok":valid,"state":if valid {"VALIDATED"} else {"FAILED"},"dry_run":true,
+                "delivery_accepted":false,"live_credentials_verified":false,
+                "provider_code":result.code(),
+                "detail":if valid {"Formato validado con POSTMARK_API_TEST, sin entrega. La clave real, el remitente y el buzón siguen pendientes de verificación."} else {crate::mail_provider::failure_detail(result.code())}
+            })),
+        ));
+    }
     let mut tx = state
         .pool
         .as_ref()
@@ -314,6 +356,7 @@ pub async fn test(
         .await?;
     runtime_config::lock_email_auth_config(&mut tx).await?;
     let mut config = api_config(&state, true).await?;
+    config.validate()?;
     if !config.sender_panel_confirmed || !input.confirm_authorized_recipient {
         return Err(AppError::Validation("Confirme primero el remitente en el panel de Postmark y autorice el destinatario de prueba.".into()));
     }
@@ -347,7 +390,13 @@ pub async fn test(
     tx.commit().await?;
     let result = crate::mail_queue::process_test(&state, id, &candidate_token).await?;
     if !matches!(result, crate::mail_provider::Outcome::Accepted(Some(_))) {
-        return Err(AppError::Unavailable);
+        return Ok((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "ok":false,"message_id":id,"state":match result {crate::mail_provider::Outcome::Unknown(_)=>"UNKNOWN",crate::mail_provider::Outcome::Retry(_,_)=>"RETRY_SCHEDULED",_=>"FAILED"},
+                "provider_code":result.code(),"delivery_accepted":false,"detail":crate::mail_provider::failure_detail(result.code())
+            })),
+        ));
     }
     let mut tx = state
         .pool
@@ -389,7 +438,34 @@ pub async fn test(
     )
     .await?;
     tx.commit().await?;
-    Ok(Json(
-        json!({"ok":true,"message_id":id,"state":"ACCEPTED","detail":"Postmark ha aceptado la prueba. Falta comprobar la recepción real en el buzón."}),
+    Ok((
+        axum::http::StatusCode::OK,
+        Json(
+            json!({"ok":true,"message_id":id,"state":"ACCEPTED","detail":"Postmark ha aceptado la prueba. Falta comprobar la recepción real en el buzón."}),
+        ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn corporate_identity_and_contact_destination_cannot_be_overridden() {
+        assert!(ApiConfig::default().validate().is_ok());
+        for (field, value) in [
+            ("from_email", "info@uasspain.com"),
+            ("from_email", "visitor@example.invalid"),
+            ("from_name", "Other Sender"),
+            ("contact_recipient", "other@example.invalid"),
+            (
+                "contact_recipient",
+                "info@uasspain.com\r\nBcc: other@example.invalid",
+            ),
+        ] {
+            let mut json = json!(ApiConfig::default());
+            json[field] = json!(value);
+            let config: ApiConfig = serde_json::from_value(json).unwrap();
+            assert!(config.validate().is_err());
+        }
+    }
 }

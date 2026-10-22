@@ -5,11 +5,15 @@ import { fileURLToPath } from 'node:url';
 
 export const root = fileURLToPath(new URL('../../', import.meta.url));
 const compose = resolve(root, 'docker-compose.e2e.yml');
+const project = process.env.E2E_COMPOSE_PROJECT || 'uasspain-e2e';
+if (project !== 'uasspain-e2e' && !/^uasspain-mail-audit-[a-z0-9-]+$/.test(project)) {
+  throw new Error('Authentication fixtures require an explicitly isolated project');
+}
 const docker = args => execFileSync('docker', args, { cwd: root, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-export const backend = docker(['compose', '-f', compose, 'ps', '-q', 'backend-e2e']);
-export const postgres = docker(['compose', '-f', compose, 'ps', '-q', 'postgres-e2e']);
+export const backend = docker(['compose', '-p', project, '-f', compose, 'ps', '-q', 'backend-e2e']);
+export const postgres = docker(['compose', '-p', project, '-f', compose, 'ps', '-q', 'postgres-e2e']);
 for (const container of [backend, postgres]) {
-  if (!container || docker(['inspect', '--format', '{{index .Config.Labels "com.docker.compose.project"}}', container]) !== 'uasspain-e2e') {
+  if (!container || docker(['inspect', '--format', '{{index .Config.Labels "com.docker.compose.project"}}', container]) !== project) {
     throw new Error('Authentication fixtures require the isolated uasspain-e2e project');
   }
 }
@@ -23,7 +27,8 @@ export function uuid(value) {
   return value;
 }
 const apiBase = process.env.E2E_API_BASE || 'http://127.0.0.1:8010';
-check(['http://127.0.0.1:8010', 'https://localhost:8444'].includes(apiBase), 'Authentication fixture origin must be isolated');
+const allowedOrigins = project === 'uasspain-e2e' ? ['http://127.0.0.1:8010', 'https://localhost:8444'] : ['http://127.0.0.1:18010', 'https://localhost:18444'];
+check(allowedOrigins.includes(apiBase), 'Authentication fixture origin must be isolated');
 export function fixtureSessionId(windowId, profileId) {
   uuid(windowId); uuid(profileId);
   const blindKey = createHash('sha256').update(key).update('|blind-index|v1').digest();

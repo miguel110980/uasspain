@@ -25,27 +25,15 @@ fn defaults() -> Result<Defaults, AppError> {
     serde_json::from_str(include_str!("contact-defaults.json")).map_err(|_| AppError::Internal)
 }
 pub fn mailbox() -> Result<String, AppError> {
-    let email = std::env::var("CONTACT_EMAIL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(defaults()?.email);
+    let email = defaults()?.email;
     address(&email).map_err(|_| AppError::Unavailable)?;
+    if email != crate::mail_provider::CONTACT_RECIPIENT {
+        return Err(AppError::Unavailable);
+    }
     Ok(email)
 }
-pub async fn public_config(State(state): State<Arc<AppState>>) -> Result<Json<Value>, AppError> {
-    let email = if crate::mail_config::api_exclusive(&state).await? {
-        crate::mail_config::api_config(&state, false)
-            .await?
-            .contact_recipient
-    } else {
-        let (config, _) = crate::runtime_config::smtp(&state).await?;
-        if config.contact_recipient.is_empty() {
-            mailbox()?
-        } else {
-            config.contact_recipient
-        }
-    };
-    address(&email).map_err(|_| AppError::Unavailable)?;
+pub async fn public_config() -> Result<Json<Value>, AppError> {
+    let email = mailbox()?;
     Ok(Json(json!({"email":email})))
 }
 
@@ -106,7 +94,7 @@ impl ContactWrite {
             from_name: "UASSpain".into(),
             to: recipient.into(),
             reply_to: Some(self.email.clone()),
-            subject: format!("Consulta UASSpain: {}", self.asunto.trim()),
+            subject: self.asunto.trim().into(),
             body: self.text_body(),
             smtp: None,
         }
@@ -214,18 +202,9 @@ pub async fn send(
             ));
         }
     }
-    let recipient = if crate::mail_config::api_exclusive(&state).await? {
-        crate::mail_config::api_config(&state, false)
-            .await?
-            .contact_recipient
-    } else {
-        let (config, _) = crate::runtime_config::smtp(&state).await?;
-        if config.contact_recipient.is_empty() {
-            mailbox()?
-        } else {
-            config.contact_recipient
-        }
-    };
+    // Contact enquiries always reach the corporate inbox. Neither request
+    // fields nor legacy transport configuration may redirect personal data.
+    let recipient = mailbox()?;
     let mut tx = state
         .pool
         .as_ref()
@@ -248,7 +227,7 @@ pub async fn send(
         crate::mail_queue::MailRequest {
             to: &recipient,
             reply_to: Some(&input.email),
-            subject: &format!("Consulta UASSpain: {}", input.asunto.trim()),
+            subject: input.asunto.trim(),
             body: &input.text_body(),
             options: crate::mail_queue::QueueOptions {
                 kind: "contact",
@@ -293,7 +272,7 @@ pub async fn send(
     Ok((
         StatusCode::OK,
         Json(
-            json!({"detail":detail,"internally_accepted":true,"delivery_accepted":accepted,"smtp_accepted":accepted&&provider=="smtp","state":status,"message_id":id}),
+            json!({"detail":detail,"internally_accepted":true,"delivery_accepted":accepted,"delivery_confirmed":status=="DELIVERED","smtp_accepted":accepted&&provider=="smtp","state":status,"message_id":id}),
         ),
     ))
 }
@@ -408,13 +387,13 @@ mod tests {
     fn postmark_from_is_corporate_and_reply_to_is_visitor() {
         let input = sample();
         let payload = input
-            .postmark_payload("info@uasspain.com", "info@uasspain.com")
+            .postmark_payload("no-reply@uasspain.com", "info@uasspain.com")
             .unwrap();
         assert!(
             payload["From"]
                 .as_str()
                 .unwrap()
-                .contains("info@uasspain.com")
+                .contains("no-reply@uasspain.com")
         );
         assert_eq!(payload["ReplyTo"], input.email);
         assert_eq!(payload["TextBody"], input.text_body());
@@ -438,7 +417,7 @@ mod tests {
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let payload = sample()
-            .postmark_payload("info@uasspain.com", "info@uasspain.com")
+            .postmark_payload("no-reply@uasspain.com", "info@uasspain.com")
             .unwrap();
         assert!(
             postmark_request(&format!("{origin}/ok"), "isolated-fixture", &payload)
