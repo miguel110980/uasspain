@@ -8,6 +8,7 @@ type Monitor = { channel: string; counts: Record<string, number>; alerts: string
 
 export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }) {
   const [config, setConfig] = useState(defaults);
+  const [savedConfig, setSavedConfig] = useState(defaults);
   const [exclusive, setExclusive] = useState(false);
   const [activeExclusive, setActiveExclusive] = useState(false);
   const [channelReady, setChannelReady] = useState(false);
@@ -21,9 +22,10 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
   const [loaded, setLoaded] = useState(false);
   const [notice, setNotice] = useState('');
   const [monitor, setMonitor] = useState<Monitor | null>(null);
-  const load = useCallback(async () => {
+  const load = useCallback(async (selection?: boolean) => {
     const [{ data }, { data: status }] = await Promise.all([apiClient.get('/api/system/mail/'), apiClient.get('/api/system/mail/monitor/')]);
-    setConfig({ ...data.config, ...defaults, sender_panel_confirmed: data.config.sender_panel_confirmed }); setExclusive(data.api_exclusive); setActiveExclusive(data.api_exclusive);
+    const saved = { ...data.config, ...defaults, sender_panel_confirmed: data.config.sender_panel_confirmed };
+    setConfig(saved); setSavedConfig(saved); setExclusive(selection ?? data.api_exclusive); setActiveExclusive(data.api_exclusive);
     setKeyConfigured(data.key_configured); setSenderStatus(data.sender_status); setChannelReady(data.channel_ready === true); setMonitor(status); setLoaded(true);
   }, []);
   useEffect(() => { let mounted = true; void load().catch(() => { if (mounted) setNotice('No se pudo cargar la configuración de correo.'); }); return () => { mounted = false; }; }, [load]);
@@ -37,21 +39,22 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
     finally { setBusy(false); }
   };
   const save = (event: React.FormEvent) => { event.preventDefault(); void run(async () => {
+    const draftOnly = exclusive && !activeExclusive && (!!key || senderStatus !== 'VERIFIED');
     try {
-      await apiClient.put('/api/system/mail/', { api_exclusive: exclusive, config, api_key: key, confirm_rollback: rollback });
+      await apiClient.put('/api/system/mail/', { api_exclusive: draftOnly ? activeExclusive : exclusive, config: exclusive ? config : savedConfig, api_key: exclusive ? key : '', confirm_rollback: rollback });
     } catch (error) {
       setExclusive(activeExclusive);
       throw error;
     }
-    setKey(''); setRollback(false); await load(); setNotice('Configuración guardada. Una clave nueva queda pendiente de prueba antes de sustituir la activa.'); onSaved();
+    if (exclusive) setKey(''); setRollback(false); await load(draftOnly ? exclusive : undefined); setNotice(draftOnly ? 'Configuración API guardada sin activar. SMTP sigue vigente; verifique las credenciales y el remitente mediante una prueba autorizada y vuelva a guardar para cambiar de canal.' : 'Configuración guardada. Una clave nueva queda pendiente de prueba antes de sustituir la activa.'); onSaved();
   }); };
   const test = () => void run(async () => {
     const { data } = await apiClient.post('/api/system/mail/test/', { recipient, confirm_authorized_recipient: authorized });
-    await load(); setNotice(data.detail);
+    await load(exclusive); setNotice(data.detail);
   });
   const validatePayload = () => void run(async () => {
     const { data } = await apiClient.post('/api/system/mail/test/', { recipient: 'info@uasspain.com', dry_run: true });
-    await load(); setNotice(data.detail);
+    await load(exclusive); setNotice(data.detail);
   });
   const reconcile = (id: string) => void run(async () => { const { data } = await apiClient.post(`/api/system/mail/messages/${id}/reconcile/`, {}); setNotice(data.detail); await refreshMonitor(); });
   const testRollback = () => void run(async () => {
@@ -64,7 +67,12 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
       <h3 className="font-semibold">API / SMTP</h3>
       <p className="text-sm text-muted-foreground">Canal guardado: {activeExclusive ? 'Postmark API' : 'SMTP'}{channelReady ? '' : ' (no disponible)'}. Remitente API: {senderStatus === 'VERIFIED' ? 'Verificado por el proveedor' : senderStatus === 'PENDING_VERIFICATION' ? 'Pendiente de prueba con el proveedor' : 'Sin confirmar'}.</p>
       {exclusive !== activeExclusive && <p role="status" className="text-sm text-warning">Cambio de canal sin guardar. Sigue vigente {activeExclusive ? 'Postmark API' : 'SMTP'}. Activar API requiere credenciales y remitente verificados.</p>}
-      <label className="flex gap-2 items-center"><input type="checkbox" checked={exclusive} disabled={!loaded || busy} onChange={event => setExclusive(event.target.checked)} /> Utilizar API de correo exclusivamente</label>
+      <fieldset disabled={!loaded || busy} className="flex flex-wrap gap-4">
+        <legend className="mb-2 text-sm font-medium">Canal de correo</legend>
+        <label className="flex gap-2 items-center"><input type="radio" name="mail-channel" value="api" checked={loaded && exclusive} onChange={() => setExclusive(true)} /> API — Postmark</label>
+        <label className="flex gap-2 items-center"><input type="radio" name="mail-channel" value="smtp" checked={loaded && !exclusive} onChange={() => setExclusive(false)} /> SMTP</label>
+      </fieldset>
+      <fieldset disabled={!loaded || busy || !exclusive} aria-label="Configuración API" className="min-w-0 space-y-4">
       <div className="grid sm:grid-cols-2 gap-4">
         <label className="block space-y-1"><span className="text-sm text-muted-foreground">Proveedor API</span><select className={inputClass} value={config.provider} disabled={busy} onChange={event => setConfig(value => ({ ...value, provider: event.target.value }))}><option value="postmark">Postmark</option></select></label>
         <label className="block space-y-1"><span className="text-sm text-muted-foreground">API Key</span><input className={inputClass} type="password" autoComplete="new-password" value={key} disabled={busy} onChange={event => setKey(event.target.value)} /></label>
@@ -77,18 +85,23 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
         <label className="block space-y-1"><span className="text-sm text-muted-foreground">Destinatario de prueba API</span><input type="email" className={inputClass} value={recipient} disabled={busy} onChange={event => setRecipient(event.target.value)} /></label>
         <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={authorized} disabled={busy} onChange={event => setAuthorized(event.target.checked)} /> Autorizo enviar una prueba a este destinatario.</label>
       </div>
-      {activeExclusive && <label className="flex gap-2 text-sm"><input type="checkbox" checked={rollback} disabled={busy} onChange={event => setRollback(event.target.checked)} /> Autorizo comprobar SMTP y realizar una reversión sin borrar mensajes ni credenciales.</label>}
       <div className="flex flex-wrap gap-3">
-        <button className="rounded border border-primary/30 px-3 py-2 text-sm text-primary disabled:opacity-50" disabled={!loaded || busy} type="submit">Guardar configuración API</button>
         <button className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50" disabled={!loaded || busy} type="button" onClick={validatePayload}>Validar formato sin enviar</button>
         <button className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50" disabled={!loaded || busy || !keyConfigured || !recipient || !authorized || !config.sender_panel_confirmed} type="button" onClick={test}>Enviar correo de prueba API</button>
-        {activeExclusive && <button type="button" className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50" disabled={busy || !rollback || !authorized || !recipient} onClick={testRollback}>Comprobar SMTP para reversión</button>}
       </div>
+      </fieldset>
+      {activeExclusive && <fieldset disabled={!loaded || busy || exclusive} aria-label="Reversión SMTP" className="space-y-3">
+        <label className="flex gap-2 text-sm"><input type="checkbox" checked={rollback} onChange={event => setRollback(event.target.checked)} /> Autorizo comprobar SMTP y realizar una reversión sin borrar mensajes ni credenciales.</label>
+        <label className="block space-y-1"><span className="text-sm text-muted-foreground">Destinatario de prueba SMTP para reversión</span><input type="email" className={inputClass} value={recipient} onChange={event => setRecipient(event.target.value)} /></label>
+        <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={authorized} onChange={event => setAuthorized(event.target.checked)} /> Autorizo enviar una prueba SMTP a este destinatario.</label>
+        <button type="button" className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50" disabled={!rollback || !authorized || !recipient} onClick={testRollback}>Comprobar SMTP para reversión</button>
+      </fieldset>}
+      <button className="rounded border border-primary/30 px-3 py-2 text-sm text-primary disabled:opacity-50" disabled={!loaded || busy} type="submit">Guardar canal y configuración</button>
       <p role="status" className="text-sm text-muted-foreground">{notice}</p>
     </form>
-    <fieldset disabled={exclusive || busy} className="min-w-0">
+    <fieldset disabled={!loaded || exclusive || busy} className="min-w-0">
       <legend className="text-sm text-muted-foreground">{exclusive ? 'Configuración SMTP conservada; edición bloqueada mientras se selecciona API.' : 'Configuración SMTP'}</legend>
-      <RuntimeIntegrationForm kind="smtp" onSaved={onSaved} />
+      <RuntimeIntegrationForm kind="smtp" managedChannel onSaved={() => { void load().catch(() => setNotice('No se pudo actualizar el estado del correo.')); onSaved(); }} />
     </fieldset>
     <section aria-label="Monitorización de correo" className="space-y-3 min-w-0">
       <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">Monitorización de correo</h3><button type="button" className="text-sm text-primary" disabled={busy} onClick={() => void run(refreshMonitor)}>Actualizar correo</button></div>

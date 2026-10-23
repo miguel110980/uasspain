@@ -38,6 +38,8 @@ test('admin runtime settings and all three empty backup slots are editable', asy
   const smtp = page.getByRole('form', { name: 'Configuración SMTP', exact: true });
   await expect(smtp.getByRole('button', { name: 'Guardar configuración' })).toBeEnabled();
   await smtp.getByLabel('Servidor SMTP', { exact: true }).fill('mail.example.invalid');
+  await smtp.getByLabel('Usuario SMTP', { exact: true }).fill('fixture@example.invalid');
+  await smtp.getByLabel('Email remitente', { exact: true }).fill('fixture@example.invalid');
   await smtp.getByLabel('Contraseña SMTP', { exact: true }).fill('EphemeralSMTP_UI_91!');
   await smtp.getByRole('button', { name: 'Guardar configuración' }).click();
   await expect(smtp.getByRole('status')).toHaveText('Configuración guardada.');

@@ -3,9 +3,9 @@ import apiClient from '@/api/apiClient';
 
 const smtpDefaults = { enabled: false, provider: '', host: '', port: 587, security: 'STARTTLS', username: '', password: '', password_configured: false, from_email: '', from_name: '', contact_recipient: '', timeout_seconds: 30, configured: false };
 const googleDefaults = { enabled: false, client_id: '', configured: false, origins: [] as string[] };
-type Props = { kind: 'smtp' | 'google'; onSaved: () => void };
+type Props = { kind: 'smtp' | 'google'; onSaved: () => void; managedChannel?: boolean };
 
-export default function RuntimeIntegrationForm({ kind, onSaved }: Props) {
+export default function RuntimeIntegrationForm({ kind, onSaved, managedChannel = false }: Props) {
   const [smtp, setSmtp] = useState(smtpDefaults);
   const [google, setGoogle] = useState(googleDefaults);
   const [recipient, setRecipient] = useState('');
@@ -29,7 +29,7 @@ export default function RuntimeIntegrationForm({ kind, onSaved }: Props) {
   const save = async (event) => {
     event.preventDefault(); setBusy(true); setNotice('');
     try {
-      const { data } = await apiClient.put(path, kind === 'smtp' ? smtp : { enabled: google.enabled, client_id: google.client_id });
+      const { data } = await apiClient.put(path, kind === 'smtp' ? { ...smtp, enabled: managedChannel ? true : smtp.enabled } : { enabled: google.enabled, client_id: google.client_id });
       if (kind === 'smtp') setSmtp({ ...smtpDefaults, ...data, password: '' });
       else { setGoogle({ ...googleDefaults, ...data }); window.dispatchEvent(new Event('uasspain.google-config-updated')); }
       setNotice('Configuración guardada.'); onSaved();
@@ -58,7 +58,7 @@ export default function RuntimeIntegrationForm({ kind, onSaved }: Props) {
     <form onSubmit={save} className="mt-6 space-y-4 border-t border-border-subtle pt-5" aria-label={kind === 'smtp' ? 'Configuración SMTP' : 'Configuración Google OAuth'}>
       <h3 className="font-semibold">{kind === 'smtp' ? 'SMTP / Correo' : 'Google OAuth'}</h3>
       <p className="text-sm text-muted-foreground">{config.configured ? 'Configurado' : config.enabled ? 'No configurado' : 'Deshabilitado · No configurado'}</p>
-      <label className="flex gap-2 items-center"><input type="checkbox" checked={config.enabled} onChange={(e) => kind === 'smtp' ? setSmtp({ ...smtp, enabled: e.target.checked }) : setGoogle({ ...google, enabled: e.target.checked })} /> Habilitado</label>
+      {!managedChannel && <label className="flex gap-2 items-center"><input type="checkbox" checked={config.enabled} onChange={(e) => kind === 'smtp' ? setSmtp({ ...smtp, enabled: e.target.checked }) : setGoogle({ ...google, enabled: e.target.checked })} /> Habilitado</label>}
       {kind === 'smtp' ? <>
         <div className="grid sm:grid-cols-2 gap-4">
           {smtpField('provider', 'Proveedor (opcional)')}{smtpField('host', 'Servidor SMTP')}{smtpField('port', 'Puerto', 'number')}
