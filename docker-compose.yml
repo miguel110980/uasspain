@@ -418,6 +418,8 @@ services:
     volumes:
       - ./nginx/allowed_hosts.conf:/etc/nginx/allowed_hosts.conf:ro
       - ./nginx/tls_pending_hosts.conf:/etc/nginx/tls_pending_hosts.conf:ro
+      # Only deployed certificates: no ACME account keys or DNS token in the edge.
+      - ./.secrets/acme-duckdns-20261023/deployed:/run/secrets/public_tls:ro
     ports:
       - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-80}:8080"
       - "${HTTP_BIND:-127.0.0.1}:${HTTPS_PORT:-443}:8443"

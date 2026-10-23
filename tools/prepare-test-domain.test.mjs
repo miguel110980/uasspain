@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mergeHosts, mergeOrigins, renderNginx, verifyPublicCertificate } from './prepare-test-domain.mjs';
 const policy = JSON.parse(readFileSync(new URL('../nginx/test-domain.json', import.meta.url), 'utf8'));
-const nginx = readFileSync(new URL('../nginx/nginx.conf', import.meta.url), 'utf8');
+const deployedNginx = readFileSync(new URL('../nginx/nginx.conf', import.meta.url), 'utf8');
+// The preparer accepts the original internal-only layout; production now uses SNI.
+const nginx = deployedNginx.replace(/    # Keep local TLS[\s\S]*?(?=    map \$host \$allowed_host)/, '')
+  .replace('ssl_certificate $public_edge_cert;', 'ssl_certificate /run/secrets/edge_tls_cert;')
+  .replace('ssl_certificate_key $public_edge_key;', 'ssl_certificate_key /run/secrets/edge_tls_key;');
 test('test-domain configuration remains inactive', () => assert.equal(policy.enabled, false));
 test('merge retains local hosts and adds domain once', () => { const result = mergeHosts('localhost 1;\n127.0.0.1 1;\n', policy.hostname); assert(result.includes('localhost 1;')); assert(result.includes('127.0.0.1 1;')); assert.equal(result.split(policy.hostname).length, 2); });
 test('repeated preparation does not duplicate hosts', () => { const result = mergeHosts(`localhost 1;\n${policy.hostname} 1;\n${policy.hostname} 1;\n`, policy.hostname); assert.equal(result.split(policy.hostname).length, 2); });
