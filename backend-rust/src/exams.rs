@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     Json,
@@ -37,6 +34,16 @@ pub fn score(answers: &[AnswerKey]) -> Result<ExamScore, AppError> {
     if answers.is_empty() {
         return Err(AppError::Validation(
             "El examen no tiene preguntas.".to_owned(),
+        ));
+    }
+    if answers.iter().any(|item| {
+        !matches!(
+            item.correct.to_ascii_lowercase().as_str(),
+            "a" | "b" | "c" | "d"
+        )
+    }) {
+        return Err(AppError::Validation(
+            "El examen contiene una clave de respuestas no válida.".into(),
         ));
     }
     let aciertos = answers
@@ -285,6 +292,37 @@ pub struct ResultView {
     created_date: DateTime<Utc>,
 }
 
+impl ResultView {
+    fn for_role(mut self, role: &str) -> Self {
+        // Keep the complete grading evidence at rest and for authorised staff.
+        // A student's result, including retries and history, must not reveal
+        // the solution bank for a subsequent attempt or another student.
+        if !matches!(role, "admin" | "instructor")
+            && let Some(revision) = &mut self.detalle_revision
+        {
+            redact_solution(revision);
+        }
+        self
+    }
+}
+
+fn redact_solution(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            fields.remove("respuesta_correcta");
+            for child in fields.values_mut() {
+                redact_solution(child);
+            }
+        }
+        Value::Array(children) => {
+            for child in children {
+                redact_solution(child);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub async fn list_results(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -317,7 +355,11 @@ pub async fn list_results(
     .bind(safe_limit(query.limit))
     .fetch_all(pool)
     .await?;
-    Ok(Json(rows))
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| row.for_role(&claims.role))
+            .collect(),
+    ))
 }
 
 pub async fn result_detail(
@@ -328,7 +370,7 @@ pub async fn result_detail(
     let claims = authenticate(&state, &headers, "access")?;
     let row = sqlx::query_as::<_, ResultView>("SELECT r.id,r.alumno_id,r.examen_id,r.examen_nombre,r.categoria,r.modalidad,r.respuestas,r.detalle_revision,r.aciertos::integer,r.errores::integer,r.nota::float8 AS nota,r.porcentaje::float8 AS porcentaje,r.tiempo_empleado::integer,r.aprobado,r.fecha,r.created_date FROM examenes_resultadoexamen r JOIN accounts_userprofile p ON p.id=r.alumno_id WHERE r.id=$1 AND ($2='admin' OR ($2='alumno' AND r.alumno_id=$3) OR ($2='instructor' AND p.assigned_instructor_id=$3))")
         .bind(id).bind(&claims.role).bind(claims.profile_id).fetch_optional(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?.ok_or(AppError::NotFound)?;
-    Ok(Json(row))
+    Ok(Json(row.for_role(&claims.role)))
 }
 
 pub async fn delete_result(
@@ -433,13 +475,9 @@ pub async fn start_attempt(
             ));
         }
         questions.shuffle(&mut rand::rng());
-        let count = usize::try_from(exam.num_preguntas).map_err(|_| AppError::Internal)?;
-        if count == 0 {
-            return Err(AppError::Validation(
-                "Número de preguntas no válido.".into(),
-            ));
-        }
+        let count = question_count(questions.len(), exam.num_preguntas)?;
         questions.truncate(count);
+        validate_question_bank(&questions)?;
         let snapshot = serde_json::to_value(questions).map_err(|_| AppError::Internal)?;
         sqlx::query_as::<_, AttemptRow>(
             "INSERT INTO examenes_intento (id, alumno_id, examen_id, modalidad, expires_at, preguntas) VALUES ($1,$2,$3,$4,CASE WHEN $4='tiempo' THEN NOW()+INTERVAL '40 minutes' ELSE NULL END,$5) RETURNING *",
@@ -505,18 +543,18 @@ fn validate_answers(
     answers: &HashMap<String, Value>,
     questions: &[QuestionRow],
 ) -> Result<(), AppError> {
-    let ids: HashSet<String> = questions
+    let by_id: HashMap<String, &QuestionRow> = questions
         .iter()
-        .map(|question| question.id.to_string())
+        .map(|question| (question.id.to_string(), question))
         .collect();
     for (id, value) in answers {
-        if !ids.contains(id)
+        if !by_id.contains_key(id)
             || !(value.is_null()
                 || value.as_str().is_some_and(|answer| {
-                    matches!(
-                        answer.to_ascii_lowercase().as_str(),
-                        "" | "a" | "b" | "c" | "d"
-                    )
+                    answer.is_empty()
+                        || by_id
+                            .get(id)
+                            .is_some_and(|question| question_option(question, answer).is_some())
                 }))
         {
             return Err(AppError::Validation(
@@ -525,6 +563,44 @@ fn validate_answers(
         }
     }
     Ok(())
+}
+
+fn question_option<'a>(question: &'a QuestionRow, answer: &str) -> Option<&'a str> {
+    match answer.to_ascii_lowercase().as_str() {
+        "a" => Some(question.opcion_a.as_str()),
+        "b" => Some(question.opcion_b.as_str()),
+        "c" => Some(question.opcion_c.as_str()),
+        "d" => Some(question.opcion_d.as_str()),
+        _ => None,
+    }
+    .filter(|text| !text.trim().is_empty())
+}
+
+fn validate_question_bank(questions: &[QuestionRow]) -> Result<(), AppError> {
+    if questions
+        .iter()
+        .any(|question| question_option(question, &question.respuesta_correcta).is_none())
+    {
+        return Err(AppError::Validation(
+            "El examen contiene preguntas sin una opción correcta válida.".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn question_count(available: usize, requested: i32) -> Result<usize, AppError> {
+    let count = usize::try_from(requested).map_err(|_| AppError::Internal)?;
+    if count == 0 {
+        return Err(AppError::Validation(
+            "Número de preguntas no válido.".into(),
+        ));
+    }
+    if available < count {
+        return Err(AppError::Validation(
+            "El examen no tiene suficientes preguntas para iniciar un intento completo.".into(),
+        ));
+    }
+    Ok(count)
 }
 
 pub async fn submit_result(
@@ -635,24 +711,27 @@ pub async fn submit_result(
 
     Ok((
         StatusCode::CREATED,
-        Json(ResultView {
-            id: result_id,
-            alumno_id: claims.profile_id,
-            examen_id: Some(input.examen_id),
-            examen_nombre: exam.nombre,
-            categoria: exam.categoria,
-            modalidad: attempt.modalidad,
-            respuestas,
-            detalle_revision: Some(revision),
-            aciertos,
-            errores,
-            nota: scored.nota,
-            porcentaje: scored.porcentaje,
-            tiempo_empleado,
-            aprobado: scored.aprobado,
-            fecha: Some(now),
-            created_date: now,
-        }),
+        Json(
+            ResultView {
+                id: result_id,
+                alumno_id: claims.profile_id,
+                examen_id: Some(input.examen_id),
+                examen_nombre: exam.nombre,
+                categoria: exam.categoria,
+                modalidad: attempt.modalidad,
+                respuestas,
+                detalle_revision: Some(revision),
+                aciertos,
+                errores,
+                nota: scored.nota,
+                porcentaje: scored.porcentaje,
+                tiempo_empleado,
+                aprobado: scored.aprobado,
+                fecha: Some(now),
+                created_date: now,
+            }
+            .for_role(&claims.role),
+        ),
     ))
 }
 
@@ -751,7 +830,8 @@ fn safe_limit(limit: Option<i64>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AnswerKey, AttemptRow, ExamScore, QuestionRow, attempt_view, score, validate_answers,
+        AnswerKey, AttemptRow, ExamScore, QuestionRow, ResultView, attempt_view, question_count,
+        redact_solution, score, validate_answers, validate_question_bank,
     };
     use chrono::Utc;
     use serde_json::json;
@@ -804,6 +884,92 @@ mod tests {
     #[test]
     fn empty_exam_is_rejected() {
         assert!(score(&[]).is_err());
+    }
+
+    #[test]
+    fn an_empty_answer_key_cannot_award_a_blank_answer() {
+        assert!(score(&[answer("", Some(""))]).is_err());
+        assert!(score(&[answer("invalid", Some("a"))]).is_err());
+    }
+
+    #[test]
+    fn invalid_question_options_cannot_start_or_receive_answers() {
+        let mut question = question();
+        question.opcion_d.clear();
+        assert!(
+            validate_answers(&[(question.id.to_string(), json!("d"))].into(), &[question]).is_err()
+        );
+        let mut missing = self::question();
+        missing.respuesta_correcta.clear();
+        assert!(validate_question_bank(&[missing]).is_err());
+        let mut missing = self::question();
+        missing.respuesta_correcta = "d".into();
+        missing.opcion_d = " ".into();
+        assert!(validate_question_bank(&[missing]).is_err());
+        assert!(validate_question_bank(&[self::question()]).is_ok());
+    }
+
+    fn result() -> ResultView {
+        ResultView {
+            id: Uuid::new_v4(),
+            alumno_id: Uuid::new_v4(),
+            examen_id: Some(Uuid::new_v4()),
+            examen_nombre: "Synthetic result".into(),
+            categoria: "test".into(),
+            modalidad: "libre".into(),
+            respuestas: json!({"q1":"a"}),
+            detalle_revision: Some(
+                json!({"q1":{"respuesta_alumno":"a","respuesta_correcta":"b","acerto":false,"enunciado":"Synthetic question","opcion_a":"A","opcion_b":"B","opcion_c":"C"}}),
+            ),
+            aciertos: 0,
+            errores: 1,
+            nota: 0.0,
+            porcentaje: 0.0,
+            tiempo_empleado: 1,
+            aprobado: false,
+            fecha: Some(Utc::now()),
+            created_date: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn student_results_never_serialize_the_solution() {
+        for role in ["alumno", "unknown"] {
+            let view = serde_json::to_value(result().for_role(role)).unwrap();
+            let revision = &view["detalle_revision"]["q1"];
+            assert!(
+                revision.get("respuesta_correcta").is_none(),
+                "solution exposed to {role}"
+            );
+            assert_eq!(revision["respuesta_alumno"], "a");
+            assert_eq!(revision["acerto"], false);
+            assert_eq!(view["errores"], 1);
+        }
+        for role in ["instructor", "admin"] {
+            let view = serde_json::to_value(result().for_role(role)).unwrap();
+            assert_eq!(view["detalle_revision"]["q1"]["respuesta_correcta"], "b");
+        }
+    }
+
+    #[test]
+    fn attempts_require_the_full_configured_question_bank() {
+        assert!(question_count(39, 40).is_err());
+        assert!(question_count(0, 40).is_err());
+        assert!(question_count(40, 0).is_err());
+        assert!(question_count(40, -1).is_err());
+        assert_eq!(question_count(40, 40).unwrap(), 40);
+        assert_eq!(question_count(60, 40).unwrap(), 40);
+    }
+
+    #[test]
+    fn legacy_nested_result_shapes_do_not_bypass_solution_redaction() {
+        let mut revision = json!({"legacy":[{"respuesta_correcta":"c","respuesta_alumno":"a","acerto":false}],"missing":null});
+        redact_solution(&mut revision);
+        assert!(revision["legacy"][0].get("respuesta_correcta").is_none());
+        assert_eq!(revision["legacy"][0]["respuesta_alumno"], "a");
+        assert_eq!(revision["legacy"][0]["acerto"], false);
+        assert!(revision["missing"].is_null());
+        assert!(result().for_role("alumno").detalle_revision.is_some());
     }
 
     fn question() -> QuestionRow {

@@ -256,10 +256,27 @@ export const conexionesService = {
   },
 
   subscribeVideollamadas(onEvent) {
-    return createWsSubscription(endpoints.ws.conexiones, event => {
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = createWsSubscription(endpoints.ws.conexiones, event => {
       const type = parseWsPayload(event)?.type;
-      if (event.type === 'poll' || ['video_changed', 'asignacion'].includes(type)) onEvent(event);
+      if (event.type === 'poll') {
+        clearTimeout(pending);
+        pending = undefined;
+        onEvent(event);
+      } else if (['video_changed', 'asignacion'].includes(type)) {
+        // A conference emits one persisted change per invitation. Reconcile
+        // once for a burst instead of refetching the same list for each one.
+        clearTimeout(pending);
+        pending = setTimeout(() => {
+          pending = undefined;
+          onEvent(event);
+        }, 150);
+      }
     }, 10000);
+    return () => {
+      clearTimeout(pending);
+      unsubscribe();
+    };
   },
 };
 

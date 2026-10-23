@@ -2,16 +2,17 @@ use std::{
     collections::BTreeMap,
     io::{Cursor, Read},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use axum::{Json, extract::State, http::HeaderMap};
-use lopdf::Document;
+use lopdf::{Document, LoadOptions, content::Content};
 use quick_xml::{Reader, events::Event};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::fs;
+use tokio::{io::AsyncReadExt, sync::Semaphore};
 use uuid::Uuid;
 use zip::ZipArchive;
 
@@ -20,6 +21,12 @@ use crate::{
     auth::{authenticate, require_role},
     error::AppError,
 };
+
+const MAX_DOCX_XML_BYTES: usize = 8 * 1024 * 1024;
+const MAX_IMPORT_BYTES: usize = 20 * 1024 * 1024;
+const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_LINES: usize = 20_000;
+static IMPORT_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 pub struct ImportRequest {
@@ -58,20 +65,43 @@ pub async fn import(
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let relative = relative_media_path(&path).await.ok_or(AppError::NotFound)?;
     crate::materials::ensure_file_scope(pool, &claims, &relative, &input.file_url).await?;
+    // Bound parsing work before reading or expanding an untrusted document.
+    // The parser retains its permit even when the HTTP request is cancelled.
+    let _permit = Arc::new(
+        IMPORT_SLOTS
+            .get_or_init(|| Arc::new(Semaphore::new(2)))
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| AppError::Unavailable)?,
+    );
     let name = path
         .file_name()
         .and_then(|v| v.to_str())
         .ok_or_else(|| invalid("Nombre de archivo no válido."))?
         .to_owned();
-    let data = fs::read(&path).await.map_err(|_| AppError::NotFound)?;
+    let mut data = Vec::new();
+    fs::File::open(&path)
+        .await
+        .map_err(|_| AppError::NotFound)?
+        .take((MAX_IMPORT_BYTES + 1) as u64)
+        .read_to_end(&mut data)
+        .await
+        .map_err(|_| invalid("No se pudo leer el documento."))?;
+    validate_input_size(data.len())?;
+    let size = i64::try_from(data.len()).map_err(|_| AppError::Internal)?;
+    let checksum = hex(&Sha256::digest(&data));
     let extension = path
         .extension()
         .and_then(|v| v.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let lines = tokio::task::spawn_blocking(move || extract_lines(&data, &extension))
-        .await
-        .map_err(|_| AppError::Internal)??;
+    let parsing_permit = Arc::clone(&_permit);
+    let lines = tokio::task::spawn_blocking(move || {
+        let _permit = parsing_permit;
+        extract_lines(&data, &extension)
+    })
+    .await
+    .map_err(|_| AppError::Internal)??;
     let (questions, errors) = parse_questions(&lines);
     let detected = questions.len() + errors.len();
     let categoria = input.categoria.unwrap_or_else(|| "A1/A3".into());
@@ -106,16 +136,6 @@ pub async fn import(
         created.push(json!({"id":id,"nombre":title,"num_preguntas":chunk.len()}));
     }
     let meta = input.metadata.unwrap_or_else(|| json!({}));
-    let size = i64::try_from(
-        fs::metadata(&path)
-            .await
-            .map_err(|_| AppError::NotFound)?
-            .len(),
-    )
-    .unwrap_or(i64::MAX);
-    let checksum = hex(&Sha256::digest(
-        fs::read(&path).await.map_err(|_| AppError::NotFound)?,
-    ));
     sqlx::query("INSERT INTO examenes_archivoexamen (id,created_date,updated_date,examen_id,nombre_archivo,archivo_url,archivo_path,archivo_content_type,archivo_tamano,archivo_sha256,descripcion,categoria,num_examenes,subido_por_id) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)").bind(Uuid::new_v4()).bind(ids.join(",")).bind(meta.get("original_name").and_then(Value::as_str).unwrap_or(&name)).bind(&input.file_url).bind(&relative).bind(meta.get("content_type").and_then(Value::as_str).unwrap_or("")).bind(size).bind(&checksum).bind(format!("Importación automática — {} preguntas",questions.len())).bind(&categoria).bind(i32::try_from(created.len()).unwrap_or(i32::MAX)).bind(claims.profile_id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(
@@ -124,6 +144,7 @@ pub async fn import(
 }
 
 fn extract_lines(data: &[u8], extension: &str) -> Result<Vec<Line>, AppError> {
+    validate_input_size(data.len())?;
     match extension {
         "docx" => docx_lines(data),
         "pdf" => pdf_lines(data),
@@ -133,8 +154,36 @@ fn extract_lines(data: &[u8], extension: &str) -> Result<Vec<Line>, AppError> {
         _ => Err(invalid("Formato de archivo no soportado.")),
     }
 }
+
+fn validate_input_size(size: usize) -> Result<(), AppError> {
+    if size == 0 || size > MAX_IMPORT_BYTES {
+        return Err(invalid("Documento vacío o mayor de 20 MiB."));
+    }
+    Ok(())
+}
+
+fn push_line(
+    lines: &mut Vec<Line>,
+    bytes: &mut usize,
+    text: String,
+    bold: bool,
+) -> Result<(), AppError> {
+    *bytes = bytes
+        .checked_add(text.len())
+        .filter(|total| *total <= MAX_TEXT_BYTES)
+        .ok_or_else(|| invalid("Texto del documento mayor de 2 MiB."))?;
+    if lines.len() >= MAX_LINES {
+        return Err(invalid("Demasiadas líneas en el documento."));
+    }
+    lines.push(Line { text, bold });
+    Ok(())
+}
+
 fn docx_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
     let mut zip = ZipArchive::new(Cursor::new(data)).map_err(|_| invalid("DOCX no válido."))?;
+    if zip.len() > 4096 {
+        return Err(invalid("DOCX con demasiadas entradas."));
+    }
     let mut xml = String::new();
     let index = (0..zip.len())
         .find(|index| {
@@ -143,15 +192,24 @@ fn docx_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
                 .is_some_and(|file| file.name().replace('\\', "/") == "word/document.xml")
         })
         .ok_or_else(|| invalid("DOCX sin documento."))?;
-    zip.by_index(index)
-        .map_err(|_| invalid("DOCX sin documento."))?
+    let file = zip
+        .by_index(index)
+        .map_err(|_| invalid("DOCX sin documento."))?;
+    if file.size() > MAX_DOCX_XML_BYTES as u64 {
+        return Err(invalid("Contenido DOCX descomprimido mayor de 8 MiB."));
+    }
+    file.take((MAX_DOCX_XML_BYTES + 1) as u64)
         .read_to_string(&mut xml)
         .map_err(|_| invalid("DOCX ilegible."))?;
+    if xml.len() > MAX_DOCX_XML_BYTES {
+        return Err(invalid("Contenido DOCX descomprimido mayor de 8 MiB."));
+    }
     let mut reader = Reader::from_str(&xml);
     let mut lines = Vec::new();
     let mut text = String::new();
     let mut bold = false;
     let mut in_text = false;
+    let mut bytes = 0;
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => match e.name().as_ref() {
@@ -170,10 +228,7 @@ fn docx_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
                 "w:p" => {
                     let clean = text.trim();
                     if !clean.is_empty() {
-                        lines.push(Line {
-                            text: clean.to_owned(),
-                            bold,
-                        })
+                        push_line(&mut lines, &mut bytes, clean.to_owned(), bold)?;
                     }
                 }
                 _ => {}
@@ -186,12 +241,30 @@ fn docx_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
     Ok(lines)
 }
 fn pdf_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
-    let doc = Document::load_mem(data).map_err(|_| invalid("PDF no válido."))?;
+    let doc = Document::load_mem_with_options(
+        data,
+        LoadOptions {
+            strict: true,
+            max_decompressed_size: Some(MAX_IMPORT_BYTES),
+            ..Default::default()
+        },
+    )
+    .map_err(|_| invalid("PDF no válido o demasiado extenso al descomprimir."))?;
+    let pages = doc.get_pages();
+    if doc.is_encrypted() || doc.was_encrypted() || pages.is_empty() || pages.len() > 500 {
+        return Err(invalid("PDF cifrado, vacío o con más de 500 páginas."));
+    }
     let mut lines = Vec::new();
-    for (page_number, page_id) in doc.get_pages() {
+    let mut bytes = 0;
+    let mut decoded_bytes = 0usize;
+    let mut operations = 0usize;
+    for (page_number, page_id) in pages {
         let fonts = doc
             .get_page_fonts(page_id)
             .map_err(|_| invalid("PDF ilegible."))?;
+        if fonts.len() > 256 {
+            return Err(invalid("Demasiadas fuentes en una página PDF."));
+        }
         let bold_fonts: BTreeMap<Vec<u8>, bool> = fonts
             .into_iter()
             .map(|(name, dict)| {
@@ -207,9 +280,19 @@ fn pdf_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
                 )
             })
             .collect();
-        let content = doc
-            .get_and_decode_page_content(page_id)
+        let content_bytes = doc
+            .get_page_content_with_limit(page_id, MAX_IMPORT_BYTES)
             .map_err(|_| invalid("PDF ilegible."))?;
+        decoded_bytes = decoded_bytes
+            .checked_add(content_bytes.len())
+            .filter(|total| *total <= 64 * 1024 * 1024)
+            .ok_or_else(|| invalid("Contenido PDF descomprimido demasiado extenso."))?;
+        let content =
+            Content::decode_strict(&content_bytes).map_err(|_| invalid("PDF ilegible."))?;
+        operations = operations
+            .checked_add(content.operations.len())
+            .filter(|total| *total <= 1_000_000)
+            .ok_or_else(|| invalid("Demasiadas operaciones en el PDF."))?;
         let mut flags = Vec::new();
         let mut current_bold = false;
         let mut has_text = false;
@@ -236,7 +319,7 @@ fn pdf_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
             flags.push(current_bold);
         }
         for (index, chunk) in doc
-            .extract_text_chunks(&[page_number])
+            .extract_text_chunks_with_limit(&[page_number], MAX_IMPORT_BYTES)
             .into_iter()
             .enumerate()
         {
@@ -245,10 +328,12 @@ fn pdf_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
             for raw in chunk.lines() {
                 let clean = raw.trim();
                 if !clean.is_empty() {
-                    lines.push(Line {
-                        text: clean.trim_matches('*').trim().to_owned(),
-                        bold: font_bold || (clean.starts_with("**") && clean.ends_with("**")),
-                    });
+                    push_line(
+                        &mut lines,
+                        &mut bytes,
+                        clean.trim_matches('*').trim().to_owned(),
+                        font_bold || (clean.starts_with("**") && clean.ends_with("**")),
+                    )?;
                 }
             }
         }
@@ -376,12 +461,80 @@ fn invalid(message: &str) -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Line, parse_questions, pdf_lines};
+    use super::{
+        Line, MAX_DOCX_XML_BYTES, MAX_IMPORT_BYTES, MAX_TEXT_BYTES, docx_lines, extract_lines,
+        parse_questions, pdf_lines,
+    };
     use lopdf::{
         Document, Object, Stream,
         content::{Content, Operation},
         dictionary,
     };
+
+    fn docx(xml: &[u8]) -> Vec<u8> {
+        use std::io::{Cursor, Write};
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(xml).unwrap();
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn docx_rejects_oversized_expansion() {
+        let xml = format!(
+            "<w:document><w:p><w:t>{}</w:t></w:p></w:document>",
+            "x".repeat(MAX_DOCX_XML_BYTES)
+        );
+        let compressed = docx(xml.as_bytes());
+        assert!(compressed.len() < MAX_DOCX_XML_BYTES / 100);
+        assert!(
+            docx_lines(&compressed).is_err(),
+            "compressed DOCX bypassed the expanded-content budget"
+        );
+    }
+
+    #[test]
+    fn docx_keeps_three_options_and_bold_solution() {
+        let bytes = docx(br#"<w:document><w:p><w:r><w:t>1. Question</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>A. Correct</w:t></w:r></w:p><w:p><w:r><w:t>B. Wrong</w:t></w:r></w:p><w:p><w:r><w:t>C. Other</w:t></w:r></w:p></w:document>"#);
+        let lines = docx_lines(&bytes).unwrap();
+        let (questions, errors) = parse_questions(&lines);
+        assert!(errors.is_empty());
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].options.len(), 3);
+        assert_eq!(questions[0].answer, 'a');
+    }
+
+    #[test]
+    fn document_input_and_extracted_text_are_bounded() {
+        assert!(extract_lines(&vec![b'x'; MAX_IMPORT_BYTES + 1], "docx").is_err());
+        assert!(extract_lines(&[], "pdf").is_err());
+        let xml = format!(
+            "<w:document><w:p><w:t>{}</w:t></w:p></w:document>",
+            "x".repeat(MAX_TEXT_BYTES + 1)
+        );
+        assert!(xml.len() < MAX_DOCX_XML_BYTES);
+        assert!(docx_lines(&docx(xml.as_bytes())).is_err());
+    }
+
+    #[test]
+    fn pdf_rejects_oversized_expanded_page() {
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let mut stream = Stream::new(dictionary! {}, vec![b' '; MAX_IMPORT_BYTES + 1]);
+        stream.compress().unwrap();
+        let content_id = doc.add_object(stream);
+        let page =
+            doc.add_object(dictionary! {"Type"=>"Page","Parent"=>pages_id,"Contents"=>content_id});
+        doc.objects.insert(pages_id, Object::Dictionary(dictionary! {"Type"=>"Pages","Kids"=>vec![Object::Reference(page)],"Count"=>1,"Resources"=>dictionary!{},"MediaBox"=>vec![0.into(),0.into(),595.into(),842.into()]}));
+        let catalog = doc.add_object(dictionary! {"Type"=>"Catalog","Pages"=>pages_id});
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        assert!(bytes.len() < MAX_IMPORT_BYTES / 100);
+        assert!(pdf_lines(&bytes).is_err());
+    }
     #[test]
     fn parses_numbered_questions_and_bold_answer() {
         let lines = vec![

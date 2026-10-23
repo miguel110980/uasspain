@@ -96,6 +96,12 @@ impl FieldCipher {
     }
 
     pub fn blind_index(&self, normalized: &str) -> Result<String, AppError> {
+        // Optional identifiers have no identity when absent. Keep the empty
+        // sentinel expected by the uniqueness queries and partial DB indexes.
+        // Hashing absence made unrelated users with no DNI collide.
+        if normalized.is_empty() {
+            return Ok(String::new());
+        }
         let master = self.current.ok_or(AppError::Unavailable)?;
         let mut digest = Sha256::new();
         digest.update(master);
@@ -248,6 +254,19 @@ mod tests {
     use base64::Engine as _;
 
     use super::{FieldCipher, decode_key_material, verify_password_hash};
+
+    #[test]
+    fn absent_optional_identifiers_do_not_claim_a_shared_unique_identity() {
+        let cipher = FieldCipher {
+            current: Some([7; 32]),
+            previous: None,
+        };
+        assert_eq!(cipher.blind_index("").unwrap(), "");
+        let first = cipher.blind_index("12345678Z").unwrap();
+        assert_eq!(first.len(), 64);
+        assert_eq!(cipher.blind_index("12345678Z").unwrap(), first);
+        assert_ne!(cipher.blind_index("87654321X").unwrap(), first);
+    }
 
     #[test]
     fn verifies_known_legacy_pbkdf2_sha256_hash() {

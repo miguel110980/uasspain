@@ -832,7 +832,7 @@ fn positive_i32(value: u32, label: &str) -> Result<i32, AppError> {
 
 fn answer_letter(value: Option<&str>) -> Result<String, AppError> {
     let value = value.unwrap_or_default().trim().to_lowercase();
-    if value.is_empty() || matches!(value.as_str(), "a" | "b" | "c" | "d") {
+    if matches!(value.as_str(), "a" | "b" | "c" | "d") {
         Ok(value)
     } else {
         Err(AppError::Validation(
@@ -920,6 +920,9 @@ mod tests {
     fn correct_answer_is_limited_to_known_letters() {
         assert_eq!(answer_letter(Some(" A ")).unwrap(), "a");
         assert!(answer_letter(Some("x")).is_err());
+        assert!(answer_letter(None).is_err());
+        assert!(answer_letter(Some("")).is_err());
+        assert!(answer_letter(Some("  ")).is_err());
     }
 
     #[test]

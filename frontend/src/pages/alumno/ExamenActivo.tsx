@@ -226,9 +226,8 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
         {preguntas.map((p, i) => {
           const detalle = resultado.detalle_revision?.[p.id];
           const respAlumno = detalle?.respuesta_alumno ?? resultado.respuestas?.[p.id];
-          const correcta = detalle?.respuesta_correcta;
           const opciones = { a: p.opcion_a, b: p.opcion_b, c: p.opcion_c, ...(p.opcion_d ? { d: p.opcion_d } : {}) };
-          const acerto = detalle?.acerto ?? respAlumno === correcta;
+          const acerto = detalle?.acerto === true;
           return (
             <div key={p.id} className={`glass-card p-6 border-l-4 ${acerto ? 'border-l-success' : 'border-l-danger'}`}>
               <div className="flex items-start gap-3 mb-4">
@@ -238,8 +237,8 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
               <div className="space-y-2 ml-5">
                 {Object.entries(opciones).map(([key, text]) => {
                   const isSelected = key === respAlumno;
-                  const isCorrectSelected = isSelected && key === correcta;
-                  const isIncorrectSelected = isSelected && key !== correcta;
+                  const isCorrectSelected = isSelected && acerto;
+                  const isIncorrectSelected = isSelected && !acerto;
                   return (
                     <div
                       key={key}
@@ -258,11 +257,6 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
                     </div>
                   );
                 })}
-                {!acerto && respAlumno && (
-                  <p className="text-xs text-info mt-2 font-mono">
-                    Respuesta correcta: {opciones[correcta]}
-                  </p>
-                )}
                 {!respAlumno && (
                   <p className="text-xs text-muted-foreground/60 mt-2 font-mono">Sin respuesta</p>
                 )}
