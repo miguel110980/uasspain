@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test';
-import { randomUUID } from 'node:crypto';
 import { adminClient, apiClient, mailFiles, readMail, sql } from '../../scripts/e2e/auth-fixtures.mjs';
 
 const login = async page => {
@@ -10,15 +9,12 @@ const login = async page => {
   await expect(page).toHaveURL(/\/admin$/);
 };
 const sidebar = page => page.locator('aside:visible nav');
-const setup = page => page.locator('[aria-label="Configuración inicial de infraestructura"]');
-const q = value => "'" + String(value).replaceAll("'", "''") + "'";
 
-test('three sections keep one editor per function, preserve settings and fit both themes', async ({ page }, info) => {
+test('remaining sections keep one editor per function, preserve settings and fit both themes', async ({ page }, info) => {
   expect(info.project.use.baseURL).toBe('https://localhost:8444');
   const admin = await adminClient();
-  const before = sql('SELECT to_jsonb(c) FROM infrastructure_config c WHERE id=1');
+  const before = (await admin.call('/api/infrastructure/')).body.config;
   const serversBefore = sql("SELECT COALESCE(jsonb_agg(to_jsonb(s) ORDER BY id),'[]') FROM backups_backupserver s");
-  const namespace = `TEMP VPN UI ${randomUUID()}`;
   const errors: string[] = [], forbiddenRequests: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => {
@@ -26,26 +22,26 @@ test('three sections keep one editor per function, preserve settings and fit bot
   });
   try {
     await login(page);
-    await sidebar(page).getByRole('button', { name: 'Configuración inicial', exact: true }).click();
-    await setup(page).getByRole('button', { name: '2. Infraestructura', exact: true }).click();
-    await setup(page).getByLabel('Nombre del servidor', { exact: true }).fill(namespace);
-    await setup(page).getByRole('button', { name: 'Guardar configuración', exact: true }).click();
-    await expect(setup(page).getByRole('status')).toContainText('Configuración guardada');
-    expect((await admin.call('/api/infrastructure/')).body.config.server_name).toBe(namespace);
-    await setup(page).getByRole('button', { name: '3. Conexiones VPN', exact: true }).click();
-    await expect(setup(page).locator('input,select,textarea')).toHaveCount(0);
-    await setup(page).getByRole('link', { name: 'Abrir Conexiones VPN', exact: true }).click();
+    await sidebar(page).getByRole('button', { name: 'Conexiones VPN', exact: true }).click();
     const vpnForm = page.getByRole('region', { name: 'Configuración de conexión VPN', exact: true });
     await expect(vpnForm.getByLabel('Adaptador de red de WireGuard')).toBeVisible();
     await expect(page.getByRole('region', { name: 'Conexiones VPN', exact: true }).getByRole('button', { name: 'Configurar', exact: true })).toHaveCount(0);
     await vpnForm.getByRole('button', { name: 'Guardar configuración', exact: true }).click();
     await expect(vpnForm.getByRole('status').filter({ hasText: 'Configuración guardada' })).toBeVisible();
-    expect((await admin.call('/api/infrastructure/')).body.config.server_name).toBe(namespace);
-    await sidebar(page).getByRole('button', { name: 'Configuración inicial', exact: true }).click();
-    await setup(page).getByRole('button', { name: '4. Copias de seguridad', exact: true }).click();
-    await expect(setup(page).getByRole('button', { name: 'Configurar', exact: true })).toHaveCount(0);
-    await expect(setup(page).getByRole('checkbox')).toHaveCount(0);
-    await setup(page).getByRole('link', { name: 'Abrir Copias de seguridad', exact: true }).click();
+    expect((await admin.call('/api/infrastructure/')).body.config).toEqual(before);
+    await page.reload();
+    await expect(vpnForm.getByLabel('Adaptador de red de WireGuard')).toHaveValue(before.vpn.interface);
+    const download = page.waitForEvent('download');
+    await vpnForm.getByRole('button', { name: 'Descargar configuración de conexión', exact: true }).click();
+    const exported = await download;
+    expect(exported.suggestedFilename()).toBe('UASSpain-infraestructura-publica.json');
+    const stream = await exported.createReadStream(), chunks: Buffer[] = [];
+    for await (const chunk of stream!) chunks.push(chunk);
+    const payload = JSON.parse(Buffer.concat(chunks).toString());
+    expect(payload.secrets_included).toBe(false);
+    expect(payload.config).toEqual(before);
+    expect(Object.keys(payload.config.vpn)).not.toContain('private_key');
+    await page.getByRole('link', { name: 'Abrir Copias de seguridad', exact: true }).click();
     const targets = page.getByRole('region', { name: 'Servidores de copias de seguridad', exact: true });
     await expect(targets.getByRole('article')).toHaveCount(3);
     const local = targets.getByRole('article', { name: 'Copias de seguridad locales', exact: true });
@@ -55,10 +51,9 @@ test('three sections keep one editor per function, preserve settings and fit bot
     await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0);
     await expect(local.getByRole('button', { name: 'Configurar', exact: true })).toBeFocused();
 
-    for (const section of ['vpn', 'backups', 'infraestructura-setup']) {
+    for (const section of ['vpn', 'backups']) {
       await page.goto(`/admin?section=${section}`);
-      if (section === 'infraestructura-setup') await setup(page).getByRole('button', { name: '4. Copias de seguridad', exact: true }).click();
-      await expect(page.getByRole('heading', { level: 2, name: section === 'vpn' ? 'Conexión segura WireGuard' : section === 'backups' ? 'Copias de seguridad' : 'Configuración inicial', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { level: 2, name: section === 'vpn' ? 'Conexión segura WireGuard' : 'Copias de seguridad', exact: true })).toBeVisible();
       for (const theme of ['light', 'dark']) for (const width of [320, 390, 768, 1024, 1440, 1920]) {
         await page.setViewportSize({ width, height: 1000 });
         await page.evaluate(value => { document.documentElement.classList.toggle('dark', value === 'dark'); document.documentElement.classList.toggle('light', value === 'light'); localStorage.setItem('uasspain-theme', value); }, theme);
@@ -70,11 +65,7 @@ test('three sections keep one editor per function, preserve settings and fit bot
     expect(errors).toEqual([]); expect(forbiddenRequests).toEqual([]);
     expect(sql("SELECT COALESCE(jsonb_agg(to_jsonb(s) ORDER BY id),'[]') FROM backups_backupserver s")).toBe(serversBefore);
   } finally {
-    if (sql("SELECT config->>'server_name' FROM infrastructure_config WHERE id=1") === namespace) {
-      if (before) sql(`UPDATE infrastructure_config SET (config,revision,updated_at,updated_by)=(SELECT config,revision,updated_at,updated_by FROM jsonb_populate_record(NULL::infrastructure_config,${q(before)}::jsonb)) WHERE id=1 AND config->>'server_name'=${q(namespace)}`);
-      else sql(`DELETE FROM infrastructure_config WHERE id=1 AND config->>'server_name'=${q(namespace)}`);
-    }
-    expect(sql('SELECT to_jsonb(c) FROM infrastructure_config c WHERE id=1')).toBe(before);
+    expect(JSON.parse(sql('SELECT config FROM infrastructure_config WHERE id=1'))).toEqual(before);
     await admin.call('/api/auth/logout/', 'POST', {});
   }
 });

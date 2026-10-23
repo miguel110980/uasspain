@@ -23,7 +23,6 @@ const AdminNotificaciones = lazy(() => import('@/pages/admin/AdminNotificaciones
 const AdminConfiguracion = lazy(() => import('@/pages/admin/AdminConfiguracion'));
 const AdminBackups = lazy(() => import('@/pages/admin/AdminBackups'));
 const AdminVpn = lazy(() => import('@/pages/admin/AdminVpn'));
-const AdminInfrastructure = lazy(() => import('@/pages/admin/AdminInfrastructure'));
 const AdminInstructores = lazy(() => import('@/pages/admin/AdminInstructores'));
 const AdminChat = lazy(() => import('@/pages/admin/AdminChat'));
 const AdminCuenta = lazy(() => import('@/components/admin/AdminCuenta'));
@@ -77,10 +76,6 @@ const NAV_GROUPS = [
     ],
   },
   {
-    label: 'Infraestructura',
-    items: [{ id: 'infraestructura-setup', label: 'Configuración inicial', icon: Settings }],
-  },
-  {
     label: 'Cuenta',
     items: [{ id: 'cuenta', label: 'Mi cuenta', icon: User }],
   },
@@ -96,7 +91,7 @@ function AdminUserSections() {
 export default function AdminPanel() {
   const initialSection = () => {
     const selected = new URLSearchParams(window.location.search).get('section');
-    return ['configuracion', 'vpn', 'backups', 'infraestructura-setup'].includes(selected) ? selected : 'dashboard';
+    return ['configuracion', 'vpn', 'backups'].includes(selected) ? selected : 'dashboard';
   };
   const [section, setSection] = useState(initialSection);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -115,7 +110,7 @@ export default function AdminPanel() {
     setSection(id);
     setVisitedTabs((prev) => new Set(prev).add(id));
     const url = new URL(window.location.href);
-    if (['configuracion', 'vpn', 'backups', 'infraestructura-setup'].includes(id)) url.searchParams.set('section', id);
+    if (['configuracion', 'vpn', 'backups'].includes(id)) url.searchParams.set('section', id);
     else url.searchParams.delete('section');
     url.hash = '';
     window.history.replaceState(window.history.state, '', url.pathname + url.search);
@@ -226,7 +221,6 @@ export default function AdminPanel() {
     notificaciones: <PanelSection><AdminNotificaciones /></PanelSection>,
     backups: <PanelSection><AdminBackups /></PanelSection>,
     vpn: <PanelSection><AdminVpn active={section === 'vpn'} onNavigate={handleSelectSection} /></PanelSection>,
-    'infraestructura-setup': <PanelSection><AdminInfrastructure active={section === 'infraestructura-setup'} onNavigate={handleSelectSection} /></PanelSection>,
     configuracion: <PanelSection><AdminConfiguracion /></PanelSection>,
     cuenta: <PanelSection><AdminCuenta profile={accountProfile ?? authProfile} onProfileUpdate={setAccountProfile} /></PanelSection>,
   };

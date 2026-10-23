@@ -202,7 +202,7 @@ esas seis adiciones conocidas y el metadato SQLx, no tablas ni rangos de fechas.
 - [frontend/src/pages/GoogleOAuthCallback.tsx](../frontend/src/pages/GoogleOAuthCallback.tsx)
 - [frontend/src/pages/admin/AdminBackups.tsx](../frontend/src/pages/admin/AdminBackups.tsx)
 - [frontend/src/pages/admin/AdminConfiguracion.tsx](../frontend/src/pages/admin/AdminConfiguracion.tsx)
-- [frontend/src/pages/admin/AdminInfrastructure.tsx](../frontend/src/pages/admin/AdminInfrastructure.tsx)
+- [frontend/src/components/admin/AdminVpnConnectionForm.tsx](../frontend/src/components/admin/AdminVpnConnectionForm.tsx)
 - [frontend/src/pages/admin/AdminVpn.tsx](../frontend/src/pages/admin/AdminVpn.tsx)
 - [nginx/allowed_hosts.conf](../nginx/allowed_hosts.conf)
 - [nginx/nginx.conf](../nginx/nginx.conf)

@@ -5,7 +5,7 @@ UASSpain. Ofrece cuatro bloques: estado, destinos, programación e historial con
 restauración. Las operaciones y su autorización se comprueban en Rust.
 
 Abra **Administrador → Copias de seguridad**. El editor de los tres servidores
-está únicamente aquí; **Configuración inicial** y **Conexiones VPN** muestran
+está únicamente aquí; **Conexiones VPN** muestra
 resúmenes/enlaces. Los nombres predeterminados son **Copias de seguridad
 locales**, **Servidor externo de copias 1** y **2**. Los nombres personalizados
 se conservan. No habilite destinos sin configurar/verificar.

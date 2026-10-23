@@ -4,7 +4,7 @@ import { ShieldCheck, Wifi, RefreshCw, AlertTriangle, CheckCircle2, Clock, Activ
 import apiClient from '@/api/apiClient';
 import endpoints from '@/api/endpoints';
 import BackupDestinationForm, { BACKUP_SLOTS } from '@/components/admin/BackupDestinationForm';
-import AdminInfrastructure from '@/pages/admin/AdminInfrastructure';
+import AdminVpnConnectionForm from '@/components/admin/AdminVpnConnectionForm';
 import { extractErrorMessage } from '@/lib/errors';
 import { INFORMATION_UNAVAILABLE, infrastructureMessage, infrastructureState, platformLabel } from '@/lib/infrastructure';
 
@@ -133,7 +133,7 @@ export default function AdminVpn({ active = true, onNavigate = null }) {
           ) : null}
         </>
       ) : null}
-      <AdminInfrastructure view="vpn" active={active} onNavigate={onNavigate} observation={vpnData} />
+      <AdminVpnConnectionForm active={active} observation={vpnData} />
     </motion.div>
   );
 }

@@ -1,6 +1,6 @@
 # Preparación de infraestructura UASSpain
 
-La aplicación conserva cinco servicios: Nginx, frontend, backend Rust, PostgreSQL cifrado y Redis. El administrador guarda equipo, instalación, directorios, red y progreso en **Infraestructura → Configuración inicial**. WireGuard tiene un único editor público en **Conexiones VPN**; los tres destinos tienen un único editor en **Copias de seguridad → Servidores de copias de seguridad**. Los pasos VPN y copias del asistente son resúmenes de sólo lectura con enlaces. No se repite la introducción de datos. El despliegue se registra en [validación local](LOCAL_VALIDATION.md).
+La aplicación conserva cinco servicios: Nginx, frontend, backend Rust, PostgreSQL cifrado y Redis. La sección Configuración inicial se ha retirado; sus datos guardados se conservan. WireGuard mantiene su editor público en **Conexiones VPN**; los tres destinos mantienen su editor en **Copias de seguridad → Servidores de copias de seguridad**. El despliegue se registra en [validación local](LOCAL_VALIDATION.md).
 
 La configuración guardada no instala software, activa WireGuard, abre puertos, crea montajes ni aplica rutas. `CONFIGURED` y `VERIFIED` tienen significados distintos. Las comprobaciones pendientes muestran BLOCKED/NOT_RUN; no se convierten en PASS mediante confirmación manual.
 
