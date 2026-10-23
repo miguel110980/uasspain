@@ -4,6 +4,20 @@ El módulo utiliza el backend Rust existente y Authorization Code Flow con PKCE 
 
 ## Origen y cliente en Google Cloud
 
+### Instalación de pruebas con www (23 de octubre de 2026)
+
+El origen solicitado para Google OAuth es `https://www.uasspain-prueba.duckdns.org` y el callback exacto es `https://www.uasspain-prueba.duckdns.org/auth/google/callback`, sin barra final. El usuario confirma que Google Cloud utiliza `www`; no se ha modificado ni inspeccionado su consola. El dominio sin `www` es otro origen y no se sustituye automáticamente.
+
+`FRONTEND_URL=https://uasspain-prueba.duckdns.org` configura ahora la URL pública general. `GOOGLE_OAUTH_PUBLIC_ORIGIN=https://www.uasspain-prueba.duckdns.org` conserva el callback con www solicitado para Google Cloud; si está vacío se utiliza FRONTEND_URL. CORS conserva los accesos locales/LAN y añade ambos orígenes exactos. SITE_URL/VITE_SITE_URL corresponden al dominio público general. Las cookies host-only y sessionStorage requieren iniciar y terminar Google en el mismo origen; el acceso convencional desde localhost/LAN se conserva.
+
+Ambos nombres figuran en la allowlist compartida. `nginx/tls_pending_hosts.conf` mantiene bloqueado su enrutamiento de aplicación con HTTP 503 mientras falte un certificado público válido. El backend muestra esa misma lista en la configuración efectiva, sin afirmar que un host permitido ya está validado. El preparador TLS sólo retira del bloqueo el hostname cuyo certificado ha comprobado; otros alias y el gate OAuth conservan su estado pendiente.
+
+Para un hostname público, `GOOGLE_OAUTH_VERIFIED_PUBLIC_ORIGIN` queda vacío hasta verificar realmente HTTPS con confianza pública, nombre y cadena válidos. Sólo después puede el operador configurarlo con el mismo origen exacto que `FRONTEND_URL`. No es un mecanismo de emisión de certificados ni prueba de registro en Google Cloud. Un cambio de origen deja sin validez la evidencia anterior; no se modifica ni borra el secreto cifrado para corregir las URL.
+
+El panel distingue secreto disponible, transporte validado y verificación real del proveedor. `verified_at` por sí solo no permite habilitar Google: deben coincidir origen y evidencia de flujo. Si falla TLS se muestra `BLOCKED_PUBLIC_TLS`, y el backend rechaza el inicio antes de crear el flujo. No se desactivan state, nonce, PKCE, cookie, vínculo explícito, permisos ni reautenticación.
+
+El arranque local admite seleccionar los servicios afectados: `-Build -Services backend,frontend,nginx` para esta incorporación del dominio, con las dependencias existentes saludables y sin recrear PostgreSQL o Redis. Si Nginx no cambia, basta seleccionar backend/frontend. Conservar los dominios/certificados activos hasta disponer de TLS válido para el hostname exacto con `www`.
+
 1. El operador configura `FRONTEND_URL` con el origen público de esta instalación, por ejemplo `https://localhost` en desarrollo o el dominio HTTPS autorizado de la empresa. No incluya usuario, contraseña, ruta distinta de `/`, query ni fragmento. No se toma de Host, X-Forwarded-Host ni del formulario. HTTP sólo se admite para loopback en desarrollo.
 2. Abra Google Cloud Console, seleccione el proyecto de la empresa y entre en **Google Auth Platform**. Complete **Branding** (nombre y correos de soporte/contacto), **Audience** (Internal únicamente si procede para la organización; External en los demás casos) y **Data Access** con OpenID, email y perfil básico. Si el proyecto externo está en Testing, añada las cuentas de prueba autorizadas. No se solicita acceso a Gmail, Drive ni al correo corporativo.
 3. En **Clients → Create client** seleccione **Web application**. Copie desde UASSpain el **Origen autorizado de JavaScript** y la **URL de redirección autorizada**. La redirección es exactamente `<FRONTEND_URL>/auth/google/callback`, sin barra final. Protocolo, dominio y puerto deben coincidir. Google puede exigir verificación del dominio y de Branding/Audience según la configuración de la empresa.

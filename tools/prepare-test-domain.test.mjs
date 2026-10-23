@@ -1,0 +1,15 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { mergeHosts, mergeOrigins, renderNginx, verifyPublicCertificate } from './prepare-test-domain.mjs';
+const policy = JSON.parse(readFileSync(new URL('../nginx/test-domain.json', import.meta.url), 'utf8'));
+const nginx = readFileSync(new URL('../nginx/nginx.conf', import.meta.url), 'utf8');
+test('test-domain configuration remains inactive', () => assert.equal(policy.enabled, false));
+test('merge retains local hosts and adds domain once', () => { const result = mergeHosts('localhost 1;\n127.0.0.1 1;\n', policy.hostname); assert(result.includes('localhost 1;')); assert(result.includes('127.0.0.1 1;')); assert.equal(result.split(policy.hostname).length, 2); });
+test('repeated preparation does not duplicate hosts', () => { const result = mergeHosts(`localhost 1;\n${policy.hostname} 1;\n${policy.hostname} 1;\n`, policy.hostname); assert.equal(result.split(policy.hostname).length, 2); });
+test('origins retain localhost, corporate origins and deduplicate', () => assert.equal(mergeOrigins('https://localhost,https://uasspain.com,https://localhost', policy.hostname), `https://localhost,https://uasspain.com,https://${policy.hostname}`));
+for (const value of ['*', 'https://localhost/path', 'https://user:pass@localhost', 'file:///tmp']) test('unsafe CORS input rejected: ' + value, () => assert.throws(() => mergeOrigins(value, policy.hostname)));
+test('SNI preserves existing certificates and all application routes', () => { const result = renderNginx(nginx, policy.hostname); assert(result.includes('default /run/secrets/edge_tls_cert;')); assert(result.includes('default /run/secrets/edge_tls_key;')); assert(result.includes(`${policy.hostname} /run/secrets/test_domain_tls_cert;`)); assert(result.includes('ssl_certificate $test_edge_cert;')); assert.equal((result.match(/listen /g) || []).length, (nginx.match(/listen /g) || []).length); assert.equal((result.match(/location /g) || []).length, (nginx.match(/location /g) || []).length); assert(result.includes('proxy_ssl_verify on;')); });
+test('unsupported or already transformed nginx source rejected', () => assert.throws(() => renderNginx(renderNginx(nginx, policy.hostname), policy.hostname)));
+test('hostname cannot inject nginx directives', () => assert.throws(() => renderNginx(nginx, 'example.org; return 200;')));
+test('missing certificate never creates public trust', () => assert.throws(() => verifyPublicCertificate('', Buffer.alloc(0), policy.hostname)));

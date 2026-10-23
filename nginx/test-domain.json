@@ -1,0 +1,7 @@
+{
+  "hostname": "uasspain-prueba.duckdns.org",
+  "expectedIPv4": "81.38.148.209",
+  "challenge": "dns-01",
+  "acmeImage": "certbot/certbot@sha256:f70ad0adbb7e117f0fe42a63c553f28ea451edabc0148757b6efcd9735acaa20",
+  "enabled": false
+}

@@ -131,12 +131,24 @@ export default function AdminSeguridad() {
         </div>
       </div>
 
+      <section aria-label="Configuración efectiva del dominio" className="glass-card p-5 min-w-0">
+        <h3 className="font-heading text-sm font-semibold mb-3">Configuración efectiva del dominio</h3>
+        <dl className="space-y-2 text-sm">
+          {[
+            ['URL pública frontend', systemStatus?.platform?.frontend_url || 'No disponible'],
+            ['Origen Google OAuth', systemStatus?.security?.google_public_origin || 'No disponible'],
+            ['Hosts permitidos', systemStatus?.security?.allowed_hosts?.join(', ') || 'No disponible'],
+            ['Hosts pendientes de TLS público', Array.isArray(systemStatus?.security?.tls_pending_hosts) ? systemStatus.security.tls_pending_hosts.join(', ') || 'Ninguno' : 'No disponible'],
+          ].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words text-foreground">{value}</dd></div>)}
+        </dl>
+      </section>
+
       {/* KPIs seguridad */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {kpis.map((k) => (
           <div key={k.label} className="glass-card p-4">
             <div className="flex items-center gap-2 mb-2">
-              <k.icon className={`w-4 h-4 ${k.accent === 'orange' ? 'text-accent' : 'text-primary'}`} />
+              <k.icon className={`w-4 h-4 ${k.accent === 'orange' ? 'text-warning' : 'text-primary'}`} />
               <span className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">{k.label}</span>
             </div>
             <p className="font-heading text-2xl font-bold text-foreground">{k.value}</p>
@@ -147,7 +159,7 @@ export default function AdminSeguridad() {
       {/* Alertas */}
       <div className="glass-card p-5">
         <h3 className="font-heading text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-accent" /> Alertas de seguridad
+          <AlertTriangle className="w-4 h-4 text-warning" /> Alertas de seguridad
         </h3>
         {alertas.length === 0 ? (
           <p className="text-xs text-muted-foreground py-4 text-center">No hay alertas activas. El sistema está seguro.</p>
@@ -167,7 +179,7 @@ export default function AdminSeguridad() {
         {/* IPs sospechosas */}
         <div className="glass-card p-5">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 text-accent" /> IPs con intentos fallidos
+            <ShieldAlert className="w-4 h-4 text-warning" /> IPs con intentos fallidos
           </h3>
           <p className="text-xs text-muted-foreground mb-4">Direcciones con 3 o más intentos fallidos</p>
           {ipsSospechosas.length === 0 ? (
@@ -189,7 +201,7 @@ export default function AdminSeguridad() {
         {/* Usuarios bloqueados */}
         <div className="glass-card p-5">
           <h3 className="font-heading text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
-            <Ban className="w-4 h-4 text-accent" /> Usuarios bloqueados
+            <Ban className="w-4 h-4 text-warning" /> Usuarios bloqueados
           </h3>
           <p className="text-xs text-muted-foreground mb-4">Cuentas con acceso restringido</p>
           {bloqueados.length === 0 ? (
@@ -261,11 +273,11 @@ export default function AdminSeguridad() {
           <KeyRound className="w-4 h-4 text-primary" /> Autenticación de doble factor (2FA)
         </h3>
         {!smtpConfigured && authPolicy.enabled && (
-          <div className="mb-4 flex items-start gap-3 px-4 py-3 border border-danger-border bg-danger-soft rounded text-danger/80">
+          <div className="mb-4 flex items-start gap-3 px-4 py-3 border border-danger-border bg-danger-soft rounded text-danger">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-semibold">2FA activa, pero SMTP no está operativo</p>
-              <p className="text-xs text-danger/70 mt-1">
+              <p className="text-xs text-danger mt-1">
                 Los códigos de acceso no se enviarán por email mientras falten credenciales SMTP reales.
                 Revise EMAIL_HOST_USER y EMAIL_HOST_PASSWORD antes de exigir 2FA a usuarios reales.
               </p>

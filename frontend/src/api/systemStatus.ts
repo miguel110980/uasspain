@@ -9,7 +9,7 @@ export type SystemStatusResponse = {
   google_oauth: { enabled: boolean; configured: boolean; client_id: string; origins: string[] };
   users: { total?: number; unique_active: number; admin: number; instructor: number; alumno: number };
   academic?: { published_courses: number; published_news: number; available_exams: number; total_exams: number; published_materials: number; total_materials: number; exam_results: number; passed_exams: number };
-  security: { jwt_cookie_secure: boolean; reverse_proxy: string; trust_proxy: boolean; allowed_hosts: string[]; csp: boolean; hsts: boolean };
+  security: { jwt_cookie_secure: boolean; reverse_proxy: string; trust_proxy: boolean; allowed_hosts: string[]; csp: boolean; hsts: boolean; tls_pending_hosts?: string[] | null; cors_origins?: string[]; google_public_origin?: string | null };
   two_factor: { enabled: boolean; required_roles: string[] };
   host: { available: boolean; scope: string; cpu: Record<string, unknown>; memory: Record<string, unknown>; disk: Record<string, unknown> };
 };

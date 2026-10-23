@@ -494,18 +494,9 @@ pub async fn smtp_test(
 
 pub fn google_view(config: GoogleConfig) -> Value {
     let configured = config.enabled && !config.client_id.is_empty();
-    let origins: Vec<String> = ["FRONTEND_URL", "SITE_URL"]
-        .into_iter()
-        .filter_map(|key| std::env::var(key).ok())
-        .filter_map(|s| url::Url::parse(&s).ok())
-        .map(|u| u.origin().ascii_serialization())
-        .fold(Vec::new(), |mut v, s| {
-            if !v.contains(&s) {
-                v.push(s)
-            }
-            v
-        });
-    json!({"enabled":config.enabled,"configured":configured,"client_id":config.client_id,"origins":origins})
+    let origin = crate::google_oauth::trusted_origin().ok();
+    let origins: Vec<String> = origin.iter().cloned().collect();
+    json!({"enabled":config.enabled,"configured":configured,"client_id":config.client_id,"origins":origins,"public_origin":origin,"redirect_uri":origin.as_ref().map(|value|format!("{value}/auth/google/callback"))})
 }
 pub async fn google_get(
     State(state): State<Arc<AppState>>,

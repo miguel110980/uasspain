@@ -59,11 +59,16 @@ export default function AdminConfiguracion() {
         { label: 'Modo', value: p.production ? 'Producción' : 'Desarrollo', estado: p.production ? 'ok' : 'warning' },
       ],
       seguridad: [
+        { label: 'URL pública frontend', value: p.frontend_url || '—' },
+        { label: 'Origen Google OAuth', value: sec.google_public_origin || '—' },
         { label: 'Cookies JWT seguras', value: sec.jwt_cookie_secure ? 'HTTPS only' : 'HTTP permitido (dev)', estado: sec.jwt_cookie_secure ? 'ok' : 'warning' },
         { label: 'Proxy inverso', value: sec.reverse_proxy === 'nginx' ? 'Nginx activo' : 'Sin proxy inverso', estado: sec.reverse_proxy === 'nginx' ? 'ok' : 'warning' },
         { label: 'Trust proxy (Nginx)', value: sec.trust_proxy ? 'Activado' : 'Desactivado', estado: sec.trust_proxy ? 'ok' : 'warning' },
         { label: 'Hosts permitidos', value: (sec.allowed_hosts || []).join(', ') || '—' },
-        { label: 'Cabeceras CSP / HSTS', value: 'Activas vía Rust + Nginx' },
+        { label: 'Orígenes CORS / CSRF', value: sec.cors_origins?.join(', ') || 'No disponible' },
+        { label: 'Hosts pendientes de TLS público', value: Array.isArray(sec.tls_pending_hosts) ? sec.tls_pending_hosts.join(', ') || 'Ninguno' : 'No disponible', estado: sec.tls_pending_hosts?.length ? 'warning' : undefined },
+        { label: 'Política CSP configurada', value: sec.csp ? 'Sí' : 'No', estado: sec.csp ? 'ok' : 'warning' },
+        { label: 'Política HSTS configurada', value: sec.hsts ? 'Sí' : 'No', estado: sec.hsts ? 'ok' : 'warning' },
       ],
       smtp: [
         { label: 'Canal activo', value: status.mail?.api_exclusive ? 'Postmark API' : 'SMTP' },
@@ -128,7 +133,7 @@ export default function AdminConfiguracion() {
             {detalle.map((item) => (
               <li key={item.label} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border-subtle pb-4 last:border-0 last:pb-0">
                 <span className="text-sm text-muted-foreground">{item.label}</span>
-                <span className={`text-sm font-medium text-foreground ${item.estado ? `px-2 py-0.5 border rounded text-xs ${badge(item.estado === 'ok')}` : ''}`}>
+                <span className={`text-sm font-medium text-foreground break-words min-w-0 ${item.estado ? `px-2 py-0.5 border rounded text-xs ${badge(item.estado === 'ok')}` : ''}`}>
                   {item.value}
                 </span>
               </li>

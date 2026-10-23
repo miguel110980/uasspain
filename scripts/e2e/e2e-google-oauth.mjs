@@ -4,7 +4,7 @@ import {createDecipheriv,createHash,createHmac,randomUUID} from 'node:crypto';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {adminClient,apiClient,registerFixture,sql as fixtureSql,uuid,mailFiles,backend,sleep} from './auth-fixtures.mjs';
 const sql=query=>{try{return fixtureSql(query)}catch{throw new Error('Isolated fixture SQL failed')}};
-const dir='.run/google-oauth-20261013';mkdirSync(dir,{recursive:true});
+const dir=process.env.GOOGLE_OAUTH_REPORT_DIR||'.run/google-oauth-20261013';mkdirSync(dir,{recursive:true});
 const report={scope:'isolated synthetic OIDC server, actual Rust/PostgreSQL/HTTPS; not Google acceptance',gates:[],errors:[],mainWrites:0,profiles:[]};
 const gate=(ok,name)=>{assert.ok(ok,name);report.gates.push(name);console.log('PASS '+name)};
 const beforeConfig=sql("SELECT COALESCE((SELECT value::text FROM core_systemsetting WHERE key='google_oauth'),'null')");

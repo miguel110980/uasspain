@@ -150,7 +150,7 @@ pub async fn status(
         google_oauth: runtime_config::google_view(google),
         users,
         academic,
-        security: json!({"jwt_cookie_secure":state.tokens.secure_cookie,"reverse_proxy":std::env::var("REVERSE_PROXY").unwrap_or_default(),"trust_proxy":runtime_config::env_true("TRUST_PROXY")&&!std::env::var("TRUSTED_PROXY_HOST").unwrap_or_default().is_empty(),"allowed_hosts":state.allowed_hosts,"csp":true,"hsts":state.tokens.secure_cookie}),
+        security: json!({"jwt_cookie_secure":state.tokens.secure_cookie,"reverse_proxy":std::env::var("REVERSE_PROXY").unwrap_or_default(),"trust_proxy":runtime_config::env_true("TRUST_PROXY")&&!std::env::var("TRUSTED_PROXY_HOST").unwrap_or_default().is_empty(),"allowed_hosts":state.allowed_hosts,"tls_pending_hosts":tls_pending_hosts(),"cors_origins":std::env::var("CORS_ALLOWED_ORIGINS").unwrap_or_default().split(',').map(str::trim).filter(|v|!v.is_empty()).collect::<Vec<_>>(),"google_public_origin":crate::google_oauth::trusted_origin().ok(),"csp":true,"hsts":state.tokens.secure_cookie}),
         two_factor: runtime_config::setting(&state, "auth_policy")
             .await?
             .unwrap_or_else(|| json!({"enabled":false,"required_roles":[]})),
@@ -172,6 +172,12 @@ fn parse_allowed_hosts(config: &str) -> Vec<String> {
             .then(|| host.to_owned())
         })
         .collect()
+}
+fn tls_pending_hosts() -> Option<Vec<String>> {
+    std::env::var("TLS_PENDING_HOSTS_FILE")
+        .ok()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|source| parse_allowed_hosts(&source))
 }
 
 pub(crate) fn allowed_hosts() -> Vec<String> {
@@ -400,11 +406,18 @@ mod tests {
 
         let mut state = crate::AppState::for_test();
         state.allowed_hosts = super::parse_allowed_hosts(
-            "localhost 1;\n127.0.0.1 1;\nuasspain.com 1;\nwww.uasspain.com 1;\n",
+            "localhost 1;\n127.0.0.1 1;\nuasspain.com 1;\nwww.uasspain.com 1;\nuasspain-prueba.duckdns.org 1;\nwww.uasspain-prueba.duckdns.org 1;\n",
         );
         assert_eq!(
             state.allowed_hosts,
-            ["localhost", "127.0.0.1", "uasspain.com", "www.uasspain.com"]
+            [
+                "localhost",
+                "127.0.0.1",
+                "uasspain.com",
+                "www.uasspain.com",
+                "uasspain-prueba.duckdns.org",
+                "www.uasspain-prueba.duckdns.org"
+            ]
         );
         let app = crate::app::build_router(std::sync::Arc::new(state));
         for (host, expected) in [
@@ -412,6 +425,8 @@ mod tests {
             ("127.0.0.1", StatusCode::OK),
             ("uasspain.com", StatusCode::OK),
             ("www.uasspain.com", StatusCode::OK),
+            ("uasspain-prueba.duckdns.org", StatusCode::OK),
+            ("www.uasspain-prueba.duckdns.org", StatusCode::OK),
             ("localhost:8445", StatusCode::OK),
             ("127.0.0.1:8445", StatusCode::OK),
             ("uasspain.com:443", StatusCode::OK),

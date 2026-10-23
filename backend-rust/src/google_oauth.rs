@@ -47,10 +47,9 @@ impl Config {
     pub fn verified(&self) -> bool {
         self.verified_at.is_some()
             && self.verification_flow_id.is_some()
-            && self
-                .verified_origin
-                .as_ref()
-                .is_some_and(|origin| trusted_origin().is_ok_and(|actual| &actual == origin))
+            && self.verified_origin.as_ref().is_some_and(|origin| {
+                trusted_origin().is_ok_and(|actual| &actual == origin && transport_ready(&actual))
+            })
     }
 }
 pub async fn config(state: &AppState) -> Result<Config, AppError> {
@@ -65,8 +64,25 @@ pub async fn config(state: &AppState) -> Result<Config, AppError> {
 }
 pub fn trusted_origin() -> Result<String, AppError> {
     origin_from(
-        &std::env::var("FRONTEND_URL").map_err(|_| AppError::Unavailable)?,
+        &std::env::var("GOOGLE_OAUTH_PUBLIC_ORIGIN")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| std::env::var("FRONTEND_URL").ok())
+            .ok_or(AppError::Unavailable)?,
         runtime_config::env_true("APP_PRODUCTION"),
+    )
+}
+fn transport_ready_for(origin: &str, verified_public_origin: &str) -> bool {
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+        || (url.scheme() == "https" && origin == verified_public_origin)
+}
+fn transport_ready(origin: &str) -> bool {
+    transport_ready_for(
+        origin,
+        &std::env::var("GOOGLE_OAUTH_VERIFIED_PUBLIC_ORIGIN").unwrap_or_default(),
     )
 }
 fn origin_from(value: &str, production: bool) -> Result<String, AppError> {
@@ -189,6 +205,7 @@ async fn reauthenticate(
 async fn public_view(state: &AppState, c: Config, actor: Uuid) -> Result<Value, AppError> {
     let secret = runtime_config::secret(state, SECRET_KEY).await?.is_some();
     let origin = trusted_origin().ok();
+    let tls_ready = origin.as_deref().is_some_and(transport_ready);
     let linked: bool = sqlx::query_scalar(
         "SELECT google_subject_lookup IS NOT NULL FROM accounts_userprofile WHERE id=$1",
     )
@@ -197,6 +214,8 @@ async fn public_view(state: &AppState, c: Config, actor: Uuid) -> Result<Value, 
     .await?;
     let state_name = if origin.is_none() {
         "BLOCKED_ORIGIN"
+    } else if !tls_ready {
+        "BLOCKED_PUBLIC_TLS"
     } else if c.client_id.is_empty() || !secret {
         "NOT_CONFIGURED"
     } else if !c.verified() {
@@ -207,7 +226,7 @@ async fn public_view(state: &AppState, c: Config, actor: Uuid) -> Result<Value, 
         "VERIFIED_DISABLED"
     };
     Ok(
-        json!({"enabled":c.enabled&&c.verified()&&secret,"client_id":c.client_id,"corporate_email":c.corporate_email,"revision":c.revision,"client_secret_configured":secret,"verified_at":c.verified_at,"status":state_name,"linked":linked,"public_origin":origin,"redirect_uri":origin.as_ref().map(|o|format!("{o}{CALLBACK_PATH}")),"configured":c.verified()&&secret,"provider":"google","flow":"authorization_code_pkce","mail_provider_unchanged":true}),
+        json!({"enabled":c.enabled&&c.verified()&&secret,"client_id":c.client_id,"corporate_email":c.corporate_email,"revision":c.revision,"client_secret_configured":secret,"verified_at":c.verified_at,"verified":c.verified(),"transport_ready":tls_ready,"status":state_name,"linked":linked,"public_origin":origin,"redirect_uri":origin.as_ref().map(|o|format!("{o}{CALLBACK_PATH}")),"configured":c.verified()&&secret,"provider":"google","flow":"authorization_code_pkce","mail_provider_unchanged":true}),
     )
 }
 pub async fn get(
@@ -339,6 +358,19 @@ async fn begin(
     input: Start,
     purpose: &str,
 ) -> Result<Response, AppError> {
+    // Check before reauthentication or persisting a flow. Host-only cookies and
+    // sessionStorage cannot follow an OAuth callback to a different origin.
+    let origin = trusted_origin()?;
+    if !transport_ready(&origin) {
+        return Err(AppError::Validation(
+            "HTTPS público pendiente de validación. Google permanece bloqueado.".into(),
+        ));
+    }
+    if headers.get("origin").and_then(|value| value.to_str().ok()) != Some(origin.as_str()) {
+        return Err(AppError::Validation(
+            "Abra el origen público configurado antes de iniciar Google OAuth.".into(),
+        ));
+    }
     let window = auth::window_id(&headers)?;
     auth::enforce_login_rate(&headers, &format!("google-code-start:{purpose}"))?;
     let owner = if purpose == "login" {
@@ -761,5 +793,25 @@ mod tests {
         let c: Config =
             serde_json::from_value(json!({"enabled":true,"client_id":"legacy"})).unwrap();
         assert!(!c.verified());
+    }
+    #[test]
+    fn public_tls_requires_evidence_for_the_exact_origin() {
+        let origin = "https://www.uasspain-prueba.duckdns.org";
+        assert!(!transport_ready_for(origin, ""));
+        assert!(!transport_ready_for(origin, "https://other.example"));
+        assert!(!transport_ready_for(
+            origin,
+            "https://www.uasspain-prueba.duckdns.org/"
+        ));
+        assert!(!transport_ready_for(
+            origin,
+            "https://uasspain-prueba.duckdns.org"
+        ));
+        assert!(transport_ready_for(origin, origin));
+        assert!(transport_ready_for("https://localhost:8444", ""));
+        assert!(!transport_ready_for(
+            "http://example.com",
+            "http://example.com"
+        ));
     }
 }

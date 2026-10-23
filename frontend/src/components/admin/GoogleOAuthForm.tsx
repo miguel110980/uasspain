@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import apiClient from '@/api/apiClient';
 import { startGoogleAuthorization } from '@/lib/googleAuthorization';
 
-type Config = { enabled: boolean; client_id: string; corporate_email: string; revision: number; client_secret_configured: boolean; verified_at: string | null; status: string; linked: boolean; public_origin: string | null; redirect_uri: string | null };
+type Config = { enabled: boolean; client_id: string; corporate_email: string; revision: number; client_secret_configured: boolean; verified_at: string | null; verified?: boolean; transport_ready?: boolean; status: string; linked: boolean; public_origin: string | null; redirect_uri: string | null };
 const defaults: Config = { enabled: false, client_id: '', corporate_email: 'info@uasspain.com', revision: 0, client_secret_configured: false, verified_at: null, status: 'NOT_CONFIGURED', linked: false, public_origin: null, redirect_uri: null };
 export default function GoogleOAuthForm({ onSaved }: { onSaved: () => void }) {
   const [config, setConfig] = useState(defaults), [saved, setSaved] = useState(defaults);
@@ -11,6 +11,10 @@ export default function GoogleOAuthForm({ onSaved }: { onSaved: () => void }) {
   const load = useCallback(async () => { const { data } = await apiClient.get('/api/system/google-oauth/'); setConfig(data); setSaved(data); setLoaded(true); }, []);
   useEffect(() => { void load().catch(() => setNotice('No se pudo cargar Google OAuth.')); const message = sessionStorage.getItem('uasspain.google_notice'); if (message) { setNotice(message); sessionStorage.removeItem('uasspain.google_notice'); } }, [load]);
   const changed = config.client_id !== saved.client_id || config.corporate_email !== saved.corporate_email || !!secret;
+  const verified = saved.verified ?? ['ACTIVE', 'VERIFIED_DISABLED'].includes(saved.status);
+  const transportReady = saved.transport_ready ?? saved.status !== 'BLOCKED_PUBLIC_TLS';
+  const sameOrigin = saved.public_origin === window.location.origin;
+  const activationReason = !loaded ? 'Cargando configuración.' : changed ? 'Guarde los cambios y vuelva a verificar con Google.' : !saved.public_origin ? 'Falta configurar FRONTEND_URL con un origen válido.' : !transportReady ? 'HTTPS público pendiente: el operador debe validar el certificado y el hostname antes de permitir Google.' : !saved.client_secret_configured || !saved.client_id ? 'Faltan las credenciales del cliente.' : !verified ? 'El secreto guardado no acredita la verificación de Google. Introduzca su contraseña actual y complete Verificar con Google desde el origen público configurado.' : '';
   const run = async (action: () => Promise<void>) => { setBusy(true); setNotice(''); try { await action(); } catch (e) { setNotice(e?.response?.data?.detail || e?.message || 'No se pudo completar Google OAuth.'); } finally { setBusy(false); } };
   const save = (event: React.FormEvent) => { event.preventDefault(); void run(async () => {
     await apiClient.put('/api/system/google-oauth/', { client_id: config.client_id, corporate_email: config.corporate_email, client_secret: secret, enabled: changed ? false : config.enabled, expected_revision: saved.revision });
@@ -35,22 +39,24 @@ export default function GoogleOAuthForm({ onSaved }: { onSaved: () => void }) {
         <label className="space-y-1"><span className="text-sm">Google OAuth Client Secret</span><input type="password" autoComplete="new-password" className={input} value={secret} disabled={busy || !loaded} onChange={e => setSecret(e.target.value)} /></label>
       </div>
       <p className="text-xs text-muted-foreground">{saved.client_secret_configured ? 'Secreto cifrado disponible. Deje el campo vacío para conservarlo.' : 'Falta guardar un Client Secret.'} Nunca se devuelve el secreto guardado al navegador.</p>
-      <label className="flex gap-2 text-sm"><input type="checkbox" checked={config.enabled && !changed} disabled={busy || !loaded || !saved.verified_at || changed} onChange={e => setConfig(c => ({ ...c, enabled: e.target.checked }))} /> Habilitar acceso Google verificado</label>
+      <label className="flex gap-2 text-sm"><input type="checkbox" aria-describedby="google-activation-reason" checked={config.enabled && !changed && verified && transportReady} disabled={busy || !loaded || !verified || !transportReady || changed} onChange={e => setConfig(c => ({ ...c, enabled: e.target.checked }))} /> Habilitar acceso Google verificado</label>
+      <p id="google-activation-reason" className="text-sm text-muted-foreground">{activationReason || 'Verificación válida para el origen público actual. Puede habilitar Google y guardar.'}</p>
       <button type="submit" disabled={busy || !loaded} className="rounded border border-primary/30 px-3 py-2 text-primary disabled:opacity-50">Guardar configuración Google</button>
     </form>
     <div className="space-y-3">
       <label className="block space-y-1"><span className="text-sm">Contraseña actual para verificar, vincular o desvincular</span><input type="password" autoComplete="current-password" className={input} value={password} disabled={busy} onChange={e => setPassword(e.target.value)} /></label>
       <div className="flex flex-wrap gap-3">
-        <button type="button" disabled={busy || !loaded || changed || !saved.client_secret_configured || !password} onClick={() => begin('verify')} className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50">Verificar con Google</button>
-        <button type="button" disabled={busy || !loaded || changed || !saved.client_secret_configured || !password || saved.linked} onClick={() => begin('link')} className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50">Vincular cuenta Google</button>
+        <button type="button" disabled={busy || !loaded || changed || !transportReady || !sameOrigin || !saved.client_secret_configured || !password} onClick={() => begin('verify')} className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50">Verificar con Google</button>
+        <button type="button" disabled={busy || !loaded || changed || !transportReady || !sameOrigin || !saved.client_secret_configured || !password || saved.linked} onClick={() => begin('link')} className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50">Vincular cuenta Google</button>
       </div>
       <p className="text-xs text-muted-foreground">Se abrirá la autenticación real de Google en esta ventana. Ninguna coincidencia de email concede permisos ni crea vínculos.</p>
+      {loaded && !sameOrigin && saved.public_origin && <p className="text-sm text-muted-foreground">Esta ventana usa {window.location.origin}. Google debe iniciarse desde {saved.public_origin}; las cookies y la sesión del flujo no se comparten entre dominios. El acceso convencional local sigue disponible.</p>}
       {saved.linked && <div className="border-t border-warning/30 pt-4 space-y-2"><p className="text-sm">Desvincular cerrará sus sesiones. Podrá entrar nuevamente con correo y contraseña.</p><label className="block space-y-1"><span className="text-sm">Escriba DESVINCULAR</span><input className={input} value={confirmation} disabled={busy} onChange={e => setConfirmation(e.target.value)} /></label><button type="button" disabled={busy || !password || confirmation !== 'DESVINCULAR'} onClick={unlink} className="rounded border border-warning/40 px-3 py-2 text-warning disabled:opacity-50">Desvincular cuenta Google</button></div>}
     </div>
-    <details className="space-y-3"><summary className="cursor-pointer font-medium">Configurar Google Cloud Console</summary>
+    <details open className="space-y-3"><summary className="cursor-pointer font-medium">Configurar Google Cloud Console</summary>
       <ol className="list-decimal pl-5 space-y-2 text-sm"><li>Seleccione el proyecto de la empresa en Google Cloud Console y abra Google Auth Platform.</li><li>Complete Branding y Audience. Si la aplicación es externa y está en Testing, añada los usuarios de prueba autorizados.</li><li>En Data Access limite los permisos a OpenID, email y perfil básico.</li><li>En Clients cree una aplicación web y registre exactamente los valores siguientes.</li><li>Guarde Client ID y Client Secret aquí con Google desactivado. Verifique, vincule su identidad explícitamente y habilite sólo después de completar la verificación.</li></ol>
       {[['Origen autorizado de JavaScript', saved.public_origin], ['URL de redirección autorizada', saved.redirect_uri]].map(([label, value]) => <div key={label} className="space-y-1"><p className="text-sm">{label}</p><code className="block break-all text-xs">{value || 'Origen público no disponible'}</code><button type="button" disabled={busy || !value} onClick={() => copy(value)} className="text-sm text-primary">Copiar {label?.toLowerCase()}</button></div>)}
-      <p className="text-xs text-muted-foreground">El origen procede de FRONTEND_URL, configurado por el operador. HTTP, HTTPS y puertos son diferentes; Google exige coincidencia exacta. No se generan direcciones desde cabeceras del navegador.</p>
+      <p className="text-xs text-muted-foreground">El origen procede de GOOGLE_OAUTH_PUBLIC_ORIGIN o, si está vacío, de FRONTEND_URL. HTTP, HTTPS, www y puertos son diferentes; Google exige coincidencia exacta. No se generan direcciones desde cabeceras del navegador.</p>
     </details>
     <p role="status" className="text-sm text-muted-foreground">{notice}</p>
   </section>;

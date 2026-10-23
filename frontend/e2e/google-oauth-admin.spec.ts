@@ -34,7 +34,7 @@ test('Google configuration, signed code flow, explicit link, safe unlink and con
     const saved = page.waitForResponse(r => r.url().endsWith('/api/system/google-oauth/') && r.request().method() === 'PUT');
     await form.getByRole('button', { name: 'Guardar configuración Google' }).click(); expect((await saved).status()).toBe(200);
     await expect(form.getByLabel('Google OAuth Client Secret', { exact: true })).toHaveValue('');
-    await page.getByText('Configurar Google Cloud Console', { exact: true }).click();
+    await expect(page.getByText('Configurar Google Cloud Console', { exact: true }).locator('..')).toHaveAttribute('open', '');
     await page.getByRole('button', { name: 'Copiar origen autorizado de javascript', exact: true }).click();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('https://localhost:8444');
     await page.getByRole('button', { name: 'Copiar url de redirección autorizada', exact: true }).click();
