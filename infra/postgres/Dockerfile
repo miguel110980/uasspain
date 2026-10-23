@@ -1,6 +1,6 @@
 FROM postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 AS postgres-base
 
-FROM golang:1.27.2-alpine3.24@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS gosu-builder
+FROM golang:1.27.3-alpine3.24@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS gosu-builder
 
 ARG GOSU_COMMIT=6456aaa0f3c854d199d0f037f068eb97515b7513
 RUN apk add --no-cache git=2.54.0-r0 \
@@ -41,7 +41,7 @@ CMD ["postgres"]
 STOPSIGNAL SIGINT
 
 FROM postgres-runtime AS postgres-encrypted-build
-RUN apk add --no-cache gocryptfs=2.6.1-r6 fuse3=3.18.3-r0 setpriv=2.42.3-r1 findmnt=2.42.3-r1 \
+RUN apk add --no-cache gocryptfs=2.6.1-r7 fuse3=3.18.3-r0 setpriv=2.42.3-r1 findmnt=2.42.3-r1 \
     && printf 'user_allow_other\n' > /etc/fuse.conf
 COPY infra/postgres/encrypted-entrypoint.sh /usr/local/bin/encrypted-postgres-entrypoint.sh
 RUN chmod 755 /usr/local/bin/encrypted-postgres-entrypoint.sh

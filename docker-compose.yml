@@ -326,7 +326,7 @@ services:
 
   # ─── Frontend (nginx interno + SPA) — solo alcanzable desde edge ─────
   frontend:
-    image: uasspain-frontend:nginx1.30.5-alpine3.24
+    image: uasspain-frontend:nginx1.30.6-alpine3.24
     build:
       context: .
       dockerfile: frontend/Dockerfile
@@ -391,7 +391,7 @@ services:
 
   # ─── Nginx edge: ÚNICO servicio con puertos públicos (80/443) ────────
   nginx:
-    image: uasspain-nginx:1.30.5-alpine3.24
+    image: uasspain-nginx:1.30.6-alpine3.24
     build:
       context: ./nginx
     container_name: uasspain-nginx
