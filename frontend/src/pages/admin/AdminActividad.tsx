@@ -110,7 +110,7 @@ export default function AdminActividad() {
               className={`px-3 py-2 text-[10px] font-mono uppercase tracking-widest border rounded transition-all ${
                 filtroTipo === t
                   ? 'border-primary/50 bg-primary/10 text-primary'
-                  : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-primary'
+                  : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text'
               }`}
             >
               {labelForActivityFilter(t)}

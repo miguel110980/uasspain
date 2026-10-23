@@ -75,7 +75,7 @@ export default function ChatExportPdfButton({
         onClick={handleExport}
         disabled={disabled || exporting || !messages?.length}
         title="Exportar conversación a PDF"
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors rounded-sm disabled:opacity-40 disabled:pointer-events-none"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-brand-cyan-text transition-colors rounded-sm disabled:opacity-40 disabled:pointer-events-none"
       >
         {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
         PDF

@@ -27,7 +27,7 @@ export default function KpiCard({ icon: Icon, label, value, delta = undefined, t
           </span>
         )}
       </div>
-      <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground/70 mb-1">{label}</p>
+      <p className="break-words text-xs font-mono uppercase tracking-widest text-muted-foreground/70 mb-1">{label}</p>
       {loading ? (
         <div className="h-7 w-16 bg-surface-muted rounded animate-pulse" />
       ) : (

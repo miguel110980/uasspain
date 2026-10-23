@@ -11,7 +11,7 @@ export default function LiveConnectionActions({ record, readOnly, onDetails, onF
 }) {
   const button = 'w-7 h-7 flex items-center justify-center border border-border-subtle rounded transition-all';
   return <>
-    <button aria-label="Ver detalles" onClick={onDetails} title="Ver detalles" className={`${button} text-muted-foreground hover:border-primary/40 hover:text-primary`}><Eye className="w-3.5 h-3.5" /></button>
+    <button aria-label="Ver detalles" onClick={onDetails} title="Ver detalles" className={`${button} text-muted-foreground hover:border-primary/40 hover:text-brand-cyan-text`}><Eye className="w-3.5 h-3.5" /></button>
     {canManageLiveSession(record, readOnly) && <>
       <button aria-label="Finalizar sesión" onClick={onFinish} title="Finalizar sesión" className={`${button} text-warning hover:border-warning-border hover:bg-warning-soft`}><LogOut className="w-3.5 h-3.5" /></button>
       <button aria-label="Finalizar todas" onClick={onFinishAll} title="Finalizar todas" className={`${button} text-warning hover:border-warning-border hover:bg-warning-soft`}><History className="w-3.5 h-3.5" /></button>

@@ -209,7 +209,7 @@ export default function InstructorMaterial() {
             className={`flex items-center gap-2 px-5 py-2.5 text-xs font-mono uppercase tracking-widest border transition-all duration-200 ${
               activeSection === id
                 ? 'border-primary/50 bg-primary/10 text-primary'
-                : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-primary'
+                : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text'
             }`}
           >
             <Icon className="w-3.5 h-3.5" /> {label}
@@ -280,7 +280,7 @@ export default function InstructorMaterial() {
                   type="file"
                   accept=".pdf"
                   onChange={(e) => setFormMaterial((prev) => ({ ...prev, archivo: e.target.files?.[0] || null }))}
-                  className="w-full text-sm text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:border file:border-primary/30 file:bg-primary/10 file:text-primary file:text-xs file:font-bold file:cursor-pointer hover:file:bg-primary/20"
+                  className="w-full text-sm text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:border file:border-primary/30 file:bg-primary/10 file:text-brand-cyan-text file:text-xs file:font-bold file:cursor-pointer hover:file:bg-primary/20"
                   required
                 />
                 {formMaterial.archivo && (
@@ -348,7 +348,7 @@ export default function InstructorMaterial() {
                               <button
                                 type="button"
                                 onClick={() => handlePreviewMaterial(mat)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary transition-all duration-200"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-brand-cyan-text transition-all duration-200"
                               >
                                 <ExternalLink className="w-3 h-3" />
                                 Abrir
@@ -364,7 +364,7 @@ export default function InstructorMaterial() {
                               <button
                                 type="button"
                                 onClick={() => handleDeleteMaterial(mat)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-danger border border-danger-border bg-danger-soft/60 hover:bg-danger hover:text-white transition-all duration-200"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-danger border border-danger-border bg-danger-soft/60 hover:bg-danger hover:text-danger-foreground transition-all duration-200"
                               >
                                 <Trash2 className="w-3 h-3" />
                                 Eliminar
@@ -484,7 +484,7 @@ export default function InstructorMaterial() {
                     </div>
                     <button
                       onClick={() => handleDeleteBOE(pub.id)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-danger border border-danger-border bg-danger-soft/60 hover:bg-danger hover:text-white transition-all duration-200 shrink-0"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-danger border border-danger-border bg-danger-soft/60 hover:bg-danger hover:text-danger-foreground transition-all duration-200 shrink-0"
                     >
                       <Trash2 className="w-3 h-3" />
                       Eliminar

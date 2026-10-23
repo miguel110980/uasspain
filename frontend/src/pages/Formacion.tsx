@@ -37,7 +37,7 @@ export default function Formacion() {
                     {course.cover_image_url ? (
                       <img src={course.cover_image_url} alt={`Portada de ${course.name}`} loading="lazy" className="w-full aspect-video object-cover" />
                     ) : (
-                      <div className="aspect-video bg-primary/5 flex items-center justify-center"><GraduationCap className="w-12 h-12 text-primary/60" /></div>
+                      <div className="aspect-video bg-primary/5 flex items-center justify-center"><GraduationCap className="w-12 h-12 text-primary" /></div>
                     )}
                     <div className="p-6 flex-1 flex flex-col">
                       <div className="flex flex-col items-start gap-3">

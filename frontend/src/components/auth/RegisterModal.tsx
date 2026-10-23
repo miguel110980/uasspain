@@ -266,7 +266,7 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
           {...inputProps}
         />
         {toggle && (
-          <button type="button" aria-label={`${shown ? 'Ocultar' : 'Mostrar'} ${label.toLowerCase()}`} onClick={toggle} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors">
+          <button type="button" aria-label={`${shown ? 'Ocultar' : 'Mostrar'} ${label.toLowerCase()}`} onClick={toggle} className="icon-control absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-brand-cyan-text transition-colors">
             {shown ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </button>
         )}
@@ -278,12 +278,12 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
 
   return (
     <AuthModalShell onClose={onClose} maxWidth="max-w-2xl">
-        <button type="button" aria-label="Cerrar registro" onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-primary transition-colors">
+        <button type="button" aria-label="Cerrar registro" onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-brand-cyan-text transition-colors">
           <X className="w-5 h-5" />
         </button>
 
         <div className="mb-6">
-          <button onClick={onBack} className="flex items-center gap-1 text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors mb-4">
+          <button onClick={onBack} className="flex items-center gap-1 text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-brand-cyan-text transition-colors mb-4">
             <ChevronLeft className="w-3.5 h-3.5" /> Volver al acceso
           </button>
           <div className="inline-flex items-center gap-2 mb-3 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">
@@ -359,7 +359,7 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
             <button
               type="button"
               onClick={handleClear}
-              className="w-full px-8 py-3 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-primary transition-all duration-300"
+              className="w-full px-8 py-3 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-300"
             >
               Limpiar
             </button>

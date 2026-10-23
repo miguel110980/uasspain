@@ -62,7 +62,7 @@
 }
 
 .menuButton:hover {
-  color: hsl(var(--primary));
+  color: hsl(var(--brand-cyan-text));
   background: hsl(var(--surface-muted));
 }
 
@@ -83,7 +83,7 @@
   justify-content: center;
   gap: 8px;
   border: 1px solid hsl(var(--primary) / 0.45);
-  color: hsl(var(--primary));
+  color: hsl(var(--brand-cyan-text));
   padding: 6px clamp(10px, 1.2vw, 20px);
   font-size: 0.75rem;
   font-weight: 700;

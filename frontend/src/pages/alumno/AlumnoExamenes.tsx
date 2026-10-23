@@ -226,7 +226,7 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
             <div className="flex gap-3">
               <button
                 onClick={() => setSelectedExamen(null)}
-                className="flex-1 px-4 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-all duration-200"
+                className="flex-1 px-4 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-200"
               >
                 Cancelar
               </button>

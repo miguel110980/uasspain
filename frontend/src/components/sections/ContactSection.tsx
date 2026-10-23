@@ -307,7 +307,7 @@ export default function ContactSection({ skipReveal = false }) {
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={label}
-                    className="w-10 h-10 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-primary hover:bg-primary/5 transition-all duration-300"
+                    className="w-10 h-10 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text hover:bg-primary/5 transition-all duration-300"
                   >
                     <Icon className="w-4 h-4" />
                   </a>
@@ -316,7 +316,7 @@ export default function ContactSection({ skipReveal = false }) {
             </div>
 
             {/* Map */}
-            <div className="relative aspect-video min-h-[240px] border border-border-subtle overflow-hidden bg-[#e8eaed]">
+            <div className="relative aspect-video min-h-[240px] border border-border-subtle overflow-hidden bg-surface-muted">
               <iframe
                 title="UASSPAIN Ubicación"
                 src={MAP_URL}

@@ -356,7 +356,7 @@ function EditInstructorModal({ user, onClose, onSave }) {
                 </div>
               </div>
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={onClose} className="px-5 py-2.5 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-primary transition-all">Cancelar</button>
+                <button type="button" onClick={onClose} className="px-5 py-2.5 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-brand-cyan-text transition-all">Cancelar</button>
                 <button type="submit" disabled={saving} className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground text-sm font-bold uppercase tracking-tighter hover:bg-primary/80 transition-all disabled:opacity-50">
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Guardar
                 </button>
@@ -476,7 +476,7 @@ function InstructorDetailModal({ user, onClose, onResetPassword }) {
               <p className="text-[10px] text-muted-foreground/50">Roles activos: {getRoles(user).join(', ')}. Los permisos se validan en el servidor.</p>
             </div>
             <div className="flex justify-end gap-3 pt-5 mt-5 border-t border-border-subtle">
-              <button onClick={onResetPassword} className="inline-flex items-center gap-1.5 px-4 py-2 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-all">
+              <button onClick={onResetPassword} className="inline-flex items-center gap-1.5 px-4 py-2 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-brand-cyan-text transition-all">
                 <KeyRound className="w-3.5 h-3.5" /> Restablecer contraseña
               </button>
               <button onClick={onClose} aria-label="Cerrar" className="px-5 py-2 bg-primary text-primary-foreground text-sm font-bold uppercase tracking-tighter hover:bg-primary/80 transition-all">Cerrar</button>
@@ -612,7 +612,7 @@ function AssignStudentsModal({ instructorId, currentlyAssigned, onClose, onAssig
           })}
         </div>
         <div className="flex justify-end gap-3 pt-4 mt-4 border-t border-border-subtle">
-          <button onClick={onClose} className="px-5 py-2.5 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-primary transition-all">Cancelar</button>
+          <button onClick={onClose} className="px-5 py-2.5 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-brand-cyan-text transition-all">Cancelar</button>
           <button
             onClick={handleAssign}
             disabled={saving || selected.size === 0}

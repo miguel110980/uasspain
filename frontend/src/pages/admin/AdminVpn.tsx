@@ -64,7 +64,7 @@ export default function AdminVpn({ active = true, onNavigate = null }) {
       </div>
 
       {error ? (
-        <div className="rounded border border-danger-border bg-danger-soft p-3 text-sm text-danger/80">{error}</div>
+        <div className="rounded border border-danger-border bg-danger-soft p-3 text-sm text-danger">{error}</div>
       ) : null}
 
       {loading && !vpnData ? (

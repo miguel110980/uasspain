@@ -74,12 +74,12 @@ export default function InstructorResultados() {
           type="date"
           value={filtroFecha}
           onChange={(e) => setFiltroFecha(e.target.value)}
-          className="bg-surface-muted border border-border-subtle rounded px-3 py-2.5 text-sm text-foreground focus:border-transparent focus:outline-none [color-scheme:dark]"
+          className="bg-surface-muted border border-border-subtle rounded px-3 py-2.5 text-sm text-foreground focus:border-transparent focus:outline-none"
         />
         {(busquedaNombre || filtroFecha) && (
           <button
             onClick={() => { setBusquedaNombre(''); setFiltroFecha(''); }}
-            className="px-4 py-2.5 text-xs font-mono uppercase tracking-widest text-muted-foreground border border-border-subtle hover:border-primary/30 hover:text-primary transition-all duration-200"
+            className="px-4 py-2.5 text-xs font-mono uppercase tracking-widest text-muted-foreground border border-border-subtle hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-200"
           >
             Limpiar
           </button>
@@ -92,7 +92,7 @@ export default function InstructorResultados() {
           <p className="text-muted-foreground text-sm">No hay resultados que coincidan con la búsqueda.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto glass-card">
+        <div className="overflow-x-auto glass-card" role="region" aria-label="Resultados de los alumnos" tabIndex={0}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border-subtle text-xs font-mono uppercase tracking-widest text-muted-foreground">

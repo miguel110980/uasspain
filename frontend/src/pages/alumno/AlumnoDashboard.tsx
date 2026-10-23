@@ -1,3 +1,4 @@
+import { CHART_COLORS, CHART_TOOLTIP_STYLE } from '@/lib/themeConfig';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ClipboardList, CheckCircle2, Award, TrendingUp, BookOpen, Clock, Activity, Target, RefreshCw, UserCheck } from 'lucide-react';
@@ -12,11 +13,11 @@ import {
 import KpiCard from '@/components/admin/KpiCard';
 import { compareDatesAsc, compareDatesDesc } from '@/lib/dates';
 
-const CYAN = '#22D3EE';
-const ORANGE = '#F97316';
-const BLUE = '#60A5FA';
-const EMERALD = '#34D399';
-const RED = '#F87171';
+const CYAN = CHART_COLORS.cyan;
+const ORANGE = CHART_COLORS.orange;
+const BLUE = CHART_COLORS.blue;
+const EMERALD = CHART_COLORS.green;
+const RED = CHART_COLORS.red;
 
 const CATS = ['A1/A3', 'A2', 'STS'];
 
@@ -143,7 +144,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
           </h2>
           <p className="text-sm text-muted-foreground mt-1">Resumen de tu progreso y actividad.</p>
         </div>
-        <button onClick={() => loadData(true)} className="flex items-center gap-1.5 px-3 py-2 border border-border-subtle text-xs font-mono uppercase tracking-widest text-muted-foreground hover:border-primary/30 hover:text-primary rounded transition-all">
+        <button onClick={() => loadData(true)} className="flex items-center gap-1.5 px-3 py-2 border border-border-subtle text-xs font-mono uppercase tracking-widest text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text rounded transition-all">
           <RefreshCw className={`w-3.5 h-3.5 ${loading || refreshing ? 'animate-spin' : ''}`} /> Actualizar
         </button>
       </motion.div>
@@ -209,9 +210,9 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
               <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
                   <Pie data={aprobPie} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={3}>
-                    {aprobPie.map((e) => <Cell key={e.name} fill={e.color} />)}
+                    {aprobPie.map((e) => <Cell key={e.name} fill={e.color} aria-label={`${e.name}: ${e.value}`} />)}
                   </Pie>
-                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 6, fontSize: 12 }} />
+                  <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="flex justify-center gap-4 mt-2">
@@ -239,7 +240,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
             <XAxis dataKey="name" tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis allowDecimals={false} tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} />
-            <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 6, fontSize: 12 }} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
             <Bar dataKey="examenes" fill={CYAN} radius={[4, 4, 0, 0]} name="Exámenes" />
           </BarChart>
         </ResponsiveContainer>
@@ -256,7 +257,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="name" tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 6, fontSize: 12 }} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 <Bar dataKey="realizados" fill={BLUE} radius={[4, 4, 0, 0]} name="Realizados" />
                 <Bar dataKey="aprobados" fill={CYAN} radius={[4, 4, 0, 0]} name="Aprobados" />
               </BarChart>

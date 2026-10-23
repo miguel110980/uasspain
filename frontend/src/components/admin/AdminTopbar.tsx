@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, type RefObject } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, Search, Bell, ChevronDown, LogOut, User } from 'lucide-react';
+import ThemeControl from '@/components/ui/ThemeControl';
 
 function usePopoverFocus(ref: RefObject<HTMLDivElement | null>, open: boolean, close: () => void) {
   const onClose = useRef(close);
@@ -141,6 +142,7 @@ export default function AdminTopbar({
         )}
       </div>
 
+      <ThemeControl className="ml-auto md:ml-0" />
       <div className="relative" ref={notifRef}>
         <button
           type="button"
@@ -148,7 +150,7 @@ export default function AdminTopbar({
           aria-label="Notificaciones"
           aria-expanded={notifOpen}
           aria-haspopup="dialog"
-          className="relative w-9 h-9 flex items-center justify-center border border-border-subtle rounded-md text-muted-foreground hover:text-primary hover:border-primary/30 transition-colors"
+          className="relative w-9 h-9 flex items-center justify-center border border-border-subtle rounded-md text-muted-foreground hover:text-brand-cyan-text hover:border-primary/30 transition-colors"
         >
           <Bell className="w-4 h-4" />
           {badgeCount > 0 && (
@@ -165,7 +167,7 @@ export default function AdminTopbar({
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 6 }}
-              className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md overflow-hidden border border-border-subtle bg-popover backdrop-blur-xl shadow-2xl"
+              className="fixed left-4 right-4 top-16 mt-2 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:w-80 max-w-[calc(100vw-2rem)] rounded-md overflow-hidden border border-border-subtle bg-popover backdrop-blur-xl shadow-2xl"
             >
               <div className="px-3 py-2 border-b border-border-subtle">
                 <p className="text-xs font-semibold text-foreground">Notificaciones</p>
@@ -246,7 +248,7 @@ export default function AdminTopbar({
               <button
                 type="button"
                 onClick={() => { setMenuOpen(false); onAccount?.(); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors"
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-brand-cyan-text hover:bg-primary/5 transition-colors"
               >
                 <User className="w-3.5 h-3.5" /> Mi cuenta
               </button>

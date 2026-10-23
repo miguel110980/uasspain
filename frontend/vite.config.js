@@ -1,6 +1,7 @@
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
+import { existsSync } from 'node:fs'
 import { randomUUID, createHash } from 'node:crypto'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -47,6 +48,16 @@ export default defineConfig({
       server.middlewares.use('/' + themeScriptFile, (_req, res) => {
         res.setHeader('Content-Type', 'application/javascript');
         res.end(themeScript);
+      });
+    },
+    configurePreviewServer(server) {
+      // Match the production nginx SPA fallback. Serving prerendered Home at
+      // a private route otherwise installs Home's early-click capture there.
+      server.middlewares.use((request, _response, next) => {
+        const pathname = new URL(request.url, 'http://localhost').pathname;
+        const prerendered = pathname === '/' || existsSync(path.join(__dirname, 'dist', pathname, 'index.html'));
+        if (!path.extname(pathname) && !prerendered) request.url = '/app.html';
+        next();
       });
     },
     generateBundle() {

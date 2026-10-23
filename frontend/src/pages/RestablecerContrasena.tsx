@@ -6,6 +6,7 @@ import { decodeTokenFromTransport } from '@/lib/urls';
 import { sanitizeInput } from '@/lib/sanitize';
 import { validatePasswordPolicy } from '@/lib/passwordStrength';
 import PasswordStrengthBar from '@/components/auth/PasswordStrengthBar';
+import ThemeControl from '@/components/ui/ThemeControl';
 
 export default function RestablecerContrasena() {
   const [params] = useSearchParams();
@@ -53,6 +54,7 @@ export default function RestablecerContrasena() {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4 py-12">
       <div className="glass-card w-full max-w-md p-8">
+        <div className="mb-4 flex justify-end"><ThemeControl /></div>
         <div className="inline-flex items-center gap-2 mb-4 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">
           UASSPAIN
         </div>

@@ -162,7 +162,7 @@ export default function AdminNotificaciones() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={marcarTodas} className="px-3 py-2 border border-border-subtle text-xs font-mono uppercase tracking-widest text-muted-foreground hover:border-primary/30 hover:text-primary rounded transition-all">
+          <button onClick={marcarTodas} className="px-3 py-2 border border-border-subtle text-xs font-mono uppercase tracking-widest text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text rounded transition-all">
             Marcar todo leído
           </button>
         </div>
@@ -190,7 +190,7 @@ export default function AdminNotificaciones() {
                 <p className="text-[10px] font-mono text-muted-foreground/50 mt-1">{fmt(n.fecha)}</p>
               </div>
               {!leida && (
-                <button aria-label="Marcar como leída" onClick={() => marcarLeida(n.id)} className="shrink-0 text-muted-foreground hover:text-primary transition-colors" title="Marcar como leída">
+                <button aria-label="Marcar como leída" onClick={() => marcarLeida(n.id)} className="shrink-0 text-muted-foreground hover:text-brand-cyan-text transition-colors" title="Marcar como leída">
                   <X className="w-4 h-4" />
                 </button>
               )}

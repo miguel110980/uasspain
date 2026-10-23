@@ -71,7 +71,7 @@ const ToastClose = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttribute
     type="button"
     aria-label="Cerrar aviso"
       className={cn(
-        "absolute right-2 top-2 rounded-md p-1 text-copy-tertiary opacity-100 transition-opacity hover:text-copy-primary focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background group-[.destructive]:text-danger/80 group-[.destructive]:hover:text-danger-foreground group-[.destructive]:focus:ring-danger group-[.destructive]:focus:ring-offset-danger",
+        "absolute right-2 top-2 rounded-md p-1 text-copy-tertiary opacity-100 transition-opacity hover:text-copy-primary focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background group-[.destructive]:text-danger group-[.destructive]:hover:text-danger-foreground group-[.destructive]:focus:ring-danger group-[.destructive]:focus:ring-offset-danger",
       className
     )}
     toast-close=""

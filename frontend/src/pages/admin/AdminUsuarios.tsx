@@ -417,7 +417,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
         </div>
         <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-between text-xs text-muted-foreground">
           <span>{filtered.length} de {profiles.length} usuarios</span>
-          <button onClick={exportCSV} className="flex items-center gap-1.5 hover:text-primary transition-colors">
+          <button onClick={exportCSV} className="flex items-center gap-1.5 hover:text-brand-cyan-text transition-colors">
             <Download className="w-3.5 h-3.5" /> Exportar
           </button>
         </div>
@@ -574,7 +574,7 @@ function EditUserModal({ user, scopeRole, onClose, onSave }) {
                 </div>
               )}
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={onClose} className="px-5 py-2.5 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-primary transition-all">Cancelar</button>
+                <button type="button" onClick={onClose} className="px-5 py-2.5 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-brand-cyan-text transition-all">Cancelar</button>
                 <button type="submit" disabled={saving} className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground text-sm font-bold uppercase tracking-tighter hover:bg-primary/80 transition-all disabled:opacity-50">
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Guardar
                 </button>

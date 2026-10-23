@@ -151,7 +151,7 @@ export default function AuthModal({ isOpen, onClose }) {
         onClick={handleClose}
         type="button"
         aria-label="Cerrar acceso"
-        className="absolute top-4 right-4 text-muted-foreground hover:text-primary transition-colors"
+        className="absolute top-4 right-4 text-muted-foreground hover:text-brand-cyan-text transition-colors"
       >
         <X className="w-5 h-5" />
       </button>
@@ -209,7 +209,7 @@ export default function AuthModal({ isOpen, onClose }) {
               type="button"
               aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors"
+              className="icon-control absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-brand-cyan-text transition-colors"
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
@@ -285,7 +285,7 @@ export default function AuthModal({ isOpen, onClose }) {
                   className={`px-3 py-2 text-xs font-bold uppercase tracking-widest border rounded transition-all ${
                     selectedRole === role
                       ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary'
+                      : 'border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-brand-cyan-text'
                   }`}
                 >
                   {role === 'admin' ? 'Administrador' : role === 'instructor' ? 'Instructor' : role}
@@ -338,7 +338,7 @@ export default function AuthModal({ isOpen, onClose }) {
           <button
             type="button"
             onClick={() => setView('forgot')}
-            className="text-xs text-muted-foreground hover:text-primary transition-colors"
+            className="text-xs text-muted-foreground hover:text-brand-cyan-text transition-colors"
           >
             ¿Ha olvidado su contraseña?
           </button>

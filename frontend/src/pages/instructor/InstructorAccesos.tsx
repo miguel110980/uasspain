@@ -102,7 +102,7 @@ export default function InstructorAccesos({ profile, onClose, onChanged = () => 
           <h3 className="font-heading text-lg font-bold text-foreground flex flex-wrap items-center gap-2"><Shield className="w-5 h-5 shrink-0 text-primary" />Gestionar Accesos</h3>
           <p className="text-xs text-muted-foreground mt-0.5 break-words">{student.nombre} {student.apellidos}</p>
         </div>
-        <button onClick={onClose} aria-label="Cerrar" className="shrink-0 text-muted-foreground hover:text-primary transition-colors"><X className="w-5 h-5" /></button>
+        <button onClick={onClose} aria-label="Cerrar" className="shrink-0 text-muted-foreground hover:text-brand-cyan-text transition-colors"><X className="w-5 h-5" /></button>
       </div>
       <div className="space-y-2 mb-4">
         <label htmlFor="access-student-search" className="block text-xs text-muted-foreground">Buscar alumno por nombre, apellidos, correo o usuario</label>

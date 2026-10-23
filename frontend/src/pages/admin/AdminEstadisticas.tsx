@@ -1,3 +1,4 @@
+import { CHART_COLORS, CHART_TOOLTIP_STYLE } from '@/lib/themeConfig';
 import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
@@ -13,10 +14,10 @@ import conexionesService from '@/services/conexionesService';
 import { useRefreshableLoad } from '@/hooks/useRefreshableLoad';
 import { hasRole } from '@/lib/roles';
 
-const CYAN = '#22D3EE';
-const ORANGE = '#F97316';
-const BLUE = '#60A5FA';
-const EMERALD = '#34D399';
+const CYAN = CHART_COLORS.cyan;
+const ORANGE = CHART_COLORS.orange;
+const BLUE = CHART_COLORS.blue;
+const EMERALD = CHART_COLORS.green;
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
@@ -98,7 +99,7 @@ export default function AdminEstadisticas() {
     };
   });
 
-  const TT = { background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 6, fontSize: 12, color: 'hsl(var(--text-primary))' };
+  const TT = CHART_TOOLTIP_STYLE;
 
   if (loading && !data) {
     return (

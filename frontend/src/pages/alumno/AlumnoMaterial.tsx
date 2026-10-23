@@ -172,7 +172,7 @@ export default function AlumnoMaterial({ alumnoId }) {
                             className={`inline-flex items-center gap-2 px-3 py-2 border text-xs font-bold uppercase tracking-widest transition-all duration-200 ${
                               estaCompletado(mat.id)
                                 ? 'bg-primary/10 border-primary/30 text-primary'
-                                : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-primary'
+                                : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text'
                             }`}
                           >
                             {estaCompletado(mat.id) ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
@@ -246,7 +246,7 @@ export default function AlumnoMaterial({ alumnoId }) {
                   href={getSafeUrl(pub.url)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-primary hover:text-primary/80 text-xs font-bold uppercase tracking-widest transition-colors duration-200 w-fit"
+                  className="inline-flex items-center gap-2 text-primary hover:text-brand-cyan-text text-xs font-bold uppercase tracking-widest transition-colors duration-200 w-fit"
                 >
                   Ver publicación oficial ↗
                 </a>

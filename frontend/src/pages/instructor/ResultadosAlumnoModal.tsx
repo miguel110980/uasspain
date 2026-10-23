@@ -16,7 +16,7 @@ export default function ResultadosAlumnoModal({ profile, onClose }) {
                 <h3 className="font-heading text-lg font-bold text-foreground">Resultados del Alumno</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">{profile.nombre} {profile.apellidos}</p>
               </div>
-              <button onClick={onClose} aria-label="Cerrar" className="text-muted-foreground hover:text-primary transition-colors">
+              <button onClick={onClose} aria-label="Cerrar" className="text-muted-foreground hover:text-brand-cyan-text transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>

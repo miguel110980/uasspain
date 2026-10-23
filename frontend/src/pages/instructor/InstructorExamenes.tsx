@@ -263,7 +263,7 @@ export default function InstructorExamenes() {
               accept=".pdf,.doc,.docx"
               id="archivo_preguntas"
               onChange={(e) => setFormArchivos((prev) => ({ ...prev, archivo_preguntas: e.target.files?.[0] || null }))}
-              className="w-full text-sm text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:border file:border-primary/30 file:bg-primary/10 file:text-primary file:text-xs file:font-bold file:cursor-pointer hover:file:bg-primary/20"
+              className="w-full text-sm text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:border file:border-primary/30 file:bg-primary/10 file:text-brand-cyan-text file:text-xs file:font-bold file:cursor-pointer hover:file:bg-primary/20"
             />
             {formArchivos.archivo_preguntas && (
               <p className="text-xs text-primary mt-2">📄 {formArchivos.archivo_preguntas.name}</p>
@@ -310,7 +310,7 @@ export default function InstructorExamenes() {
             }}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="w-full px-4 py-2 border border-danger-border text-danger text-xs font-bold uppercase tracking-widest hover:bg-danger hover:text-white transition-all duration-200"
+            className="w-full px-4 py-2 border border-danger-border text-danger text-xs font-bold uppercase tracking-widest hover:bg-danger hover:text-danger-foreground transition-all duration-200"
           >
             Cancelar Subida
           </motion.button>
@@ -357,7 +357,7 @@ export default function InstructorExamenes() {
                           <button
                             type="button"
                             onClick={() => handlePreviewArchivo(arch)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary transition-all duration-200"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-brand-cyan-text transition-all duration-200"
                           >
                             <ExternalLink className="w-3 h-3" />
                             Abrir
@@ -373,7 +373,7 @@ export default function InstructorExamenes() {
                           <button
                             type="button"
                             onClick={() => handleDeleteArchivo(arch)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-danger border border-danger-border bg-danger-soft/60 hover:bg-danger hover:text-white transition-all duration-200"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-danger border border-danger-border bg-danger-soft/60 hover:bg-danger hover:text-danger-foreground transition-all duration-200"
                           >
                             <Trash2 className="w-3 h-3" />
                             Eliminar
@@ -527,7 +527,7 @@ export default function InstructorExamenes() {
                 <button
                   type="button"
                   onClick={() => setShowPreguntaForm(false)}
-                  className="flex-1 px-4 py-2 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-all duration-200"
+                  className="flex-1 px-4 py-2 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-200"
                 >
                   Cancelar
                 </button>
@@ -557,7 +557,7 @@ export default function InstructorExamenes() {
                     </div>
                     <button
                       type="button" aria-label="Eliminar pregunta" onClick={() => handleDeletePregunta(preg.id)}
-                      className="shrink-0 text-danger hover:text-danger/80 transition-colors"
+                      className="shrink-0 text-danger hover:text-danger transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>

@@ -11,30 +11,38 @@ import fixture from './ui-fixtures.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const origin = process.env.UI_AUDIT_ORIGIN || 'https://localhost';
+const catalogOrigin = process.env.UI_AUDIT_CATALOG_ORIGIN || origin;
 const folder = path.resolve(process.env.UI_AUDIT_REPORT || path.join(root, '..', '.run', 'frontend-ui-audit'));
 const engine = process.env.UI_AUDIT_BROWSER || 'chromium';
 const widths = (process.env.UI_AUDIT_WIDTHS || '320,375,390,768,1024,1366,1440,1920,2560,3840').split(',').map(Number);
 const roles = (process.env.UI_AUDIT_ROLES || 'public,admin,instructor,alumno').split(',');
+const sectionFilter = process.env.UI_AUDIT_SECTIONS?.split(',');
 const live = process.env.UI_AUDIT_LIVE === 'true';
 const seed = live ? await (await import('../../scripts/e2e/concurrent-fixtures.mjs')).concurrentFixtures(8) : null;
-const report = { origin, engine, widths, liveBackend: live, screens: [], errors: [], warnings: [], failures: [], writesIntercepted: 0 };
+const report = { origin, engine, widths, buildId: process.env.UI_AUDIT_BUILD_ID || null, liveBackend: live, screens: [], errors: [], warnings: [], failures: [], writesIntercepted: 0, expectedHttpErrors: [] };
 await mkdir(folder, { recursive: true });
 const app = await readFile(path.join(root, 'src', 'App.tsx'), 'utf8');
 const ca = await readFile(path.join(root, '..', '.secrets/tls/ca.crt'));
 // Public service routes are managed in PostgreSQL, rather than declared one
 // by one in App. Read only their published metadata for complete route coverage.
-const services = await new Promise((resolve, reject) => {
-  const transport = new URL(origin).protocol === 'https:' ? https : http;
-  const request = transport.get(origin + '/api/services', { ca, timeout: 15000 }, response => {
+async function publicJSON(resource) { return new Promise((resolve, reject) => {
+  const transport = new URL(catalogOrigin).protocol === 'https:' ? https : http;
+  const request = transport.get(catalogOrigin + resource, { ca, timeout: 15000 }, response => {
     let body = ''; response.on('data', chunk => { body += chunk; });
     response.on('end', () => { try { assert.equal(response.statusCode, 200); resolve(JSON.parse(body)); } catch (error) { reject(error); } });
   });
   request.on('error', reject); request.on('timeout', () => request.destroy(new Error('Public catalog timeout')));
-});
+}); }
+const services = await publicJSON('/api/services');
+// List views deliberately omit description/presentation. A detail-page fixture
+// must use the real public detail contract, not substitute the summary object.
+const serviceDetails = live ? new Map() : new Map(await Promise.all(services.map(async service => [service.slug, await publicJSON('/api/services/' + encodeURIComponent(service.slug))])));
 const publicRoutes = [...app.matchAll(/<Route path="([^"]+)"/g)].map(m => m[1])
   .filter(route => !route.includes('*') && !route.includes(':') && !['/admin', '/instructor', '/alumno', '/elegir-panel', '/restablecer-contrasena'].includes(route));
 const courses = live ? (await seed.admin.call('/api/courses')).body : fixture.courses;
 publicRoutes.push(...services.map(service => '/servicios/' + encodeURIComponent(service.slug)), ...courses.map(course => '/formacion/' + course.slug.split('/').map(encodeURIComponent).join('/')), '/ruta-inexistente-' + 'x'.repeat(120));
+publicRoutes.push('/restablecer-contrasena', '/restablecer-contrasena?uid=visual-fixture&token=visual-fixture');
+const selectedPublicRoutes = process.env.UI_AUDIT_PUBLIC_PREFIX ? publicRoutes.filter(route => route.startsWith(process.env.UI_AUDIT_PUBLIC_PREFIX)) : publicRoutes;
 const cert = new X509Certificate(await readFile(path.join(root, '..', '.secrets/tls/edge.crt')));
 const pin = createHash('sha256').update(cert.publicKey.export({ type: 'spki', format: 'der' })).digest('base64');
 const browser = await ({ chromium, firefox, webkit })[engine].launch(engine === 'chromium' ? { args: ['--ignore-certificate-errors-spki-list=' + pin] } : {});
@@ -43,17 +51,35 @@ async function setup(role) {
   const context = await browser.newContext({ ignoreHTTPSErrors: false, viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   const page = await context.newPage();
   page.on('pageerror', error => report.errors.push({ role, message: error.message }));
-  page.on('console', message => { if (message.type() === 'warning') report.warnings.push({ role, message: message.text() }); });
+  const expectedDocuments = new Set();
+  // Docker enforces public course visibility before serving the SPA. Synthetic
+  // course fixtures and the deliberate missing-route case therefore return a
+  // document 404, while Vite preview serves app.html with 200 for those URLs.
+  page.on('response', response => {
+    const request = response.request(), pathname = new URL(response.url()).pathname;
+    const syntheticCourse = !live && fixture.courses.some(course => pathname === '/formacion/' + course.slug.split('/').map(encodeURIComponent).join('/'));
+    const deliberateMissingRoute = pathname.startsWith('/ruta-inexistente-');
+    if (role === 'public' && response.status() === 404 && request.isNavigationRequest() && request.frame() === page.mainFrame() && (syntheticCourse || deliberateMissingRoute)) expectedDocuments.add(response.url());
+  });
+  page.on('console', message => {
+    if (message.type() === 'warning') report.warnings.push({ role, message: message.text() });
+    if (message.type() === 'error') {
+      const url = message.location().url;
+      const entry = { role, message: message.text(), url };
+      if (expectedDocuments.has(url) && /^Failed to load resource: the server responded with a status of 404/.test(message.text())) report.expectedHttpErrors.push({ ...entry, status: 404, resourceType: 'document', reason: 'Explicit missing-route or synthetic course fixture; real Nginx visibility guard' });
+      else report.errors.push(entry);
+    }
+  });
   if (live) return { context, page };
   await page.routeWebSocket('**/ws/**', ws => ws.onMessage(() => {}));
   await page.route('https://www.google.com/maps**', route => route.fulfill({ contentType: 'text/html', body: '<p>Mapa de prueba</p>' }));
   // A pathname predicate also works on Vite: never intercept /src/api modules.
   await page.route(url => url.pathname.startsWith('/api/'), async route => {
     const request = route.request(), p = new URL(request.url()).pathname;
-    const me = fixture.profiles.find(profile => profile.role === role);
+    const me = role === 'choice' ? { ...fixture.profiles.find(profile => profile.role === 'admin'), roles: ['admin', 'instructor'] } : fixture.profiles.find(profile => profile.role === role);
     if (p === '/api/auth/me/') {
       const optional = new URL(request.url()).searchParams.get('optional') === 'true';
-      return route.fulfill({ status: me || optional ? 200 : 401, json: me ? { ...me, session_role: role, full_name: `${me.nombre} ${me.apellidos}`, profile: me } : optional ? null : { detail: 'Sin sesión' } });
+      return route.fulfill({ status: me || optional ? 200 : 401, json: me ? { ...me, session_role: role === 'choice' ? 'admin' : role, full_name: `${me.nombre} ${me.apellidos}`, profile: me } : optional ? null : { detail: 'Sin sesión' } });
     }
     if (request.method() !== 'GET') {
       report.writesIntercepted++;
@@ -63,7 +89,7 @@ async function setup(role) {
     if (p === '/api/public/content/versions/') data = { services: '1', posts: '1', courses: '1' };
     else if (p === '/api/services' || p === '/api/admin/services') data = services;
     else if (p.startsWith('/api/services/')) {
-      data = services.find(service => service.slug === decodeURIComponent(p.slice('/api/services/'.length)));
+      data = serviceDetails.get(decodeURIComponent(p.slice('/api/services/'.length)));
       if (!data) return route.fulfill({ status: 404, json: { detail: 'Servicio no encontrado' } });
     }
     else if (p === '/api/admin/content-images') data = [];
@@ -73,6 +99,7 @@ async function setup(role) {
       if (!data) return route.fulfill({ status: 404, json: { detail: 'Curso no encontrado' } });
     } else if (p === '/api/system/status/') data = fixture.status;
     else if (p === '/api/profiles/') data = fixture.profiles;
+    else if (p === '/api/resultados-examen/') data = fixture.results;
     else if (p === '/api/profiles/instructores/') data = fixture.profiles.filter(profile => profile.role === 'instructor' && profile.status === 'activo');
     else if (p.includes('/contacts/')) data = fixture.profiles.filter(profile => profile.id !== me?.id && ['admin', 'instructor'].includes(profile.role));
     else if (p.startsWith('/api/profiles/')) data = me;
@@ -88,8 +115,25 @@ async function setup(role) {
 }
 
 async function inspect(page, role, section) {
+  // Prerendered headings can exist before the provider has subscribed. Wait
+  // for React before testing a live theme change, including managed routes.
+  await page.waitForFunction(() => document.documentElement.dataset.hydrated === 'true');
+  const expectedHeading = ['admin', 'instructor', 'alumno'].includes(role) ? await page.locator('header h1').textContent() : null;
   for (const theme of ['light', 'dark']) {
-    await page.evaluate(theme => { localStorage.setItem('theme', theme); document.documentElement.classList.remove('light', 'dark'); document.documentElement.classList.add(theme); }, theme);
+    // Exercise the real provider's cross-tab storage listener, instead of
+    // changing root classes behind React's back and leaving controls stale.
+    await page.evaluate(theme => {
+      const previous = localStorage.getItem('theme');
+      localStorage.setItem('theme', theme);
+      window.dispatchEvent(new StorageEvent('storage', { key: 'theme', oldValue: previous, newValue: theme, storageArea: localStorage }));
+    }, theme);
+    try {
+      await page.waitForFunction(theme => document.documentElement.classList.contains(theme) && document.documentElement.style.colorScheme === theme, theme, { timeout: 10000 });
+    } catch {
+      const actual = await page.evaluate(() => ({ path: location.pathname, classes: document.documentElement.className, scheme: document.documentElement.style.colorScheme, saved: localStorage.getItem('theme'), hydrated: document.documentElement.dataset.hydrated, controls: [...document.querySelectorAll('[role="group"][aria-label="Tema de la aplicación"] button')].map(button => button.getAttribute('aria-label')), themeScripts: document.querySelectorAll('script[src*="theme-init"]').length }));
+      report.themeFailure = { role, section, expected: theme, actual };
+      throw new Error('Theme did not settle: ' + JSON.stringify(report.themeFailure));
+    }
     for (const width of widths) {
       await page.setViewportSize({ width, height: 900 });
       await page.waitForTimeout(width === Math.min(...widths) || width === Math.max(...widths.filter(w => w <= 1440)) ? 1200 : 70);
@@ -103,7 +147,7 @@ async function inspect(page, role, section) {
         }).map(element => ({ html: element.outerHTML.slice(0, 350) }));
         return { overflow: document.documentElement.scrollWidth > innerWidth + 1, clipped, heading: document.querySelector('h1')?.textContent };
       });
-      const screen = { role, section, theme, width, ...bounds, violations: [] };
+      const screen = { role, section, theme, width, ...bounds, unexpectedSection: expectedHeading !== null && bounds.heading !== expectedHeading, violations: [] };
       // Both themes at the smallest and desktop widths; all widths get layout checks.
       if (width === Math.min(...widths) || width === Math.max(...widths.filter(w => w <= 1440))) {
         // Paint each deferred Home section in the current theme before inspecting
@@ -118,14 +162,14 @@ async function inspect(page, role, section) {
           }
           await page.evaluate(y => scrollTo({ top: y, behavior: 'instant' }), position);
         }
-        const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+        const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
         screen.violations = results.violations.map(v => ({ id: v.id, impact: v.impact, nodes: v.nodes.map(n => ({ target: n.target, html: n.html, summary: n.failureSummary })) }));
         const filename = `${role}-${section}-${theme}-${width}`.replace(/[^\w-]/g, '_') + '.png';
         screen.screenshot = path.join(folder, filename);
         await page.screenshot({ path: screen.screenshot, fullPage: false });
       }
       report.screens.push(screen);
-      if (bounds.overflow || bounds.clipped.length || screen.violations.length) report.failures.push(screen);
+      if (bounds.overflow || bounds.clipped.length || screen.violations.length || screen.unexpectedSection) report.failures.push(screen);
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -136,7 +180,7 @@ try {
   for (const role of roles) {
     const { context, page } = await setup(role);
     if (role === 'public') {
-      for (const route of publicRoutes) {
+      for (const route of selectedPublicRoutes) {
         await page.goto(origin + route);
         await page.locator('h1').first().waitFor();
         await page.waitForTimeout(300);
@@ -154,6 +198,10 @@ try {
       await inspect(page, role, 'recuperacion');
       await page.keyboard.press('Escape');
       assert.equal(await page.getByRole('dialog').count(), 0, 'Escape cierra el diálogo de recuperación');
+    } else if (role === 'choice') {
+      await page.goto(origin + '/elegir-panel');
+      await page.getByRole('heading', { name: '¿Cómo desea entrar?', exact: true }).waitFor();
+      await inspect(page, role, 'eleccion-panel');
     } else {
       if (live) {
         const account = seed.fixtures[{ admin:0, instructor:1, alumno:3 }[role]];
@@ -165,9 +213,11 @@ try {
       }
       await page.goto(origin + '/' + role);
       await page.locator('header h1').waitFor();
-      const sections = await page.locator('aside:visible nav button').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')));
+      const sections = (await page.locator('aside:visible nav button').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))))
+        .filter(section => !sectionFilter || sectionFilter.includes(section));
       for (const section of sections) {
         await page.locator('aside:visible nav').getByRole('button', { name: section, exact: true }).click();
+        await page.waitForFunction(section => document.querySelector('header h1')?.textContent === section, section);
         await page.waitForTimeout(350);
         await inspect(page, role, section);
       }
@@ -190,9 +240,15 @@ try {
       const account = page.getByRole('button', { name: 'Menú de cuenta' });
       await account.click();
       await page.getByRole('dialog', { name: 'Menú de cuenta' }).waitFor();
+      await inspect(page, role, 'menu-cuenta');
       await page.keyboard.press('ArrowDown');
       await page.keyboard.press('Escape');
       assert.ok(await account.evaluate(node => node === document.activeElement));
+      const notifications = page.locator('header').getByRole('button', { name: 'Notificaciones', exact: true });
+      await notifications.click();
+      await page.getByRole('dialog', { name: 'Notificaciones', exact: true }).waitFor();
+      await inspect(page, role, 'menu-notificaciones');
+      await page.keyboard.press('Escape');
     }
     await context.close();
     await writeFile(path.join(folder, 'report.json'), JSON.stringify(report, null, 2));

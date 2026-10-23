@@ -46,7 +46,7 @@ type SeoHeadProps = { title?: string; description?: string; keywords?: string; c
 
 export default function SeoHead({ title, description, keywords, canonical, noindex, jsonLd }: SeoHeadProps = {}) {
   const { pathname, search } = useLocation();
-  const { theme } = useTheme();
+  const { resolvedTheme } = useTheme();
   const isPrivate = PRIVATE_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
   const routeSeo = getSeoForPath(pathname);
   const managedService = pathname.startsWith('/servicios/');
@@ -66,7 +66,7 @@ export default function SeoHead({ title, description, keywords, canonical, noind
     upsertMeta('name', 'keywords', finalKeywords);
     upsertMeta('name', 'robots', blockIndex ? 'noindex, nofollow' : 'index, follow, max-image-preview:large');
     upsertMeta('name', 'author', SITE.name);
-    upsertMeta('name', 'theme-color', theme === 'dark' ? '#0a0a0a' : '#F5F7FA');
+    upsertMeta('name', 'theme-color', getComputedStyle(document.body).backgroundColor);
 
     upsertMeta('property', 'og:type', 'website');
     upsertMeta('property', 'og:site_name', SITE.name);
@@ -89,7 +89,7 @@ export default function SeoHead({ title, description, keywords, canonical, noind
     } else {
       document.getElementById('seo-org-jsonld')?.remove();
     }
-  }, [finalTitle, finalDescription, finalKeywords, finalCanonical, blockIndex, isPrivate, jsonLd, theme, managedService, title, noindex]);
+  }, [finalTitle, finalDescription, finalKeywords, finalCanonical, blockIndex, isPrivate, jsonLd, resolvedTheme, managedService, title, noindex]);
 
   return null;
 }

@@ -49,7 +49,7 @@ export default function AccountDeactivation() {
           <input id="deactivation-password" type="password" autoComplete="current-password" maxLength={128} value={password} disabled={pending || loading || Boolean(blocked)} onChange={e => setPassword(e.target.value)} className="w-full min-w-0 rounded-sm border border-border-subtle bg-surface-muted p-3 text-foreground" /></div>
         {error && <p role="alert" className="text-sm text-danger">{error}</p>}
         <div className="flex flex-wrap justify-end gap-3"><button type="button" disabled={pending} onClick={close} className="border border-border-subtle rounded-sm px-4 py-3 text-foreground">Cancelar</button>
-          <button type="submit" disabled={pending || loading || Boolean(blocked) || confirmation !== 'DARME DE BAJA' || !password} className="inline-flex items-center gap-2 bg-danger text-white rounded-sm px-4 py-3 font-bold disabled:opacity-50">{pending && <Loader2 className="w-4 h-4 animate-spin" />}{pending ? 'Procesando…' : 'Confirmar baja'}</button></div>
+          <button type="submit" disabled={pending || loading || Boolean(blocked) || confirmation !== 'DARME DE BAJA' || !password} className="inline-flex items-center gap-2 bg-danger text-danger-foreground rounded-sm px-4 py-3 font-bold disabled:opacity-50">{pending && <Loader2 className="w-4 h-4 animate-spin" />}{pending ? 'Procesando…' : 'Confirmar baja'}</button></div>
       </form>
     </PanelModal>}
   </section>;

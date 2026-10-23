@@ -157,7 +157,7 @@ export default function NuevoInstructorForm({ onCreated }: { onCreated?: () => v
           <button
             type="button"
             onClick={() => setSuccess(false)}
-            className="shrink-0 text-primary/70 hover:text-primary transition-colors"
+            className="shrink-0 text-primary hover:text-brand-cyan-text transition-colors"
             aria-label="Cerrar mensaje"
           >
             <X className="w-4 h-4" />
@@ -207,7 +207,7 @@ export default function NuevoInstructorForm({ onCreated }: { onCreated?: () => v
           <button
             type="button"
             onClick={handleClear}
-            className="w-full px-8 py-3 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-primary transition-all duration-300"
+            className="w-full px-8 py-3 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-300"
           >
             Limpiar
           </button>

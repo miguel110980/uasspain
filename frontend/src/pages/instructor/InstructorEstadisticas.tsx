@@ -1,3 +1,4 @@
+import { CHART_COLORS, CHART_TOOLTIP_STYLE } from '@/lib/themeConfig';
 import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
@@ -8,7 +9,7 @@ import materialesService from '@/services/materialesService';
 import authService from '@/services/authService';
 
 const CATEGORIAS = ['A1/A3', 'A2', 'STS'];
-const COLORS = ['#00e5ff', '#ff4d1a'];
+const COLORS = [CHART_COLORS.cyan, CHART_COLORS.orange];
 
 export default function InstructorEstadisticas() {
   const [resultados, setResultados] = useState([]);
@@ -115,9 +116,9 @@ export default function InstructorEstadisticas() {
               <XAxis dataKey="categoria" tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 12 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 12 }} unit="%" axisLine={false} tickLine={false} />
               <Tooltip
-                contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 6, fontSize: 12, color: 'hsl(var(--text-primary))' }}
+                contentStyle={CHART_TOOLTIP_STYLE}
               />
-              <Bar dataKey="tasa" fill="#00e5ff" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="tasa" fill={CHART_COLORS.cyan} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -138,7 +139,7 @@ export default function InstructorEstadisticas() {
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 6, fontSize: 12, color: 'hsl(var(--text-primary))' }}
+                  contentStyle={CHART_TOOLTIP_STYLE}
                 />
               </PieChart>
             </ResponsiveContainer>

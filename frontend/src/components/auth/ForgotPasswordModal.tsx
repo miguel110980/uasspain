@@ -47,12 +47,12 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
 
   return (
     <AuthModalShell onClose={onClose}>
-        <button type="button" aria-label="Cerrar recuperación" onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-primary transition-colors">
+        <button type="button" aria-label="Cerrar recuperación" onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-brand-cyan-text transition-colors">
           <X className="w-5 h-5" />
         </button>
 
         <div className="mb-7">
-          <button type="button" onClick={onBack} className="flex items-center gap-1 text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors mb-4">
+          <button type="button" onClick={onBack} className="flex items-center gap-1 text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-brand-cyan-text transition-colors mb-4">
             <ChevronLeft className="w-3.5 h-3.5" /> Volver al acceso
           </button>
           <div className="inline-flex items-center gap-2 mb-3 px-3 py-1.5 border border-primary/20 bg-primary/5 text-primary text-xs font-mono uppercase tracking-widest">
@@ -92,7 +92,7 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
               <button
                 type="button"
                 onClick={onBack}
-                className="w-full px-4 py-3 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-primary transition-all duration-300"
+                className="w-full px-4 py-3 border border-border-subtle text-muted-foreground text-sm font-bold uppercase tracking-tighter hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-300"
               >
                 Cancelar
               </button>

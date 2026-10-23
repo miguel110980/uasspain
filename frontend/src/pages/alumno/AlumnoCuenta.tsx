@@ -153,7 +153,7 @@ export default function AlumnoCuenta({ profile, onProfileUpdate }) {
           </div>
           <div>
             <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">Fotografía de Perfil</p>
-            <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 border border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-primary text-xs font-mono uppercase tracking-widest transition-all duration-200">
+            <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 border border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text text-xs font-mono uppercase tracking-widest transition-all duration-200">
               <Upload className="w-3.5 h-3.5" />
               {uploading ? 'Subiendo...' : 'Cambiar foto'}
               <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} disabled={uploading} />

@@ -1,5 +1,9 @@
 // Synthetic browser fixtures. All API and WebSocket traffic is intercepted.
 export default {
+  "results": [
+    { "id": "30000000-0000-4000-8000-000000000001", "alumno_id": "00000000-0000-4000-8000-000000000003", "examen_nombre": "Prueba visual A1/A3", "categoria": "A1/A3", "modalidad": "libre", "nota": 5, "porcentaje": 50, "aciertos": 20, "errores": 20, "aprobado": false, "fecha": "2026-10-21T10:00:00Z", "created_date": "2026-10-21T10:00:00Z" },
+    { "id": "30000000-0000-4000-8000-000000000002", "alumno_id": "00000000-0000-4000-8000-000000000003", "examen_nombre": "Prueba visual A1/A3", "categoria": "A1/A3", "modalidad": "libre", "nota": 8, "porcentaje": 80, "aciertos": 32, "errores": 8, "aprobado": true, "fecha": "2026-10-22T10:00:00Z", "created_date": "2026-10-22T10:00:00Z" }
+  ],
   "courses": [
     {
       "id": "20000000-0000-4000-8000-000000000001",

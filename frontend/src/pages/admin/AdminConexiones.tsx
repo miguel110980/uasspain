@@ -251,12 +251,12 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder="Búsqueda global..."
-              className="w-full pl-9 pr-3 py-2 bg-input border border-border-subtle text-sm text-foreground placeholder:text-muted-foreground/50 rounded focus:outline-none focus:border-transparent"
+              className="w-full pl-9 pr-3 py-2 bg-surface-subtle border border-border-subtle text-sm text-foreground placeholder:text-muted-foreground/50 rounded focus:outline-none focus:border-transparent"
             />
           </div>
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`relative flex items-center gap-1.5 px-3 py-2 border text-xs font-mono uppercase tracking-widest rounded transition-all ${showFilters ? 'border-primary/50 bg-primary/10 text-primary' : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-primary'}`}
+            className={`relative flex items-center gap-1.5 px-3 py-2 border text-xs font-mono uppercase tracking-widest rounded transition-all ${showFilters ? 'border-primary/50 bg-primary/10 text-primary' : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text'}`}
           >
             <SlidersHorizontal className="w-4 h-4" />
             Filtros
@@ -290,7 +290,7 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
                     { type: 'excel', label: 'Excel', icon: FileSpreadsheet },
                     { type: 'csv', label: 'CSV', icon: FileType },
                   ].map((opt) => (
-                    <button key={opt.type} onClick={() => doExport(opt.type)} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-muted-foreground hover:text-primary hover:bg-primary/5 rounded transition-colors">
+                    <button key={opt.type} onClick={() => doExport(opt.type)} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-muted-foreground hover:text-brand-cyan-text hover:bg-primary/5 rounded transition-colors">
                       <opt.icon className="w-3.5 h-3.5" /> Exportar a {opt.label}
                     </button>
                   ))}
@@ -317,7 +317,7 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
             <FilterInput label="Hasta" type="date" value={filters.fechaHasta} onChange={(v) => { setFilters({ ...filters, fechaHasta: v }); setPage(1); }} />
           </div>
           <div className="flex justify-end mt-3">
-            <button onClick={resetFilters} className="text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors">Limpiar filtros</button>
+            <button onClick={resetFilters} className="text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-brand-cyan-text transition-colors">Limpiar filtros</button>
           </div>
         </motion.div>
       )}
@@ -333,7 +333,7 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
                     key={col.key}
                     aria-sort={col.sortable && sort.key === col.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     style={{ minWidth: col.minW }}
-                    className={`px-3 py-3 text-left text-[10px] font-mono uppercase tracking-widest text-muted-foreground whitespace-nowrap ${col.sortable ? 'cursor-pointer hover:text-primary select-none' : ''}`}
+                    className={`px-3 py-3 text-left text-[10px] font-mono uppercase tracking-widest text-muted-foreground whitespace-nowrap ${col.sortable ? 'cursor-pointer hover:text-brand-cyan-text select-none' : ''}`}
                   >
                     {col.sortable ? (<button type="button" onClick={() => handleSort(col.key)} className="inline-flex items-center gap-1 text-left">
                       {col.label}
@@ -361,7 +361,7 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
                     </td>
                   ))}
                   <td className="px-3 py-2.5 whitespace-nowrap align-middle">
-                    <button aria-label="Ver detalle" onClick={() => setModalRecord(r)} className="inline-flex items-center justify-center w-7 h-7 border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded transition-all" title="Ver detalle">
+                    <button aria-label="Ver detalle" onClick={() => setModalRecord(r)} className="inline-flex items-center justify-center w-7 h-7 border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-brand-cyan-text rounded transition-all" title="Ver detalle">
                       <Eye className="w-3.5 h-3.5" />
                     </button>
                   </td>
@@ -378,18 +378,18 @@ export default function AdminConexiones({ alumnoOnly = false, allowClear = true,
             <select aria-label="Registros por página"
               value={pageSize}
               onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-              className="bg-input border border-border-subtle text-foreground rounded px-2 py-1 focus:outline-none focus:border-transparent"
+              className="bg-surface-subtle border border-border-subtle text-foreground rounded px-2 py-1 focus:outline-none focus:border-transparent"
             >
               {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
             <span>de {filtered.length} registros</span>
           </div>
           <div className="flex items-center gap-1">
-            <button aria-label="Página anterior" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+            <button aria-label="Página anterior" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-brand-cyan-text rounded disabled:opacity-30 disabled:cursor-not-allowed transition-all">
               <ChevronLeft className="w-4 h-4" />
             </button>
             <span className="text-xs font-mono text-muted-foreground px-2">{currentPage} / {totalPages}</span>
-            <button aria-label="Página siguiente" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)} className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-primary rounded disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+            <button aria-label="Página siguiente" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)} className="w-7 h-7 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/40 hover:text-brand-cyan-text rounded disabled:opacity-30 disabled:cursor-not-allowed transition-all">
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
@@ -409,7 +409,7 @@ function FilterInput({ label, value, onChange, type = 'text' }) {
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-2 py-1.5 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent"
+        className="w-full px-2 py-1.5 bg-surface-subtle border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent"
       />
     </div>
   );
@@ -423,7 +423,7 @@ function FilterSelect({ label, value, onChange, options, disabled = false }) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="w-full px-2 py-1.5 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full px-2 py-1.5 bg-surface-subtle border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {options.map(([val, lbl]) => <option key={val} value={val}>{lbl}</option>)}
       </select>

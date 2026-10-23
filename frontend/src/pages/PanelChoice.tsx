@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ThemeControl from '@/components/ui/ThemeControl';
 import { Loader2, Shield, GraduationCap, LogOut } from 'lucide-react';
 import authService from '@/services/authService';
 import { useSession } from '@/hooks/useSession';
@@ -57,6 +58,7 @@ export default function PanelChoice() {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4 py-12">
       <div className="glass-card p-8 sm:p-10 max-w-lg w-full text-center">
+        <div className="mb-4 flex justify-end"><ThemeControl /></div>
         <p className="text-xs font-mono uppercase tracking-widest text-primary mb-2">Acceso staff</p>
         <h1 className="font-heading text-2xl font-bold text-foreground mb-2">¿Cómo desea entrar?</h1>
         {userName ? (

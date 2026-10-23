@@ -1,3 +1,4 @@
+import { CHART_COLORS } from '@/lib/themeConfig';
 import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
@@ -53,13 +54,13 @@ function GraficaCategoria({ categoria, resultados }) {
             <XAxis dataKey="fecha" tick={{ fontSize: 10, fill: 'hsl(var(--text-secondary))' }} />
             <YAxis domain={[0, 10]} tick={{ fontSize: 10, fill: 'hsl(var(--text-secondary))' }} />
             <Tooltip content={<CustomTooltip />} />
-            <ReferenceLine y={media} stroke="hsl(186 100% 50% / 0.3)" strokeDasharray="4 4" />
+            <ReferenceLine y={media} stroke={CHART_COLORS.neutral} strokeDasharray="4 4" />
             <Line
               type="monotone"
               dataKey="nota"
-              stroke="hsl(186 100% 50%)"
+              stroke={CHART_COLORS.cyan}
               strokeWidth={2}
-              dot={{ fill: 'hsl(186 100% 50%)', r: 4, strokeWidth: 0 }}
+              dot={{ fill: CHART_COLORS.cyan, r: 4, strokeWidth: 0 }}
               activeDot={{ r: 6 }}
             />
           </LineChart>

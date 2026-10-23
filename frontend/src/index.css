@@ -1,6 +1,14 @@
 @import 'tailwindcss';
 @config '../tailwind.config.js';
 
+@utility icon-control {
+  display: inline-flex;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Match the heading's fallback advance widths so font-display: swap does not
    turn the mobile hero's two lines into three while the font is loading. */
 @font-face {
@@ -92,14 +100,15 @@
     --border: 214 32% 91%;
     --border-subtle: 213 36% 95%;
     --border-strong: 213 27% 84%;
-    --input: var(--border-subtle);
+    --input: 215 16% 48%;
     --ring: 192 100% 25%;
     --ring-offset: 216 33% 97%;
-    --chart-1: 191 100% 50%;
-    --chart-2: 15 100% 50%;
-    --chart-3: 221 83% 53%;
-    --chart-4: 220 14% 56%;
-    --chart-5: 186 80% 30%;
+    --chart-1: 192 100% 25%;
+    --chart-2: 22 90% 32%;
+    --chart-3: 221 83% 40%;
+    --chart-4: 215 20% 39%;
+    --chart-5: 152 64% 28%;
+    --chart-6: 0 74% 42%;
     --radius: 0.5rem;
 
     --font-heading: 'Space Grotesk', 'Space Grotesk Fallback', sans-serif;
@@ -132,7 +141,7 @@
     --text-tertiary: 215 18% 39%;
     --text-disabled: 215 20% 75%;
     --text-inverse: 0 0% 100%;
-    --placeholder: 215 20% 65%;
+    --placeholder: 215 20% 39%;
 
     --success: 152 64% 28%;
     --success-foreground: 152 100% 98%;
@@ -140,12 +149,12 @@
     --success-border: 152 44% 78%;
 
     --warning: 32 95% 30%;
-    --warning-foreground: 35 100% 14%;
+    --warning-foreground: 0 0% 100%;
     --warning-soft: 35 95% 94%;
     --warning-border: 35 82% 78%;
 
     --info: 205 98% 36%;
-    --info-foreground: 205 100% 15%;
+    --info-foreground: 0 0% 100%;
     --info-soft: 205 90% 95%;
     --info-border: 205 72% 82%;
 
@@ -175,20 +184,21 @@
     --muted: 240 8% 12%;
     --muted-foreground: 215 18% 65%;
     --accent: 15 100% 50%;
-    --accent-foreground: 0 0% 100%;
+    --accent-foreground: 240 14% 2%;
     --destructive: 10 100% 60%;
     --destructive-foreground: 240 10% 10%;
     --border: 240 8% 18%;
     --border-subtle: 240 12% 12%;
     --border-strong: 240 8% 28%;
-    --input: var(--border-subtle);
+    --input: 215 14% 50%;
     --ring: 186 100% 50%;
     --ring-offset: 240 15% 3%;
     --chart-1: 186 100% 50%;
     --chart-2: 15 100% 50%;
     --chart-3: 210 40% 60%;
-    --chart-4: 240 6% 40%;
-    --chart-5: 186 80% 30%;
+    --chart-4: 215 18% 65%;
+    --chart-5: 152 64% 65%;
+    --chart-6: 0 84% 70%;
 
     --brand-cyan: 186 100% 50%;
     --brand-cyan-text: 186 100% 70%;
@@ -216,14 +226,18 @@
     --text-tertiary: 215 14% 70%;
     --text-disabled: 215 12% 50%;
     --text-inverse: 240 12% 10%;
-    --placeholder: 215 18% 55%;
+    --placeholder: 215 18% 65%;
 
     --success: 152 64% 65%;
+    --success-foreground: 240 12% 10%;
     --info: 205 98% 70%;
+    --info-foreground: 240 12% 10%;
     --danger: 0 84% 70%;
+    --danger-foreground: 240 12% 10%;
     --success-soft: 152 64% 16%;
     --success-border: 152 40% 36%;
     --warning: 38 92% 60%;
+    --warning-foreground: 240 12% 10%;
     --warning-soft: 38 92% 18%;
     --warning-border: 38 70% 36%;
     --info-soft: 205 90% 18%;
@@ -372,6 +386,18 @@
 [class*="text-copy-tertiary/"] { color: hsl(var(--text-tertiary)); }
 .light [class*="placeholder:text-muted-foreground/"]::placeholder,
 .dark [class*="placeholder:text-muted-foreground/"]::placeholder { color: hsl(var(--muted-foreground)); }
+
+/* Native controls share one contrast boundary in every panel and auth portal.
+   Decorative card/table borders continue to use the subtler surface tokens. */
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']), select, textarea) {
+  border-color: hsl(var(--input));
+  color-scheme: inherit;
+}
+:where(input, select, textarea)[aria-invalid='true'] { border-color: hsl(var(--danger)); }
+:where(input, textarea)::placeholder { color: hsl(var(--placeholder)); opacity: 1; }
+:where(input[type='checkbox'], input[type='radio'], input[type='range']) { accent-color: hsl(var(--ring)); }
+:where(input, select, textarea):focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+
 .hero-shell { min-height: 100vh; min-height: 100svh; }
 .hero-stage {
   --hero-canvas-width: min(1395px, 100vw, 123.78svh);

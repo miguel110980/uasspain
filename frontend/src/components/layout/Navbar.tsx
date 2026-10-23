@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback, useSyncExternalStore, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useTheme } from 'next-themes';
+import ThemeControl from '@/components/ui/ThemeControl';
 import { useQuery } from '@tanstack/react-query';
 import {
   Menu, X, ChevronDown, Shield, Siren, GraduationCap, Plane,
-  RadioTower, Sun, Moon, LogOut, UserRound,
+  RadioTower, LogOut, UserRound,
 } from 'lucide-react';
 const AuthModal = lazy(() => import('@/components/auth/AuthModal'));
 import Logo from '@/components/layout/Logo';
@@ -39,9 +39,6 @@ const UpcomingCourseItem = ({ item, className }) => (
   </div>
 );
 const SCROLL_MAX = 160;
-const subscribeHydration = () => () => {};
-const clientHydrated = () => true;
-const serverHydrated = () => false;
 
 function easeOutCubic(t) {
   return 1 - Math.pow(1 - t, 3);
@@ -52,10 +49,6 @@ export default function Navbar() {
   const [dropdownOpen, setDropdownOpen] = useState(null);
   const [mobileDropdownOpen, setMobileDropdownOpen] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
-  const { resolvedTheme, setTheme } = useTheme();
-  // Accessible labels must match SSR during hydration. Visible icons follow
-  // the root CSS theme from the first paint, before React is interactive.
-  const hydrated = useSyncExternalStore(subscribeHydration, clientHydrated, serverHydrated);
   const navigate = useNavigate();
   const navRef = useRef(null);
   const mobileMenuRef = useRef(null);
@@ -222,7 +215,6 @@ export default function Navbar() {
     return false;
   }, [location.pathname]);
 
-  const isDark = !hydrated || resolvedTheme !== 'light';
   const panelRoute = session ? panelRouteForUser(session) : '/';
 
   const handleLogout = useCallback(async () => {
@@ -232,7 +224,7 @@ export default function Navbar() {
 
   const linkClass = (active) =>
     `${styles.navLink} text-[15px] font-semibold uppercase transition-colors duration-300 ${
-      active ? 'text-primary' : 'text-muted-foreground hover:text-primary'
+      active ? 'text-primary' : 'text-muted-foreground hover:text-brand-cyan-text'
     }`;
 
   const renderDropdown = (link) => {
@@ -246,7 +238,7 @@ export default function Navbar() {
         <button
           onClick={() => setDropdownOpen(dropdownOpen === link.label ? null : link.label)}
           className={`${styles.navLink} flex items-center gap-1.5 text-[15px] font-semibold uppercase transition-colors duration-300 ${
-            isChildActive(link.children, link.groups) ? 'text-primary' : 'text-muted-foreground hover:text-primary'
+            isChildActive(link.children, link.groups) ? 'text-primary' : 'text-muted-foreground hover:text-brand-cyan-text'
           }`}
           aria-expanded={dropdownOpen === link.label}
           aria-controls={`desktop-menu-${link.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
@@ -275,7 +267,7 @@ export default function Navbar() {
                             key={item.href}
                             to={item.href}
                             onClick={() => setDropdownOpen(null)}
-                            className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-md transition-all duration-200"
+                            className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-brand-cyan-text hover:bg-primary/5 rounded-md transition-all duration-200"
                           >
                             <MenuIcon icon={item.icon} />
                             {item.label}
@@ -288,7 +280,7 @@ export default function Navbar() {
                         key={item.href}
                         to={item.href}
                         onClick={() => setDropdownOpen(null)}
-                        className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-md transition-all duration-200"
+                        className="flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-brand-cyan-text hover:bg-primary/5 rounded-md transition-all duration-200"
                       >
                         <MenuIcon icon={item.icon} />
                         {item.label}
@@ -332,15 +324,7 @@ export default function Navbar() {
         {/* ── RIGHT: Desktop actions (≥1440px) ── */}
         {/* ── RIGHT: Mobile/Tablet actions (<1440px) ── */}
         <div className={styles.actions} data-header-block="controls">
-          <button
-            onClick={() => setTheme(isDark ? 'light' : 'dark')}
-            className={`${styles.iconButton} rounded-full text-muted-foreground hover:text-primary hover:bg-surface-muted transition-colors duration-300`}
-            aria-label={isDark ? 'Activar tema claro' : 'Activar tema oscuro'}
-            title={isDark ? 'Tema claro' : 'Tema oscuro'}
-          >
-            <Sun className="w-4 h-4 hidden dark:block" />
-            <Moon className="w-4 h-4 dark:hidden" />
-          </button>
+          <ThemeControl />
           {session ? (
             <>
               <Link
@@ -389,7 +373,7 @@ export default function Navbar() {
             aria-label="Menú de navegación"
             className={styles.mobileMenu}
             style={{
-              backgroundColor: isDark ? '#02070a' : '#F5F7FA',
+              backgroundColor: 'hsl(var(--background))',
             }}
           >
             <div className="px-6 py-5 space-y-1">
@@ -399,7 +383,7 @@ export default function Navbar() {
                     <button
                       onClick={() => setMobileDropdownOpen(mobileDropdownOpen === link.label ? null : link.label)}
                       className={`w-full flex items-center justify-between py-3 text-sm font-medium uppercase tracking-widest transition-colors ${
-                        isChildActive(link.children, link.groups) ? 'text-primary' : 'text-muted-foreground hover:text-primary'
+                        isChildActive(link.children, link.groups) ? 'text-primary' : 'text-muted-foreground hover:text-brand-cyan-text'
                       }`}
                       aria-expanded={mobileDropdownOpen === link.label}
                     >
@@ -411,7 +395,7 @@ export default function Navbar() {
                       to={link.href}
                       onClick={handleNavClick}
                       className={`block py-3 text-sm font-medium uppercase tracking-widest transition-colors ${
-                        location.pathname === link.href ? 'text-primary' : 'text-muted-foreground hover:text-primary'
+                        location.pathname === link.href ? 'text-primary' : 'text-muted-foreground hover:text-brand-cyan-text'
                       }`}
                     >
                       {link.label}
@@ -439,7 +423,7 @@ export default function Navbar() {
                                       to={child.href}
                                       onClick={() => { setMobileOpen(false); setMobileDropdownOpen(null); }}
                                       className={`flex items-center gap-2 py-2 text-xs uppercase tracking-widest transition-colors ${
-                                        location.pathname === child.href ? 'text-primary' : 'text-muted-foreground/70 hover:text-primary'
+                                        location.pathname === child.href ? 'text-primary' : 'text-muted-foreground/70 hover:text-brand-cyan-text'
                                       }`}
                                     >
                                       <MenuIcon icon={child.icon} />
@@ -454,7 +438,7 @@ export default function Navbar() {
                                   to={child.href}
                                   onClick={() => { setMobileOpen(false); setMobileDropdownOpen(null); }}
                                   className={`flex items-center gap-2 py-2 text-xs uppercase tracking-widest transition-colors ${
-                                    location.pathname === child.href ? 'text-primary' : 'text-muted-foreground/70 hover:text-primary'
+                                    location.pathname === child.href ? 'text-primary' : 'text-muted-foreground/70 hover:text-brand-cyan-text'
                                   }`}
                                 >
                                   <MenuIcon icon={child.icon} />

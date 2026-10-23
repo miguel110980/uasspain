@@ -158,7 +158,7 @@ export default function AdminAuditoria() {
                     { type: 'excel', label: 'Excel', icon: FileSpreadsheet },
                     { type: 'csv', label: 'CSV', icon: FileType },
                   ].map((opt) => (
-                    <button key={opt.type} onClick={() => doExport(opt.type)} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-muted-foreground hover:text-primary hover:bg-primary/5 rounded transition-colors">
+                    <button key={opt.type} onClick={() => doExport(opt.type)} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-muted-foreground hover:text-brand-cyan-text hover:bg-primary/5 rounded transition-colors">
                       <opt.icon className="w-3.5 h-3.5" /> Exportar a {opt.label}
                     </button>
                   ))}
@@ -181,7 +181,7 @@ export default function AdminAuditoria() {
           </div>
           <div>
             <label htmlFor="adminauditoria-field-2" className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Rol</label>
-            <select id="adminauditoria-field-2" value={fRol} onChange={(e) => setFRol(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent">
+            <select id="adminauditoria-field-2" value={fRol} onChange={(e) => setFRol(e.target.value)} className="w-full h-9 px-2 bg-surface-subtle border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent">
               <option value="todos">Todos</option>
               <option value="admin">Admin</option>
               <option value="instructor">Instructor</option>
@@ -190,18 +190,18 @@ export default function AdminAuditoria() {
           </div>
           <div>
             <label htmlFor="adminauditoria-field-3" className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Tipo</label>
-            <select id="adminauditoria-field-3" value={fTipo} onChange={(e) => setFTipo(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent">
+            <select id="adminauditoria-field-3" value={fTipo} onChange={(e) => setFTipo(e.target.value)} className="w-full h-9 px-2 bg-surface-subtle border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent">
               <option value="todos">Todos</option>
               {Object.entries(TIPO_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
           <div>
             <label htmlFor="adminauditoria-field-4" className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Desde</label>
-            <input id="adminauditoria-field-4" type="date" value={fDesde} onChange={(e) => setFDesde(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent" />
+            <input id="adminauditoria-field-4" type="date" value={fDesde} onChange={(e) => setFDesde(e.target.value)} className="w-full h-9 px-2 bg-surface-subtle border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent" />
           </div>
           <div>
             <label htmlFor="adminauditoria-field-5" className="block text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-1">Hasta</label>
-            <input id="adminauditoria-field-5" type="date" value={fHasta} onChange={(e) => setFHasta(e.target.value)} className="w-full h-9 px-2 bg-input border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent" />
+            <input id="adminauditoria-field-5" type="date" value={fHasta} onChange={(e) => setFHasta(e.target.value)} className="w-full h-9 px-2 bg-surface-subtle border border-border-subtle text-xs text-foreground rounded focus:outline-none focus:border-transparent" />
           </div>
         </div>
       </div>

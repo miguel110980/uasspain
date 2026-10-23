@@ -91,7 +91,7 @@ export default function AdminCursos({ active = true }: { active?: boolean }) {
     {displayError && <div role="alert" className="border border-danger/30 bg-danger/10 text-danger text-sm p-3 rounded">{displayError}{!saving && <button type="button" onClick={load} className="underline ml-2">Actualizar listado</button>}</div>}
     {notice && <p role="status" className="text-sm text-success">{notice}</p>}
     <form onSubmit={saveCourse} className="glass-card p-5 space-y-5" aria-label={editing ? 'Editar curso' : 'Nuevo curso'}>
-      <div className="flex flex-wrap justify-between gap-3"><h3 className="font-heading font-bold">{editing ? `Editar ${editing.name}` : 'Nuevo curso'}</h3>{editing && <button type="button" disabled={saving} onClick={reset} className="text-xs text-muted-foreground hover:text-primary">Cancelar edición</button>}</div>
+      <div className="flex flex-wrap justify-between gap-3"><h3 className="font-heading font-bold">{editing ? `Editar ${editing.name}` : 'Nuevo curso'}</h3>{editing && <button type="button" disabled={saving} onClick={reset} className="text-xs text-muted-foreground hover:text-brand-cyan-text">Cancelar edición</button>}</div>
       <fieldset disabled={saving} className="space-y-5 min-w-0">
         <div className="grid md:grid-cols-2 gap-4">
           <label className="block text-sm font-medium" htmlFor="course-name">Nombre del curso<input ref={nameRef} id="course-name" required maxLength={180} value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} className={fieldClass} /></label>

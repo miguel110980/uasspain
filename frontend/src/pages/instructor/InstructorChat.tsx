@@ -131,7 +131,7 @@ export default function InstructorChat({
               className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-mono uppercase tracking-widest border rounded transition-all ${
                 tab === t.id
                   ? 'border-primary/50 bg-primary/10 text-primary'
-                  : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-primary'
+                  : 'border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text'
               }`}
             >
               {t.label}

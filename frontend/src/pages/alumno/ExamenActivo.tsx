@@ -194,7 +194,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <button
               onClick={() => setVistaRevision(true)}
-              className="px-6 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-all duration-200"
+              className="px-6 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-200"
             >
               Revisar examen
             </button>
@@ -218,7 +218,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
           <h2 className="font-heading text-xl font-bold text-foreground">Revisión del examen</h2>
           <button
             onClick={() => setVistaRevision(false)}
-            className="text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
+            className="text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-brand-cyan-text transition-colors"
           >
             ← Volver a resultados
           </button>
@@ -366,7 +366,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
         <button
           onClick={() => setPreguntaActual((p) => Math.max(0, p - 1))}
           disabled={preguntaActual === 0}
-          className="flex items-center gap-2 px-5 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-all duration-200 disabled:opacity-30"
+          className="flex items-center gap-2 px-5 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-200 disabled:opacity-30"
         >
           <ChevronLeft className="w-4 h-4" /> Anterior
         </button>
@@ -393,7 +393,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
         {preguntaActual < preguntas.length - 1 ? (
           <button
             onClick={() => setPreguntaActual((p) => Math.min(preguntas.length - 1, p + 1))}
-            className="flex items-center gap-2 px-5 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-all duration-200"
+            className="flex items-center gap-2 px-5 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-200"
           >
             Siguiente <ChevronRight className="w-4 h-4" />
           </button>
@@ -415,7 +415,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
           <button
             onClick={() => setConfirmFinish(true)}
             disabled={finalizando}
-            className="text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors border border-border-subtle px-6 py-2 hover:border-primary/30"
+            className="text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-brand-cyan-text transition-colors border border-border-subtle px-6 py-2 hover:border-primary/30"
           >
             Finalizar examen
           </button>
@@ -434,7 +434,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
             <div className="flex gap-3">
               <button
                 onClick={() => setConfirmFinish(false)}
-                className="flex-1 px-4 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-primary transition-all duration-200"
+                className="flex-1 px-4 py-3 border border-border-subtle text-muted-foreground text-xs font-bold uppercase tracking-widest hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-200"
               >
                 Cancelar
               </button>

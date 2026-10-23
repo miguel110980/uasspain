@@ -1,3 +1,4 @@
+import { CHART_COLORS, CHART_TOOLTIP_STYLE } from '@/lib/themeConfig';
 import React from 'react';
 import {
   Users, ClipboardList, CheckCircle2, BookOpen, MessageCircle, Wifi,
@@ -11,11 +12,11 @@ import KpiCard from '@/components/admin/KpiCard';
 import { compareDatesDesc } from '@/lib/dates';
 import { hasRole } from '@/lib/roles';
 
-const CYAN = '#22D3EE';
-const ORANGE = '#F97316';
-const BLUE = '#60A5FA';
-const EMERALD = '#34D399';
-const RED = '#F87171';
+const CYAN = CHART_COLORS.cyan;
+const ORANGE = CHART_COLORS.orange;
+const BLUE = CHART_COLORS.blue;
+const EMERALD = CHART_COLORS.green;
+const RED = CHART_COLORS.red;
 
 export default function InstructorDashboard({ profiles, resultados, loading, counts }) {
   const alumnos = profiles.filter((p) => hasRole(p, 'alumno'));
@@ -106,7 +107,7 @@ export default function InstructorDashboard({ profiles, resultados, loading, cou
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
               <XAxis dataKey="name" tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
-              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 6, fontSize: 12 }} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
               <Area type="monotone" dataKey="examenes" stroke={CYAN} strokeWidth={2} fill="url(#gExamI)" name="Exámenes" />
               <Area type="monotone" dataKey="altas" stroke={ORANGE} strokeWidth={2} fill="url(#gAltasI)" name="Altas" />
             </AreaChart>
@@ -119,9 +120,9 @@ export default function InstructorDashboard({ profiles, resultados, loading, cou
           <ResponsiveContainer width="100%" height={240}>
             <PieChart>
               <Pie data={aprobPie} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={3}>
-                {aprobPie.map((e) => <Cell key={e.name} fill={e.color} />)}
+                {aprobPie.map((e) => <Cell key={e.name} fill={e.color} aria-label={`${e.name}: ${e.value}`} />)}
               </Pie>
-              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 6, fontSize: 12 }} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex justify-center gap-4 mt-2">
@@ -143,7 +144,7 @@ export default function InstructorDashboard({ profiles, resultados, loading, cou
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
               <XAxis dataKey="name" tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: 'hsl(var(--text-secondary))', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
-              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 6, fontSize: 12 }} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
               <Bar dataKey="realizados" fill={BLUE} radius={[4, 4, 0, 0]} name="Realizados" />
               <Bar dataKey="aprobados" fill={CYAN} radius={[4, 4, 0, 0]} name="Aprobados" />
             </BarChart>

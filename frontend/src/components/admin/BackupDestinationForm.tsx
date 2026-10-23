@@ -55,11 +55,13 @@ export default function BackupDestinationForm({ role, label, server, onSaved, op
     <p className="text-sm text-muted-foreground">{label} · {server?.transfer_protocol === 'sftp' || role !== 'local' ? 'Servidor externo' : 'Almacenamiento local'}</p>
     <p className="text-sm break-all">{server?.sftp_host || (role === 'local' ? 'Esta instalación' : 'Dirección del servidor pendiente')}</p>
     <dl className="text-xs text-muted-foreground space-y-1">
-      <div>Habilitado: {server?.is_active ? 'Sí' : 'No'} · Configuración: {server ? 'Guardada' : 'Pendiente'}</div>
-      <div>Conexión: {server?.status === 'offline' ? 'No disponible en la última comprobación' : server?.configuration_validated ? 'Verificada en la última comprobación' : 'Pendiente de comprobación'} · Última comprobación: {server?.connection_checked_at ? new Date(server.connection_checked_at).toLocaleString('es-ES') : 'Sin comprobar'}</div>
-      <div>Última copia realizada correctamente: {server?.last_backup ? new Date(server.last_backup).toLocaleString('es-ES') : 'Sin evidencia'}</div>
-      <div>Espacio de almacenamiento disponible: {availableStorage(server)}</div>
-      {server?.error && <div className="text-danger break-words">{infrastructureMessage(server.error)}</div>}
+      <div><dt className="inline">Habilitado: </dt><dd className="inline">{server?.is_active ? 'Sí' : 'No'}</dd></div>
+      <div><dt className="inline">Configuración: </dt><dd className="inline">{server ? 'Guardada' : 'Pendiente'}</dd></div>
+      <div><dt className="inline">Conexión: </dt><dd className="inline">{server?.status === 'offline' ? 'No disponible en la última comprobación' : server?.configuration_validated ? 'Verificada en la última comprobación' : 'Pendiente de comprobación'}</dd></div>
+      <div><dt className="inline">Última comprobación: </dt><dd className="inline">{server?.connection_checked_at ? new Date(server.connection_checked_at).toLocaleString('es-ES') : 'Sin comprobar'}</dd></div>
+      <div><dt className="inline">Última copia realizada correctamente: </dt><dd className="inline">{server?.last_backup ? new Date(server.last_backup).toLocaleString('es-ES') : 'Sin evidencia'}</dd></div>
+      <div><dt className="inline">Espacio de almacenamiento disponible: </dt><dd className="inline">{availableStorage(server)}</dd></div>
+      {server?.error && <div className="text-danger break-words"><dt className="inline">Error: </dt><dd className="inline">{infrastructureMessage(server.error)}</dd></div>}
     </dl>
     {!readOnly && <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy || operationBusy} onClick={open}><Settings2 className="inline w-4 h-4 mr-1" />Configurar</button><button type="button" className={button} disabled={busy || operationBusy || !server} onClick={test}>Verificar conexión con el servidor</button><label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`Servicio habilitado: ${label}`} checked={Boolean(server?.is_active)} disabled={busy || operationBusy || !server || (!server.is_active && !server.configuration_validated)} onChange={toggle} />Servicio habilitado</label></div>}
     {(busy || notice) && <p role="status" className={`text-sm ${busy ? "" : "text-success"}`}>{busy ? "Comprobando destino…" : notice}</p>}{error && !form && <p role="alert" className="text-sm text-danger">{error}</p>}

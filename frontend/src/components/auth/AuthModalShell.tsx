@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import ModalPortal from '@/components/ui/ModalPortal';
 import { useRef } from 'react';
 import useModalFocus from '@/hooks/useModalFocus';
+import ThemeControl from '@/components/ui/ThemeControl';
 
 /**
  * Overlay de modal de auth: portal a body + centrado fijo en viewport.
@@ -38,6 +39,7 @@ export default function AuthModalShell({
           className={`relative w-full min-w-0 ${maxWidth} max-h-[min(90vh,calc(100dvh-3rem))] overflow-y-auto glass-card p-5 sm:p-8 z-10 ${panelClassName}`}
           onClick={(e) => e.stopPropagation()}
         >
+          <div className="mb-4 flex justify-start pr-10"><ThemeControl /></div>
           {children}
         </motion.div>
       </div>

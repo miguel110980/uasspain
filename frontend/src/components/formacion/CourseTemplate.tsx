@@ -40,7 +40,7 @@ export default function CourseTemplate({ course }: { course: Course }) {
             <div className="absolute w-[600px] h-[600px] border border-primary/5 rounded-full left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
           </div>
           <div className="relative z-10 max-w-7xl mx-auto px-6 text-center">
-            <Link to={relativeLink(presentation.back?.href, '/formacion')} className="inline-flex items-center gap-2 mb-8 text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors">
+            <Link to={relativeLink(presentation.back?.href, '/formacion')} className="inline-flex items-center gap-2 mb-8 text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-brand-cyan-text transition-colors">
               <ChevronLeft className="w-3.5 h-3.5 shrink-0" />{presentation.back?.label || 'Volver a Formación'}
             </Link>
             <div>

@@ -200,7 +200,7 @@ export default function HeroSection() {
               </Link>
               <a
                 href="#servicios"
-                className="inline-flex items-center justify-center gap-2 border border-border-strong text-foreground px-8 py-4 font-bold uppercase tracking-tighter text-sm hover:border-primary/50 hover:text-primary transition-all duration-300"
+                className="inline-flex items-center justify-center gap-2 border border-border-strong text-foreground px-8 py-4 font-bold uppercase tracking-tighter text-sm hover:border-primary/50 hover:text-brand-cyan-text transition-all duration-300"
               >
                 Explorar Servicios
               </a>

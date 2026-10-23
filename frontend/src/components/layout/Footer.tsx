@@ -66,7 +66,7 @@ export default function Footer() {
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={label}
-                  className="w-9 h-9 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-primary hover:bg-primary/5 transition-all duration-300"
+                  className="w-9 h-9 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text hover:bg-primary/5 transition-all duration-300"
                 >
                   <Icon className="w-4 h-4" />
                 </a>
@@ -82,7 +82,7 @@ export default function Footer() {
             <ul className="space-y-3">
               {quickLinks.map((link) => (
                 <li key={link.label}>
-                  <Link to={link.href} className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                  <Link to={link.href} className="text-sm text-muted-foreground hover:text-brand-cyan-text transition-colors">
                     {link.label}
                   </Link>
                 </li>
@@ -98,7 +98,7 @@ export default function Footer() {
             <ul className="space-y-3">
               {serviceLinks.map((s) => (
                 <li key={s.label}>
-                  <Link to={s.href} className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                  <Link to={s.href} className="text-sm text-muted-foreground hover:text-brand-cyan-text transition-colors">
                     {s.label}
                   </Link>
                 </li>
@@ -114,7 +114,7 @@ export default function Footer() {
             <ul className="space-y-3">
               {formacionLinks.map((f) => (
                 <li key={f.href}>
-                  <Link to={f.href} className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                  <Link to={f.href} className="text-sm text-muted-foreground hover:text-brand-cyan-text transition-colors">
                     {f.label}
                   </Link>
                 </li>
@@ -130,7 +130,7 @@ export default function Footer() {
             <ul className="space-y-3">
               {legalLinks.map((link) => (
                 <li key={link.label}>
-                  <Link to={link.href} className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                  <Link to={link.href} className="text-sm text-muted-foreground hover:text-brand-cyan-text transition-colors">
                     {link.label}
                   </Link>
                 </li>
@@ -146,7 +146,7 @@ export default function Footer() {
           </p>
           <button
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-            className="w-10 h-10 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-primary transition-all duration-300"
+            className="w-10 h-10 flex items-center justify-center border border-border-subtle text-muted-foreground hover:border-primary/30 hover:text-brand-cyan-text transition-all duration-300"
             aria-label="Volver arriba"
           >
             <ArrowUp className="w-4 h-4" />
