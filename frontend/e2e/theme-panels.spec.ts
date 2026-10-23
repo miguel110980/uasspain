@@ -58,7 +58,11 @@ for (const role of ['admin', 'instructor', 'alumno']) for (const saved of ['ligh
     await dialog.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
     await page.waitForURL(new RegExp('/' + role + '$'));
     await expect(page.locator('html')).toHaveClass(next);
-    await page.getByRole('button', { name: 'Usar tema del sistema', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Usar tema del sistema', exact: true })).toHaveCount(0);
+    // Retain coverage of the shared provider's saved system preference.
+    await page.evaluate(() => localStorage.setItem('theme', 'system'));
+    await page.reload();
+    await expect(page.locator('header h1')).toHaveText('Dashboard');
     const system = saved === 'dark' ? 'light' : 'dark';
     await expect(page.locator('html')).toHaveClass(system);
     expect(await page.evaluate(() => localStorage.getItem('theme'))).toBe('system');
@@ -72,6 +76,8 @@ for (const role of ['admin', 'instructor', 'alumno']) for (const saved of ['ligh
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       await expect(page.locator('header').getByRole('group', { name: 'Tema de la aplicación' })).toBeVisible();
+      await expect(page.locator('header').getByRole('group', { name: 'Tema de la aplicación' }).getByRole('button')).toHaveCount(1);
+      await expect(page.locator('header').locator('svg.lucide-monitor')).toHaveCount(0);
     }
     await tab.close();
   });
