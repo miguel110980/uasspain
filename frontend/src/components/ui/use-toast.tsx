@@ -1,8 +1,8 @@
 // Inspired by react-hot-toast library
 import { useState, useEffect } from "react";
+import { SUCCESS_FEEDBACK_DURATION } from "@/lib/successFeedback";
 
 const TOAST_LIMIT = 1;
-const TOAST_REMOVE_DELAY = 1500;
 
 const actionTypes = {
   ADD_TOAST: "ADD_TOAST",
@@ -20,25 +20,10 @@ function genId() {
 
 const toastTimeouts = new Map();
 
-const addToRemoveQueue = (toastId) => {
-  if (toastTimeouts.has(toastId)) {
-    return;
-  }
-
-  const timeout = setTimeout(() => {
-    toastTimeouts.delete(toastId);
-    dispatch({
-      type: actionTypes.REMOVE_TOAST,
-      toastId,
-    });
-  }, TOAST_REMOVE_DELAY);
-
-  toastTimeouts.set(toastId, timeout);
-};
-
 export const reducer = (state, action) => {
   switch (action.type) {
     case actionTypes.ADD_TOAST:
+      state.toasts.forEach(t => { clearTimeout(toastTimeouts.get(t.id)); toastTimeouts.delete(t.id); });
       return {
         ...state,
         toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT),
@@ -53,24 +38,9 @@ export const reducer = (state, action) => {
       };
 
     case actionTypes.DISMISS_TOAST: {
-      const { toastId } = action;
-
-      if (toastId) {
-        addToRemoveQueue(toastId);
-      } else {
-        state.toasts.forEach((t) => {
-          addToRemoveQueue(t.id);
-        });
-      }
-
-      return {
-        ...state,
-        toasts: state.toasts.map((t) =>
-          t.id === toastId || toastId === undefined
-            ? { ...t, open: false }
-            : t
-        ),
-      };
+      const targets = state.toasts.filter(t => action.toastId === undefined || t.id === action.toastId);
+      targets.forEach(t => { clearTimeout(toastTimeouts.get(t.id)); toastTimeouts.delete(t.id); });
+      return { ...state, toasts: state.toasts.filter(t => !targets.includes(t)) };
     }
     case actionTypes.REMOVE_TOAST:
       if (action.toastId === undefined) {
@@ -94,7 +64,8 @@ function dispatch(action) {
   });
 }
 
-function toast({ duration = 1500, ...props }) {
+function toast({ duration: requestedDuration, ...props }) {
+  const duration = requestedDuration ?? (props.variant === 'destructive' ? 1500 : SUCCESS_FEEDBACK_DURATION);
   const id = genId();
   const titleKey = props.title || '';
 
@@ -183,7 +154,7 @@ function useToast() {
         listeners.splice(index, 1);
       }
     };
-  }, [state]);
+  }, []);
 
   return {
     ...state,
@@ -192,4 +163,4 @@ function useToast() {
   };
 }
 
-export { useToast, toast }; 
+export { useToast, toast };

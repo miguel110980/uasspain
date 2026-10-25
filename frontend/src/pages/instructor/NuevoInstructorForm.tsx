@@ -1,6 +1,7 @@
+import SuccessNotice from '@/components/ui/SuccessNotice';
 ﻿import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Loader2, UserPlus, CheckCircle, X } from 'lucide-react';
+import { Loader2, UserPlus } from 'lucide-react';
 import authService from '@/services/authService';
 import { extractErrorMessage } from '@/lib/errors';
 import { validateDniNie } from '@/lib/dni';
@@ -148,22 +149,7 @@ export default function NuevoInstructorForm({ onCreated }: { onCreated?: () => v
         Si también es administrador, podrá elegir entre <strong>/admin</strong> e <strong>/instructor</strong> al iniciar sesión.
       </p>
 
-      {success && (
-        <div className="flex items-start gap-2 text-xs text-primary bg-primary/10 border border-primary/20 px-3 py-3 rounded-sm mb-4">
-          <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span className="flex-1">
-            Instructor creado correctamente. Puede entrar con el email <strong>{createdEmail}</strong> y la contraseña indicada.
-          </span>
-          <button
-            type="button"
-            onClick={() => setSuccess(false)}
-            className="shrink-0 text-primary hover:text-brand-cyan-text transition-colors"
-            aria-label="Cerrar mensaje"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      {success && <SuccessNotice message={`Instructor creado correctamente. Puede entrar con el email ${createdEmail} y la contraseña indicada.`} onDismiss={() => setSuccess(false)} className="mb-4" />}
 
       <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
         <div className="grid sm:grid-cols-2 gap-4">

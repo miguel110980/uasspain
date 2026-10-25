@@ -1,3 +1,4 @@
+import FeedbackNavigation from '@/components/ui/FeedbackNavigation';
 import React, { lazy, useState, useEffect } from 'react';
 import {
   LayoutDashboard, ClipboardList, BarChart2, BookOpen, MessageCircle, Video, User, TrendingUp,
@@ -196,6 +197,7 @@ export default function AlumnoPanel() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex">
+      <FeedbackNavigation value={section} />
       <AdminSidebar
         groups={navGroups}
         section={section}

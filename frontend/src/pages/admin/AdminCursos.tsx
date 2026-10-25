@@ -1,3 +1,4 @@
+import SuccessNotice from '@/components/ui/SuccessNotice';
 import React, { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
@@ -89,7 +90,7 @@ export default function AdminCursos({ active = true }: { active?: boolean }) {
   return <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 min-w-0 break-words">
     <div><h2 className="font-heading text-xl font-bold flex items-center gap-2"><BookOpen className="w-5 h-5 text-primary shrink-0" />Formación / Cursos</h2><p className="text-xs text-muted-foreground mt-1">Gestiona el contenido y la publicación de tus cursos.</p></div>
     {displayError && <div role="alert" className="border border-danger/30 bg-danger/10 text-danger text-sm p-3 rounded">{displayError}{!saving && <button type="button" onClick={load} className="underline ml-2">Actualizar listado</button>}</div>}
-    {notice && <p role="status" className="text-sm text-success">{notice}</p>}
+    {notice && <SuccessNotice message={notice} onDismiss={() => setNotice('')} />}
     <form onSubmit={saveCourse} className="glass-card p-5 space-y-5" aria-label={editing ? 'Editar curso' : 'Nuevo curso'}>
       <div className="flex flex-wrap justify-between gap-3"><h3 className="font-heading font-bold">{editing ? `Editar ${editing.name}` : 'Nuevo curso'}</h3>{editing && <button type="button" disabled={saving} onClick={reset} className="text-xs text-muted-foreground hover:text-brand-cyan-text">Cancelar edición</button>}</div>
       <fieldset disabled={saving} className="space-y-5 min-w-0">

@@ -1,3 +1,4 @@
+import FeedbackNavigation from '@/components/ui/FeedbackNavigation';
 import { useToast } from '@/components/ui/use-toast';
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
@@ -31,6 +32,11 @@ const AvisoLegal = lazy(() => import('./pages/AvisoLegal'));
 const PoliticaCookies = lazy(() => import('./pages/PoliticaCookies'));
 const Toaster = lazy(() => import('@/components/ui/toaster').then(module => ({ default: module.Toaster })));
 const MotionConfig = lazy(() => import('framer-motion').then(module => ({ default: module.MotionConfig })));
+
+function RouteFeedbackNavigation() {
+  const location = useLocation();
+  return <FeedbackNavigation value={`${location.key}:${location.pathname}${location.search}${location.hash}`} />;
+}
 
 function ToastHost() {
   const { toasts } = useToast();
@@ -78,6 +84,7 @@ function App({ initialHome }: { initialHome?: ComponentType } = {}) {
   return (
     <AppProviders>
       <Router>
+        <RouteFeedbackNavigation />
         <SeoHead />
         <ScrollToTop />
         <RouteMotion>

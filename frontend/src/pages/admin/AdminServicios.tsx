@@ -1,3 +1,4 @@
+import SuccessNotice from '@/components/ui/SuccessNotice';
 import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Edit3, Eye, EyeOff, Loader2, Plus, Save, Shield, Trash2 } from 'lucide-react';
@@ -65,7 +66,7 @@ export default function AdminServicios({ active = true }: { active?: boolean }) 
   return <div className="space-y-6 min-w-0 break-words">
     <div><h2 className="font-heading text-xl font-bold flex items-center gap-2"><Shield className="w-5 h-5 text-primary" />Servicios</h2><p className="text-xs text-muted-foreground mt-1">Gestiona los servicios y su visibilidad pública.</p></div>
     {(error || query.isError) && <div role="alert" className="border border-danger/30 bg-danger/10 text-danger text-sm p-3 rounded">{error || errorText(query.error)} <button onClick={() => void query.refetch()} className="underline">Actualizar listado</button></div>}
-    {notice && <p role="status" className="text-sm text-success">{notice}</p>}
+    {notice && <SuccessNotice message={notice} onDismiss={() => setNotice('')} />}
     {changed && <p role="alert" className="text-warning text-sm">Otro administrador ha cambiado este servicio. Tu edición se conserva; revisa la versión actual antes de guardar.</p>}
     <form onSubmit={save} aria-label={editing ? 'Editar servicio' : 'Nuevo servicio'} className="glass-card p-5 space-y-4">
       <div className="flex flex-wrap justify-between gap-2"><h3 className="font-heading font-bold min-w-0 max-w-full break-words">{editing ? `Editar ${editing.title}` : 'Nuevo servicio'}</h3><button type="button" disabled={busy} onClick={reset} className="text-sm text-primary"><Plus className="inline w-4 h-4" />Nuevo servicio</button></div>

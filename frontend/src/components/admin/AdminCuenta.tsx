@@ -1,7 +1,8 @@
+import SuccessNotice from '@/components/ui/SuccessNotice';
 import React, { useState, useEffect } from 'react';
 import AccountDeactivation from '@/components/account/AccountDeactivation';
 import { motion } from 'framer-motion';
-import { Save, Loader2, CheckCircle, AlertCircle, UserCog } from 'lucide-react';
+import { Save, Loader2, AlertCircle, UserCog } from 'lucide-react';
 import authService from '@/services/authService';
 import { extractErrorMessage } from '@/lib/errors';
 import { sanitizeInput } from '@/lib/sanitize';
@@ -81,6 +82,7 @@ export default function AdminCuenta({ profile: sessionProfile = null, onProfileU
     const validationError = validate();
     if (validationError) { setError(validationError); return; }
     setSaving(true);
+    setSuccess(false);
     setError('');
     try {
       const { nombre: _nombre, apellidos: _apellidos, dni_nie: _dni, ...editable } = form;
@@ -89,7 +91,6 @@ export default function AdminCuenta({ profile: sessionProfile = null, onProfileU
       setProfile(updated);
       onProfileUpdate?.(updated);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
     } catch {
       setError('Error al guardar los cambios.');
     } finally {
@@ -123,7 +124,6 @@ export default function AdminCuenta({ profile: sessionProfile = null, onProfileU
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-      setTimeout(() => setPasswordSuccess(false), 3000);
     } catch (err) {
       setPasswordError(extractErrorMessage(err, 'No se pudo actualizar la contraseña. Inténtelo nuevamente.'));
     } finally {
@@ -204,11 +204,7 @@ export default function AdminCuenta({ profile: sessionProfile = null, onProfileU
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {error}
               </div>
             )}
-            {success && (
-              <div className="flex items-center gap-2 text-xs text-primary bg-primary/10 border border-primary/20 px-3 py-2 rounded-sm">
-                <CheckCircle className="w-3.5 h-3.5 shrink-0" /> Cambios guardados correctamente.
-              </div>
-            )}
+            {success && <SuccessNotice message="Cambios guardados correctamente." onDismiss={() => setSuccess(false)} />}
 
             <button
               type="submit"
@@ -266,11 +262,7 @@ export default function AdminCuenta({ profile: sessionProfile = null, onProfileU
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {passwordError}
                 </div>
               )}
-              {passwordSuccess && (
-                <div className="flex items-center gap-2 text-xs text-primary bg-primary/10 border border-primary/20 px-3 py-2 rounded-sm">
-                  <CheckCircle className="w-3.5 h-3.5 shrink-0" /> Contraseña actualizada correctamente.
-                </div>
-              )}
+              {passwordSuccess && <SuccessNotice message="Contraseña actualizada correctamente." onDismiss={() => setPasswordSuccess(false)} />}
 
               <button
                 type="submit"

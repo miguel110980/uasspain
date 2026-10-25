@@ -1,3 +1,4 @@
+import SuccessNotice from '@/components/ui/SuccessNotice';
 import React, { useMemo, useState } from 'react';
 import { Loader2, Send, Users, X } from 'lucide-react';
 import { sanitizeInput } from '@/lib/sanitize';
@@ -92,7 +93,7 @@ export default function BroadcastComposer({ recipients, title, description, onSe
         className="min-h-24 w-full border border-border-subtle bg-surface-muted p-3 text-sm text-foreground outline-none focus:border-primary/40"
       />
       {error && <p className="text-xs text-danger">{error}</p>}
-      {feedback && <p className="text-xs text-success" role="status">{feedback}</p>}
+      {feedback && <SuccessNotice message={feedback} onDismiss={() => setFeedback('')} />}
       <button
         type="submit"
         disabled={sending || selected.size === 0 || !message.trim()}

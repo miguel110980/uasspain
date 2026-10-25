@@ -1,3 +1,4 @@
+import SuccessNotice from '@/components/ui/SuccessNotice';
 import { useState } from 'react';
 import { Settings2, X } from 'lucide-react';
 import PanelModal from '@/components/ui/PanelModal';
@@ -64,7 +65,7 @@ export default function BackupDestinationForm({ role, label, server, onSaved, op
       {server?.error && <div className="text-danger break-words"><dt className="inline">Error: </dt><dd className="inline">{infrastructureMessage(server.error)}</dd></div>}
     </dl>
     {!readOnly && <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy || operationBusy} onClick={open}><Settings2 className="inline w-4 h-4 mr-1" />Configurar</button><button type="button" className={button} disabled={busy || operationBusy || !server} onClick={test}>Verificar conexión con el servidor</button><label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`Servicio habilitado: ${label}`} checked={Boolean(server?.is_active)} disabled={busy || operationBusy || !server || (!server.is_active && !server.configuration_validated)} onChange={toggle} />Servicio habilitado</label></div>}
-    {(busy || notice) && <p role="status" className={`text-sm ${busy ? "" : "text-success"}`}>{busy ? "Comprobando destino…" : notice}</p>}{error && !form && <p role="alert" className="text-sm text-danger">{error}</p>}
+    {busy ? <p role="status" className="text-sm">Comprobando destino…</p> : notice && <SuccessNotice message={notice} onDismiss={() => setNotice('')} />}{error && !form && <p role="alert" className="text-sm text-danger">{error}</p>}
     {!readOnly && form && <PanelModal label={`Configurar ${label}`} onClose={() => !busy && setForm(null)}>
       <div className="flex items-start justify-between gap-3"><h3 className="font-heading text-lg">Configurar destino</h3><button type="button" aria-label="Cerrar" className={button} disabled={busy} onClick={() => setForm(null)}><X className="w-4 h-4" /></button></div>
       <p className="text-sm text-muted-foreground my-3" aria-live="polite">Paso {step + 1} de {steps.length}: {steps[step]}</p>

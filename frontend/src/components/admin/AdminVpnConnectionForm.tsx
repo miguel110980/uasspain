@@ -1,3 +1,4 @@
+import SuccessNotice from '@/components/ui/SuccessNotice';
 import { useEffect, useRef, useState } from 'react';
 import apiClient from '@/api/apiClient';
 import { endpoints } from '@/api/endpoints';
@@ -42,7 +43,7 @@ export default function AdminVpnConnectionForm({ active = true, observation = nu
   return <section className="glass-card p-4 sm:p-6 min-w-0 space-y-4" aria-label="Configuración de conexión VPN">
     <h3 className="font-heading text-lg font-bold text-foreground">Configuración de conexión VPN</h3>
     <p className="text-sm text-muted-foreground">Los datos públicos detectados completan los campos vacíos. Revisa los cambios y guarda la configuración; las claves privadas y la activación de WireGuard se gestionan en cada equipo.</p>
-    {error && <p role="alert" className="text-sm text-danger break-words">{error}</p>}{notice && <p role="status" className="text-sm text-success">{notice}</p>}
+    {error && <p role="alert" className="text-sm text-danger break-words">{error}</p>}{notice && <SuccessNotice message={notice} onDismiss={() => setNotice('')} />}
     <div className="grid gap-4 md:grid-cols-2">
       <label className="block min-w-0 space-y-1 text-sm">Adaptador de red de WireGuard<input className={field} disabled={busy} list="wireguard-adapters" value={config.vpn.interface} autoComplete="off" onChange={event => vpnPatch('interface', event.target.value)} /><datalist id="wireguard-adapters">{observedVpn?.agent_state === 'VERIFIED' && observedVpn.interfaces?.map(name => <option key={name} value={name} />)}</datalist></label>
       {input('Dirección IP interna de la VPN', config.vpn.address, value => vpnPatch('address', value))}
