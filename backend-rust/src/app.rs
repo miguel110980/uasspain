@@ -235,6 +235,22 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(crate::runtime_config::smtp_test),
         )
         .route(
+            "/api/system/smtp/validate/",
+            post(crate::runtime_config::smtp_validate),
+        )
+        .route(
+            "/api/system/smtp/services/{service}/",
+            get(crate::smtp_services::get).put(crate::smtp_services::put),
+        )
+        .route(
+            "/api/system/smtp/services/{service}/validate/",
+            post(crate::smtp_services::validate),
+        )
+        .route(
+            "/api/system/smtp/services/{service}/test/",
+            post(crate::smtp_services::test),
+        )
+        .route(
             "/api/system/google-oauth/",
             get(crate::google_oauth::get).put(crate::google_oauth::put),
         )

@@ -5,7 +5,7 @@ export type SystemStatusResponse = {
   redis: { status: string; configured: boolean; connected: boolean; backend: string };
   websockets: { status: string; backend: string; operational: boolean };
   smtp: { enabled: boolean; configured: boolean; host: string; password_configured: boolean; last_test_ok: boolean | null };
-  mail?: { api_exclusive: boolean; provider: string; api_key_configured: boolean; api_sender_verified: boolean; channel_ready?: boolean; provider_verified?: boolean; activation_ready?: boolean; sender_status?: string };
+  mail?: { provider: string; channel_ready?: boolean; api_mode_blocked?: boolean; services?: { contact: { active_ready: boolean; verification_status: string }; automatic: { active_ready: boolean; verification_status: string } } };
   google_oauth: { enabled: boolean; configured: boolean; client_id: string; origins: string[] };
   users: { total?: number; unique_active: number; admin: number; instructor: number; alumno: number };
   academic?: { published_courses: number; published_news: number; available_exams: number; total_exams: number; published_materials: number; total_materials: number; exam_results: number; passed_exams: number };

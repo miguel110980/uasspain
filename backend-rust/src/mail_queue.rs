@@ -19,6 +19,14 @@ struct Job {
     expires_at: DateTime<Utc>,
     validity: Value,
 }
+impl Job {
+    fn circuit(&self) -> &str {
+        match self.validity["smtp_circuit"].as_str() {
+            Some(value @ ("smtp" | "smtp_contact" | "smtp_automatic")) => value,
+            _ => &self.provider,
+        }
+    }
+}
 
 pub struct QueueOptions<'a> {
     pub kind: &'a str,
@@ -41,6 +49,13 @@ pub async fn enqueue_explicit(
     envelope: &Envelope,
     options: QueueOptions<'_>,
 ) -> Result<Uuid, AppError> {
+    if provider != "smtp"
+        && !(provider == "isolated"
+            && runtime_config::env_true("DEV_EMAIL")
+            && !runtime_config::env_true("APP_PRODUCTION"))
+    {
+        return Err(crate::mail_config::api_disabled());
+    }
     envelope.validate()?;
     if options.ttl <= Duration::zero() || options.ttl > Duration::hours(24) {
         return Err(AppError::Internal);
@@ -88,42 +103,47 @@ pub async fn enqueue(
         reply_to,
         subject,
         body,
-        options,
+        mut options,
     } = request;
-    let exclusive = crate::mail_config::api_exclusive(state).await?;
-    let (provider, from, from_name, smtp) = if exclusive {
-        let config = crate::mail_config::api_config(state, false).await?;
-        config.validate().map_err(|_| AppError::Unavailable)?;
-        // Verified credentials remain usable after the test's activation window;
-        // later failures open the circuit, never silently switch transports.
-        if !config.provider_verified() || crate::mail_config::token(state, false).await?.is_none() {
+    crate::smtp_services::require_mode_tx(tx).await?;
+    let service = crate::smtp_services::Service::for_kind(options.kind);
+    if service == crate::smtp_services::Service::Contact {
+        if to != crate::mail_provider::CONTACT_RECIPIENT || reply_to.is_none() {
+            return Err(AppError::Validation(
+                "La consulta requiere buzón corporativo y Reply-To del visitante.".into(),
+            ));
+        }
+    } else if reply_to.is_some() {
+        return Err(AppError::Validation(
+            "El correo automático no admite Reply-To de visitantes.".into(),
+        ));
+    }
+    let (provider, from, from_name, smtp) = if runtime_config::env_true("DEV_EMAIL")
+        && !runtime_config::env_true("APP_PRODUCTION")
+        && options.kind != "contact"
+    {
+        (
+            "isolated",
+            "no-reply@uasspain.com".into(),
+            "UASSpain".into(),
+            None,
+        )
+    } else {
+        let (config, password, circuit) =
+            crate::smtp_services::resolve_tx(state, tx, service).await?;
+        if !config.enabled || !password.as_deref().is_some_and(|value| !value.is_empty()) {
             return Err(AppError::Unavailable);
         }
-        ("postmark", config.from_email, config.from_name, None)
-    } else {
-        let (config, password) = runtime_config::smtp(state).await?;
-        if runtime_config::env_true("DEV_EMAIL")
-            && !runtime_config::env_true("APP_PRODUCTION")
-            && options.kind != "contact"
-        {
-            (
-                "isolated",
-                "no-reply@uasspain.com".into(),
-                "UASSpain".into(),
-                None,
-            )
-        } else {
-            if !config.enabled || password.is_none() {
-                return Err(AppError::Unavailable);
-            }
-            runtime_config::validate_smtp(&config)?;
-            (
-                "smtp",
-                config.from_email.clone(),
-                config.from_name.clone(),
-                Some(config),
-            )
-        }
+        runtime_config::validate_smtp(&config)?;
+        options.validity["smtp_service"] = serde_json::json!(service);
+        options.validity["smtp_shared"] = serde_json::json!(circuit == "smtp");
+        options.validity["smtp_circuit"] = serde_json::json!(circuit);
+        (
+            "smtp",
+            config.from_email.clone(),
+            config.from_name.clone(),
+            Some(config),
+        )
     };
     let body = if options.kind == "contact" {
         body.to_owned()
@@ -166,13 +186,19 @@ async fn claim(state: &AppState, id: Option<Uuid>, test: bool) -> Result<Option<
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let mut tx = pool.begin().await?;
     runtime_config::lock_email_auth_config(&mut tx).await?;
+    if let Err(error) = crate::smtp_services::require_mode_tx(&mut tx).await {
+        if matches!(error, AppError::Validation(_)) {
+            return Ok(None);
+        }
+        return Err(error);
+    }
     // A process may have died after sending. Its durable lease becomes UNKNOWN
     // and must be reconciled; never put it back on the automatic send queue.
-    sqlx::query("UPDATE mail_outbox SET state='UNKNOWN',last_error='worker_result_unknown',lease_until=NULL,updated_at=NOW() WHERE state='PROCESSING' AND lease_until<NOW()")
+    sqlx::query("UPDATE mail_outbox SET state='UNKNOWN',last_error='worker_result_unknown',lease_until=NULL,updated_at=NOW() WHERE provider IN ('smtp','isolated') AND state='PROCESSING' AND lease_until<NOW()")
         .execute(&mut *tx).await?;
-    sqlx::query("UPDATE mail_outbox SET state='EXPIRED',last_error='message_expired',updated_at=NOW() WHERE state IN ('PENDING','RETRY_SCHEDULED') AND expires_at<=NOW()")
+    sqlx::query("UPDATE mail_outbox SET state='EXPIRED',last_error='message_expired',updated_at=NOW() WHERE provider IN ('smtp','isolated') AND state IN ('PENDING','RETRY_SCHEDULED') AND expires_at<=NOW()")
         .execute(&mut *tx).await?;
-    let job=sqlx::query_as::<_,Job>("SELECT id,provider,payload_ciphertext,attempts,expires_at,validity FROM mail_outbox o WHERE state IN ('PENDING','RETRY_SCHEDULED') AND next_attempt_at<=NOW() AND expires_at>NOW() AND ($1::uuid IS NULL OR id=$1) AND ($2 OR message_type<>'provider_test') AND ($2 OR provider='isolated' OR EXISTS(SELECT 1 FROM mail_circuit c WHERE c.provider=o.provider AND (c.state='CLOSED' OR c.opened_at<NOW()-INTERVAL '2 minutes'))) ORDER BY created_at FOR UPDATE OF o SKIP LOCKED LIMIT 1")
+    let job=sqlx::query_as::<_,Job>("SELECT id,provider,payload_ciphertext,attempts,expires_at,validity FROM mail_outbox o WHERE provider IN ('smtp','isolated') AND state IN ('PENDING','RETRY_SCHEDULED') AND next_attempt_at<=NOW() AND expires_at>NOW() AND ($1::uuid IS NULL OR id=$1) AND ($2 OR message_type<>'provider_test') AND ($2 OR provider='isolated' OR EXISTS(SELECT 1 FROM mail_circuit c WHERE c.provider=CASE WHEN o.validity->>'smtp_circuit' IN ('smtp','smtp_contact','smtp_automatic') THEN o.validity->>'smtp_circuit' ELSE o.provider END AND (c.state='CLOSED' OR c.opened_at<NOW()-INTERVAL '2 minutes'))) ORDER BY created_at FOR UPDATE OF o SKIP LOCKED LIMIT 1")
         .bind(id).bind(test).fetch_optional(&mut *tx).await?;
     let Some(mut job) = job else {
         tx.commit().await?;
@@ -181,7 +207,7 @@ async fn claim(state: &AppState, id: Option<Uuid>, test: bool) -> Result<Option<
     if job.provider != "isolated" && !test {
         let circuit: (String, Option<DateTime<Utc>>) =
             sqlx::query_as("SELECT state,opened_at FROM mail_circuit WHERE provider=$1 FOR UPDATE")
-                .bind(&job.provider)
+                .bind(job.circuit())
                 .fetch_one(&mut *tx)
                 .await?;
         if circuit.0 == "OPEN" || circuit.0 == "HALF_OPEN" {
@@ -192,7 +218,7 @@ async fn claim(state: &AppState, id: Option<Uuid>, test: bool) -> Result<Option<
                 tx.commit().await?;
                 return Ok(None);
             }
-            sqlx::query("UPDATE mail_circuit SET state='HALF_OPEN',opened_at=NOW(),checked_at=NOW() WHERE provider=$1").bind(&job.provider).execute(&mut *tx).await?;
+            sqlx::query("UPDATE mail_circuit SET state='HALF_OPEN',opened_at=NOW(),checked_at=NOW() WHERE provider=$1").bind(job.circuit()).execute(&mut *tx).await?;
         }
     }
     sqlx::query("UPDATE mail_outbox SET state='PROCESSING',attempts=attempts+1,lease_until=NOW()+INTERVAL '2 minutes',updated_at=NOW() WHERE id=$1").bind(job.id).execute(&mut *tx).await?;
@@ -201,50 +227,6 @@ async fn claim(state: &AppState, id: Option<Uuid>, test: bool) -> Result<Option<
     Ok(Some(job))
 }
 
-pub async fn move_pending(
-    state: &AppState,
-    tx: &mut Transaction<'_, Postgres>,
-    api: bool,
-    api_config: &crate::mail_config::ApiConfig,
-) -> Result<usize, AppError> {
-    let previous = if api { "smtp" } else { "postmark" };
-    let busy: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM mail_outbox WHERE provider=$1 AND state='PROCESSING')",
-    )
-    .bind(previous)
-    .fetch_one(&mut **tx)
-    .await?;
-    if busy {
-        return Err(AppError::EditConflict);
-    }
-    let pending:Vec<(Uuid,String)>=sqlx::query_as("SELECT id,payload_ciphertext FROM mail_outbox WHERE provider=$1 AND state IN ('PENDING','RETRY_SCHEDULED') AND message_type<>'provider_test' FOR UPDATE")
-        .bind(previous).fetch_all(&mut **tx).await?;
-    let smtp = if api {
-        None
-    } else {
-        Some(runtime_config::smtp(state).await?.0)
-    };
-    for (id, payload) in &pending {
-        let mut envelope: Envelope = serde_json::from_str(&state.cipher.decrypt(payload)?)
-            .map_err(|_| AppError::Internal)?;
-        if api {
-            envelope.from = api_config.from_email.clone();
-            envelope.from_name = api_config.from_name.clone();
-            envelope.smtp = None;
-        } else if let Some(config) = &smtp {
-            envelope.from = config.from_email.clone();
-            envelope.from_name = config.from_name.clone();
-            envelope.smtp = Some(config.clone());
-        }
-        envelope.validate()?;
-        let encrypted = state
-            .cipher
-            .encrypt(&serde_json::to_string(&envelope).map_err(|_| AppError::Internal)?)?;
-        sqlx::query("UPDATE mail_outbox SET provider=$2,payload_ciphertext=$3,updated_at=NOW() WHERE id=$1 AND state IN ('PENDING','RETRY_SCHEDULED')")
-            .bind(id).bind(if api{"postmark"}else{"smtp"}).bind(encrypted).execute(&mut **tx).await?;
-    }
-    Ok(pending.len())
-}
 pub fn retry_delay(attempt: i32, retry_after: Option<u64>, jitter: u64) -> u64 {
     retry_after
         .unwrap_or(5 * (1_u64 << attempt.clamp(0, 8)))
@@ -293,10 +275,10 @@ async fn finish_scoped(
             outcome,
             Outcome::Accepted(_) | Outcome::Failed("recipient_invalid")
         ) {
-            sqlx::query("UPDATE mail_circuit SET state='CLOSED',failures=0,opened_at=NULL,checked_at=NOW(),last_error='' WHERE provider=$1").bind(&job.provider).execute(&mut *tx).await?;
+            sqlx::query("UPDATE mail_circuit SET state='CLOSED',failures=0,opened_at=NULL,checked_at=NOW(),last_error='' WHERE provider=$1").bind(job.circuit()).execute(&mut *tx).await?;
         } else if outcome.affects_circuit() {
             sqlx::query("UPDATE mail_circuit SET failures=failures+1,last_error=$2,checked_at=NOW(),state=CASE WHEN failures+1>=3 OR state='HALF_OPEN' THEN 'OPEN' ELSE state END,opened_at=CASE WHEN failures+1>=3 OR state='HALF_OPEN' THEN NOW() ELSE opened_at END WHERE provider=$1")
-                .bind(&job.provider).bind(outcome.code()).execute(&mut *tx).await?;
+                .bind(job.circuit()).bind(outcome.code()).execute(&mut *tx).await?;
         }
     }
     tx.commit().await?;
@@ -316,23 +298,20 @@ async fn deliver_job(
         .map_err(|_| AppError::Internal)?;
     let start = std::time::Instant::now();
     let outcome = match job.provider.as_str() {
-        "postmark" => {
-            let token = if let Some(value) = candidate_token {
-                Some(value.to_owned())
-            } else {
-                crate::mail_config::token(state, false).await?
-            };
-            if let Some(token) = token {
-                crate::mail_provider::postmark(&envelope, &token, job.id).await
-            } else {
-                Outcome::Failed("configuration_invalid")
-            }
-        }
         "smtp" => {
             let password = if let Some(value) = candidate_token.filter(|v| !v.is_empty()) {
                 Some(value.to_owned())
             } else {
-                runtime_config::smtp(state).await?.1
+                if let Some(name) = job.validity["smtp_service"].as_str() {
+                    crate::smtp_services::password_for_job(
+                        state,
+                        crate::smtp_services::Service::parse(name)?,
+                        job.validity["smtp_shared"] == true,
+                    )
+                    .await?
+                } else {
+                    runtime_config::smtp(state).await?.1
+                }
             };
             if let (Some(config), Some(password)) = (&envelope.smtp, password) {
                 crate::mail_provider::smtp(&envelope, config, &password).await
@@ -434,6 +413,45 @@ mod tests {
                 .unwrap();
         let mut state = AppState::for_test();
         state.pool = Some(pool.clone());
+        let mut mode_tx = pool.begin().await.unwrap();
+        crate::mail_config::put_setting(
+            &mut mode_tx,
+            "mail_mode",
+            serde_json::json!({"api_exclusive":false}),
+        )
+        .await
+        .unwrap();
+        mode_tx.commit().await.unwrap();
+        for status in ["PENDING", "RETRY_SCHEDULED", "PROCESSING"] {
+            let id = Uuid::new_v4();
+            sqlx::query("INSERT INTO mail_outbox(id,message_type,provider,payload_ciphertext,idempotency_key,state,expires_at,lease_until) VALUES($1,'retired_api_fixture','postmark',$2,$3,$4,NOW()-INTERVAL '1 hour',NOW()-INTERVAL '1 hour')")
+                .bind(id).bind(state.cipher.encrypt("preserved retired API payload").unwrap()).bind(id.to_string()).bind(status).execute(&pool).await.unwrap();
+            let before: String =
+                sqlx::query_scalar("SELECT row_to_json(o)::text FROM mail_outbox o WHERE id=$1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert!(claim(&state, Some(id), false).await.unwrap().is_none());
+            assert!(claim(&state, Some(id), true).await.unwrap().is_none());
+            let after: String =
+                sqlx::query_scalar("SELECT row_to_json(o)::text FROM mail_outbox o WHERE id=$1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                before, after,
+                "retired API jobs cannot be claimed, expired, resent or converted"
+            );
+            sqlx::query(
+                "DELETE FROM mail_outbox WHERE id=$1 AND message_type='retired_api_fixture'",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
         for outcome in [
             Outcome::Failed("provider_authentication_failed"),
             Outcome::Failed("provider_unreachable"),
@@ -501,7 +519,16 @@ mod tests {
         );
         let mut state = AppState::for_test();
         state.pool = Some(pool.clone());
-        sqlx::query("UPDATE mail_circuit SET state='CLOSED',failures=0,opened_at=NULL WHERE provider='postmark'").execute(&pool).await.unwrap();
+        let mut mode_tx = pool.begin().await.unwrap();
+        crate::mail_config::put_setting(
+            &mut mode_tx,
+            "mail_mode",
+            serde_json::json!({"api_exclusive":false}),
+        )
+        .await
+        .unwrap();
+        mode_tx.commit().await.unwrap();
+        sqlx::query("UPDATE mail_circuit SET state='CLOSED',failures=0,opened_at=NULL WHERE provider='smtp'").execute(&pool).await.unwrap();
         let payload = state
             .cipher
             .encrypt(
@@ -521,7 +548,7 @@ mod tests {
             let pool = pool.clone();
             let payload = payload.clone();
             async move {
-                sqlx::query("INSERT INTO mail_outbox(id,message_type,provider,payload_ciphertext,idempotency_key,state,expires_at) VALUES($1,'circuit_fixture','postmark',$3,$2,'PENDING',NOW()+INTERVAL '1 hour')")
+                sqlx::query("INSERT INTO mail_outbox(id,message_type,provider,payload_ciphertext,idempotency_key,state,expires_at) VALUES($1,'circuit_fixture','smtp',$3,$2,'PENDING',NOW()+INTERVAL '1 hour')")
                 .bind(id).bind(format!("circuit-fixture-{id}")).bind(payload).execute(&pool).await.unwrap();
             }
         };
@@ -540,7 +567,7 @@ mod tests {
             .await
             .unwrap();
             let circuit: (String, i32) =
-                sqlx::query_as("SELECT state,failures FROM mail_circuit WHERE provider='postmark'")
+                sqlx::query_as("SELECT state,failures FROM mail_circuit WHERE provider='smtp'")
                     .fetch_one(&pool)
                     .await
                     .unwrap();
@@ -560,7 +587,12 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        sqlx::query("UPDATE mail_circuit SET opened_at=NOW()-INTERVAL '121 seconds' WHERE provider='postmark'").execute(&pool).await.unwrap();
+        sqlx::query(
+            "UPDATE mail_circuit SET opened_at=NOW()-INTERVAL '121 seconds' WHERE provider='smtp'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         let probe = claim(&state, Some(probe_id), false).await.unwrap().unwrap();
         let second_id = Uuid::new_v4();
         owned.push(second_id);
@@ -576,7 +608,7 @@ mod tests {
             .await
             .unwrap();
         let circuit: (String, i32) =
-            sqlx::query_as("SELECT state,failures FROM mail_circuit WHERE provider='postmark'")
+            sqlx::query_as("SELECT state,failures FROM mail_circuit WHERE provider='smtp'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
@@ -615,7 +647,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("UPDATE mail_circuit SET state='CLOSED',failures=0,opened_at=NULL,last_error='' WHERE provider='postmark'").execute(&pool).await.unwrap();
+        sqlx::query("UPDATE mail_circuit SET state='CLOSED',failures=0,opened_at=NULL,last_error='' WHERE provider='smtp'").execute(&pool).await.unwrap();
     }
 
     #[test]

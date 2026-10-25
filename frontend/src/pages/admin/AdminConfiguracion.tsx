@@ -71,10 +71,12 @@ export default function AdminConfiguracion() {
         { label: 'Política HSTS configurada', value: sec.hsts ? 'Sí' : 'No', estado: sec.hsts ? 'ok' : 'warning' },
       ],
       smtp: [
-        { label: 'Canal activo', value: status.mail?.api_exclusive ? 'Postmark API' : 'SMTP' },
-        { label: 'Servidor SMTP conservado', value: smtp.host || 'No configurado' },
-        { label: 'Estado del correo', value: status.mail?.channel_ready ? (status.mail.api_exclusive ? 'Canal API disponible' : 'Canal SMTP disponible') : 'Canal guardado no disponible; revise configuración y monitor', estado: status.mail?.channel_ready ? 'ok' : 'warning' },
-        { label: 'Impacto en 2FA', value: 'Activarlo exige comprobar el canal de correo seleccionado.' },
+        { label: 'Transporte de correo', value: status.mail?.api_mode_blocked ? 'Bloqueado: modo API guardado' : 'SMTP' },
+        { label: 'Servidor SMTP', value: smtp.host || 'No configurado' },
+        { label: 'Correo bidireccional', value: status.mail?.services?.contact.active_ready ? 'SMTP aceptado; recepción externa pendiente' : 'Pendiente de configuración o verificación' },
+        { label: 'Correo automático', value: status.mail?.services?.automatic.active_ready ? 'SMTP aceptado; recepción externa pendiente' : 'Pendiente de configuración o verificación' },
+        { label: 'Estado de los servicios', value: status.mail?.channel_ready ? 'Ambos servicios SMTP disponibles' : 'Hay servicios SMTP pendientes; revise cada apartado', estado: status.mail?.channel_ready ? 'ok' : 'warning' },
+        { label: 'Impacto en 2FA', value: 'Activarlo exige verificar el remitente automático no-reply@uasspain.com.' },
       ],
       roles: [
         { label: 'Administradores', value: users.admin == null ? 'N/D' : String(users.admin) },

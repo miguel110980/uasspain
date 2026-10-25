@@ -120,22 +120,22 @@ pub async fn monitor(
     if queue_age.is_some_and(|age| age > 900.0) {
         alerts.push("La cola contiene mensajes pendientes desde hace más de 15 minutos.");
     }
-    if circuits
-        .as_array()
-        .is_some_and(|rows| rows.iter().any(|v| v["state"] == "OPEN"))
-    {
+    if circuits.as_array().is_some_and(|rows| {
+        rows.iter().any(|v| {
+            v["provider"]
+                .as_str()
+                .is_some_and(|p| p.starts_with("smtp"))
+                && v["state"] == "OPEN"
+        })
+    }) {
         alerts.push("Un proveedor tiene el circuito abierto.");
     }
-    if migration.as_ref().is_none_or(|m| {
-        matches!(
-            m["state"].as_str(),
-            Some("BLOCKED" | "FAILED" | "ROLLBACK_REQUIRED")
-        )
-    }) {
-        alerts.push("La migración necesita completar comprobaciones pendientes.");
-    }
+    let observed_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pool)
+        .await?;
+    let api_blocked = crate::smtp_services::api_mode(&state).await?;
     Ok(Json(
-        json!({"channel":if mail_config::api_exclusive(&state).await?{"postmark"}else{"smtp"},"counts":counts,"queue_age_seconds":queue_age,"circuits":circuits,"migration":migration,"transitions":history,"messages":jobs,"alerts":alerts}),
+        json!({"channel":if api_blocked {"BLOCKED_API_MODE"} else {"smtp"},"observed_at":observed_at,"counts":counts,"queue_age_seconds":queue_age,"circuits":circuits,"migration":migration,"transitions":history,"messages":jobs,"alerts":alerts}),
     ))
 }
 pub async fn reconcile(
@@ -143,58 +143,9 @@ pub async fn reconcile(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, AppError> {
-    let actor = mail_config::admin(&state, &headers)?;
-    crate::auth::enforce_login_rate(&headers, &format!("mail-reconcile:{actor}"))?;
-    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let row: Option<(String, String, Option<Uuid>, String)> = sqlx::query_as(
-        "SELECT provider,state,external_id,payload_ciphertext FROM mail_outbox WHERE id=$1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
-    let (provider, status, external, payload) = row.ok_or(AppError::NotFound)?;
-    if provider != "postmark" || !matches!(status.as_str(), "UNKNOWN" | "ACCEPTED" | "DELIVERED") {
-        return Err(AppError::Validation(
-            "Esta comprobación requiere un envío Postmark aceptado o con resultado desconocido."
-                .into(),
-        ));
-    }
-    let token = mail_config::token(&state, false)
-        .await?
-        .ok_or(AppError::Unavailable)?;
-    let envelope: crate::mail_provider::Envelope =
-        serde_json::from_str(&state.cipher.decrypt(&payload)?).map_err(|_| AppError::Internal)?;
-    let external = if let Some(external) = external {
-        Some(external)
-    } else {
-        crate::mail_provider::find_message(&token, id, &envelope).await?
-    };
-    let Some(external) = external else {
-        return Ok(Json(
-            json!({"id":id,"state":"UNKNOWN","detail":"El proveedor no aporta evidencia suficiente. No se ha reenviado el mensaje."}),
-        ));
-    };
-    let evidence = crate::mail_provider::delivery_evidence(&token, external, &envelope.to).await?;
-    let new_state = match evidence.as_ref().map(|(kind, _)| kind.as_str()) {
-        Some("Delivered") => "DELIVERED",
-        Some("Bounced") => "FAILED",
-        _ => "ACCEPTED",
-    };
-    let safe_evidence=evidence.map(|(kind,at)|json!({"source":"postmark_authenticated_api","event":kind,"received_at":at,"message_id":external}));
-    let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE mail_outbox SET state=$2,external_id=$3,delivery_evidence=$4,last_error=CASE WHEN $2='FAILED' THEN 'provider_bounced' ELSE '' END,updated_at=NOW() WHERE id=$1 AND state IN ('UNKNOWN','ACCEPTED','DELIVERED')")
-        .bind(id).bind(new_state).bind(external).bind(safe_evidence).execute(&mut *tx).await?;
-    mail_config::audit_tx(
-        &mut tx,
-        actor,
-        "mail_result_reconciled",
-        json!({"outbox_id":id,"state":new_state}),
-    )
-    .await?;
-    tx.commit().await?;
-    Ok(Json(
-        json!({"id":id,"state":new_state,"detail":"Estado comprobado en la API del proveedor. La recepción y Responder en el buzón requieren comprobación independiente."}),
-    ))
+    mail_config::admin(&state, &headers)?;
+    let _ = id;
+    Err(mail_config::api_disabled())
 }
 
 #[cfg(test)]

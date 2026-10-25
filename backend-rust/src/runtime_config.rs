@@ -60,7 +60,7 @@ pub(crate) fn smtp_test_valid(config: &SmtpConfig, fresh: bool) -> bool {
             age >= chrono::Duration::zero() && (!fresh || age < chrono::Duration::hours(24))
         })
 }
-async fn smtp_draft(
+pub(crate) async fn smtp_draft(
     state: &AppState,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<Option<(SmtpConfig, Option<String>)>, AppError> {
@@ -83,7 +83,7 @@ async fn smtp_draft(
         encrypted.map(|v| state.cipher.decrypt(&v)).transpose()?,
     )))
 }
-async fn save_smtp_secret(
+pub(crate) async fn save_smtp_secret(
     state: &AppState,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     key: &str,
@@ -126,8 +126,7 @@ pub fn valid_client_id(id: &str) -> bool {
         && id.len() <= 256
 }
 pub fn validate_smtp(config: &SmtpConfig) -> Result<(), AppError> {
-    let email_valid =
-        |email: &str| email.len() <= 254 && email.parse::<lettre::message::Mailbox>().is_ok();
+    let email_valid = |email: &str| crate::mail_provider::address(email).is_ok();
     let host_valid = config.host.len() <= 253
         && (config.host.parse::<std::net::IpAddr>().is_ok()
             || config.host.trim_end_matches('.').split('.').all(|label| {
@@ -142,9 +141,11 @@ pub fn validate_smtp(config: &SmtpConfig) -> Result<(), AppError> {
     if (!config.host.is_empty() && !host_valid)
         || (!config.security.is_empty() && !matches!(config.security.as_str(), "STARTTLS" | "TLS"))
         || config.username.len() > 254
+        || config.username.chars().any(char::is_control)
         || config.provider.len() > 120
+        || config.provider.chars().any(char::is_control)
         || config.from_name.len() > 120
-        || config.from_name.contains(['\r', '\n'])
+        || config.from_name.chars().any(char::is_control)
         || config.timeout_seconds > 60
         || (!config.from_email.is_empty() && !email_valid(&config.from_email))
         || (!config.contact_recipient.is_empty() && !email_valid(&config.contact_recipient))
@@ -154,6 +155,7 @@ pub fn validate_smtp(config: &SmtpConfig) -> Result<(), AppError> {
                 || config.username.is_empty()
                 || config.security.is_empty()
                 || config.from_email.is_empty()
+                || config.contact_recipient.is_empty()
                 || config.timeout_seconds == 0))
     {
         return Err(AppError::Validation(
@@ -213,19 +215,20 @@ pub async fn require_email_2fa_ready(
     state: &AppState,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), AppError> {
-    let mode: Option<serde_json::Value> =
-        sqlx::query_scalar("SELECT value FROM core_systemsetting WHERE key='mail_mode'")
-            .fetch_optional(&mut **tx)
+    crate::smtp_services::require_mode_tx(tx).await?;
+    let (config, password) = if env_true("DEV_EMAIL") && !env_true("APP_PRODUCTION") {
+        smtp_in_transaction(state, tx).await?
+    } else {
+        {
+            let (c, p, _) = crate::smtp_services::resolve_tx(
+                state,
+                tx,
+                crate::smtp_services::Service::Automatic,
+            )
             .await?;
-    if mode.is_some_and(|value| value["api_exclusive"] == true) {
-        if !crate::mail_config::active_api_ready(state).await? {
-            return Err(AppError::Validation(
-                "Verifique la API de correo antes de activar 2FA.".into(),
-            ));
+            (c, p)
         }
-        return Ok(());
-    }
-    let (config, password) = smtp_in_transaction(state, tx).await?;
+    };
     validate_email_2fa(
         &config,
         password.as_deref(),
@@ -270,7 +273,7 @@ pub async fn smtp(state: &AppState) -> Result<(SmtpConfig, Option<String>), AppE
     Ok(smtp_from_env())
 }
 
-async fn smtp_in_transaction(
+pub(crate) async fn smtp_in_transaction(
     state: &AppState,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(SmtpConfig, Option<String>), AppError> {
@@ -401,7 +404,8 @@ pub async fn smtp_get(
     admin(&state, &headers)?;
     let (config, password) = smtp(&state).await?;
     let mut view = smtp_view(&config, password.as_deref());
-    if !crate::mail_config::api_exclusive(&state).await? {
+    let api_blocked = crate::smtp_services::api_mode(&state).await?;
+    {
         let mut tx = state
             .pool
             .as_ref()
@@ -416,6 +420,7 @@ pub async fn smtp_get(
                 smtp_view(&config, password.as_deref())["configured"].clone();
         }
     }
+    view["api_mode_blocked"] = json!(api_blocked);
     Ok(Json(view))
 }
 pub async fn smtp_put(
@@ -424,9 +429,6 @@ pub async fn smtp_put(
     Json(mut input): Json<SmtpWrite>,
 ) -> Result<Json<Value>, AppError> {
     let profile = admin(&state, &headers)?;
-    if crate::mail_config::api_exclusive(&state).await? {
-        return Err(AppError::Forbidden);
-    }
     validate_smtp(&input.config)?;
     if input.password.len() > 4096 || input.password.starts_with("v1:") {
         return Err(AppError::Validation("Contraseña SMTP no válida.".into()));
@@ -434,13 +436,7 @@ pub async fn smtp_put(
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let mut tx = pool.begin().await?;
     lock_email_auth_config(&mut tx).await?;
-    let mode: Option<Value> =
-        sqlx::query_scalar("SELECT value FROM core_systemsetting WHERE key='mail_mode'")
-            .fetch_optional(&mut *tx)
-            .await?;
-    if mode.is_some_and(|v| v["api_exclusive"] == true) {
-        return Err(AppError::Forbidden);
-    }
+    crate::smtp_services::require_mode_tx(&mut tx).await?;
     let (existing, existing_password) = smtp_in_transaction(&state, &mut tx).await?;
     let draft = smtp_draft(&state, &mut tx).await?;
     if input.password.is_empty() {
@@ -462,6 +458,8 @@ pub async fn smtp_put(
     let two_factor_enabled: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM core_systemsetting WHERE key='auth_policy' AND value->>'enabled'='true') OR EXISTS(SELECT 1 FROM accounts_userprofile WHERE login_2fa_enabled_override IS TRUE)",
     ).fetch_one(&mut *tx).await?;
+    let two_factor_enabled =
+        two_factor_enabled && crate::smtp_services::automatic_shared_tx(&state, &mut tx).await?;
     let operating_smtp = existing.enabled
         && validate_smtp(&existing).is_ok()
         && existing_password
@@ -507,6 +505,18 @@ pub async fn smtp_put(
         }
     }
     if two_factor_enabled {
+        if changed
+            && !crate::smtp_services::candidate_ready_tx(
+                &state,
+                &mut tx,
+                crate::smtp_services::Service::Automatic,
+                &input.config,
+                Some(&input.password),
+            )
+            .await?
+        {
+            return Err(AppError::Validation("Verifique el remitente automático con el transporte propuesto antes de sustituir el canal de 2FA.".into()));
+        }
         validate_email_2fa_proof(
             &input.config,
             Some(input.password.as_str()),
@@ -516,6 +526,16 @@ pub async fn smtp_put(
         )?;
     }
     if changed {
+        if !crate::smtp_services::shared_change_allowed_tx(
+            &state,
+            &mut tx,
+            &input.config,
+            Some(&input.password),
+        )
+        .await?
+        {
+            return Err(AppError::Validation("Verifique cada remitente operativo con el transporte compartido propuesto antes de aplicarlo.".into()));
+        }
         let busy:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mail_outbox WHERE provider='smtp' AND state IN ('PENDING','RETRY_SCHEDULED','PROCESSING'))").fetch_one(&mut *tx).await?;
         if busy {
             return Err(AppError::Validation("La cola SMTP tiene envíos pendientes o en curso. Se conserva el transporte operativo; espere a que finalicen antes de aplicar cambios de conexión o credenciales.".into()));
@@ -541,167 +561,94 @@ pub async fn smtp_put(
     audit(&state, profile, "smtp_config_updated").await?;
     smtp_get(State(state), headers).await
 }
-#[derive(Deserialize)]
+
+pub async fn smtp_validate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<SmtpWrite>,
+) -> Result<Json<Value>, AppError> {
+    admin(&state, &headers)?;
+    validate_smtp(&input.config)?;
+    if input.password.len() > 4096 || input.password.starts_with("v1:") {
+        return Err(AppError::Validation("Contraseña SMTP no válida.".into()));
+    }
+    let mut password = (!input.password.is_empty()).then_some(input.password);
+    if password.is_none() {
+        if let Some(pool) = &state.pool {
+            let mut tx = pool.begin().await?;
+            lock_email_auth_config(&mut tx).await?;
+            password = smtp_draft(&state, &mut tx)
+                .await?
+                .and_then(|(_, value)| value);
+            if password.is_none() {
+                password = smtp_in_transaction(&state, &mut tx).await?.1;
+            }
+            tx.rollback().await?;
+        } else {
+            password = smtp(&state).await?.1;
+        }
+    }
+    let view = smtp_view(&input.config, password.as_deref());
+    Ok(Json(json!({
+        "valid":true, "configured":view["configured"],
+        "password_configured":view["password_configured"],
+        "detail":if view["configured"] == true {
+            "Formato SMTP válido y credencial disponible. No se ha conectado al servidor, enviado correo ni confirmado la operatividad."
+        } else {
+            "Formato SMTP válido; faltan habilitación o credenciales para utilizarlo. No se ha conectado al servidor ni enviado correo."
+        }
+    })))
+}
+
+#[derive(Default, Deserialize)]
 pub struct SmtpTest {
+    #[serde(default)]
+    pub request_id: Option<Uuid>,
     pub recipient: String,
     #[serde(default)]
-    pub confirm_rollback: bool,
+    pub confirm_authorized_recipient: bool,
+    #[serde(default)]
+    pub service: String,
+    #[serde(default)]
+    pub revision: String,
 }
 pub async fn smtp_test(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(input): Json<SmtpTest>,
 ) -> Result<Json<Value>, AppError> {
-    let profile = admin(&state, &headers)?;
-    if crate::mail_config::api_exclusive(&state).await? && !input.confirm_rollback {
-        return Err(AppError::Forbidden);
+    admin(&state, &headers)?;
+    if input.service.is_empty() {
+        return Err(AppError::Validation(
+            "Seleccione el servicio SMTP y vuelva a autorizar la prueba.".into(),
+        ));
     }
-    crate::auth::enforce_login_rate(&headers, &format!("smtp-test:{profile}"))?;
-    let mut tx = state
-        .pool
-        .as_ref()
-        .ok_or(AppError::Unavailable)?
-        .begin()
-        .await?;
-    lock_email_auth_config(&mut tx).await?;
-    let api_active = crate::mail_config::api_exclusive(&state).await?;
-    if api_active && !input.confirm_rollback {
-        return Err(AppError::Forbidden);
-    }
-    let pending = if !api_active {
-        smtp_draft(&state, &mut tx).await?
-    } else {
-        None
-    };
-    let testing_draft = pending.is_some();
-    let (config, password) = if let Some(draft) = pending {
-        draft
-    } else {
-        smtp_in_transaction(&state, &mut tx).await?
-    };
-    if !config.enabled || password.is_none() {
-        return Err(AppError::Unavailable);
-    }
-    let envelope = crate::mail_provider::Envelope {
-        from: config.from_email.clone(),
-        from_name: config.from_name.clone(),
-        to: input.recipient,
-        reply_to: None,
-        subject: "Prueba de correo UASSpain".into(),
-        body: "Prueba autorizada del canal SMTP.".into(),
-        smtp: Some(config.clone()),
-    };
-    let id = crate::mail_queue::enqueue_explicit(
-        &state,
-        &mut tx,
-        "smtp",
-        &envelope,
-        crate::mail_queue::QueueOptions {
-            kind: "provider_test",
-            ttl: chrono::Duration::minutes(5),
-            validity: json!({}),
-            idempotency: None,
-        },
+    crate::smtp_services::test(
+        State(state),
+        headers,
+        axum::extract::Path(input.service),
+        Json(crate::smtp_services::Test {
+            request_id: input.request_id,
+            recipient: input.recipient,
+            revision: input.revision,
+            confirm_authorized_recipient: input.confirm_authorized_recipient,
+        }),
     )
-    .await?;
-    tx.commit().await?;
-    let result = if testing_draft {
-        crate::mail_queue::process_smtp_candidate_test(
-            &state,
-            id,
-            password.as_deref().unwrap_or_default(),
-        )
-        .await?
-    } else {
-        crate::mail_queue::process_test(&state, id, password.as_deref().unwrap_or_default()).await?
-    };
-    let success = matches!(result, crate::mail_provider::Outcome::Accepted(_));
-    let mut tx = state
-        .pool
-        .as_ref()
-        .ok_or(AppError::Unavailable)?
-        .begin()
-        .await?;
-    lock_email_auth_config(&mut tx).await?;
-    let (latest, latest_password) = if testing_draft {
-        smtp_draft(&state, &mut tx)
-            .await?
-            .ok_or(AppError::EditConflict)?
-    } else {
-        smtp_in_transaction(&state, &mut tx).await?
-    };
-    let same_password: bool = subtle::ConstantTimeEq::ct_eq(
-        latest_password.as_deref().unwrap_or_default().as_bytes(),
-        password.as_deref().unwrap_or_default().as_bytes(),
+    .await
+}
+pub(crate) async fn store_smtp_draft(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    config: SmtpConfig,
+) -> Result<(), AppError> {
+    crate::mail_config::put_setting(
+        tx,
+        "smtp_draft",
+        json!(SmtpDraft {
+            config,
+            pending: true
+        }),
     )
-    .into();
-    if json!(latest) != json!(config) || !same_password {
-        return Err(AppError::EditConflict);
-    }
-    // Testing can adopt environment configuration. Preserve its credential in
-    // the same transaction; a saved setting must never lose its tested secret.
-    let secret_key = if testing_draft {
-        "smtp_password_candidate"
-    } else {
-        "smtp_password"
-    };
-    let stored: Option<String> =
-        sqlx::query_scalar("SELECT ciphertext FROM core_systemsecret WHERE key=$1")
-            .bind(secret_key)
-            .fetch_optional(&mut *tx)
-            .await?;
-    if let Some(stored) = stored {
-        let existing = state.cipher.decrypt(&stored)?;
-        let unchanged: bool = subtle::ConstantTimeEq::ct_eq(
-            existing.as_bytes(),
-            password.as_deref().unwrap_or_default().as_bytes(),
-        )
-        .into();
-        if !unchanged {
-            return Err(AppError::EditConflict);
-        }
-    } else if let Some(password) = &password {
-        sqlx::query("INSERT INTO core_systemsecret(id,key,ciphertext) VALUES($1,$2,$3)")
-            .bind(Uuid::new_v4())
-            .bind(secret_key)
-            .bind(state.cipher.encrypt(password)?)
-            .execute(&mut *tx)
-            .await?;
-    }
-    let mut config = config;
-    config.last_test_ok = Some(success);
-    config.last_test_at = Some(chrono::Utc::now());
-    if testing_draft {
-        crate::mail_config::put_setting(
-            &mut tx,
-            "smtp_draft",
-            json!(SmtpDraft {
-                config,
-                pending: true
-            }),
-        )
-        .await?;
-    } else {
-        crate::mail_config::put_setting(&mut tx, "smtp", json!(config)).await?;
-    }
-    crate::mail_config::audit_tx(
-        &mut tx,
-        profile,
-        if success {
-            "smtp_test_success"
-        } else {
-            "smtp_test_failed"
-        },
-        json!({"outbox_id":id}),
-    )
-    .await?;
-    tx.commit().await?;
-    if !success {
-        return Err(AppError::Unavailable);
-    }
-    Ok(Json(
-        json!({"ok":true,"state":"ACCEPTED","message_id":id,"detail":"El servidor SMTP ha aceptado la prueba. La recepcion final requiere comprobacion del buzon."}),
-    ))
+    .await
 }
 
 pub fn google_view(config: GoogleConfig) -> Value {
@@ -762,6 +709,7 @@ mod tests {
             security: "STARTTLS".into(),
             username: "fixture@example.invalid".into(),
             from_email: "fixture@example.invalid".into(),
+            contact_recipient: "contact@example.invalid".into(),
             timeout_seconds: 5,
             ..Default::default()
         }
@@ -862,6 +810,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-uasspain-verified-session", jwt.parse().unwrap());
         let mut active = valid_smtp_fixture();
+        active.from_email = "no-reply@uasspain.com".into();
+        active.contact_recipient = "info@uasspain.com".into();
         active.last_test_ok = Some(true);
         active.last_test_at = Some(chrono::Utc::now() - chrono::Duration::days(2));
         let mut tx = pool.begin().await.unwrap();
@@ -983,6 +933,13 @@ mod tests {
         .await
         .unwrap();
         tx.commit().await.unwrap();
+        crate::smtp_services::fixture_proof(
+            &state,
+            crate::smtp_services::Service::Automatic,
+            &candidate,
+            "new-fixture-password",
+        )
+        .await;
         let view = smtp_put(
             State(state.clone()),
             headers.clone(),
@@ -1007,17 +964,9 @@ mod tests {
             setting(&state, "auth_policy").await.unwrap().unwrap()["enabled"],
             true
         );
-        let api = crate::mail_config::ApiConfig {
-            sender_panel_confirmed: false,
-            verified_at: Some(chrono::Utc::now() - chrono::Duration::days(2)),
-            verification_message_id: Some(Uuid::new_v4()),
-            ..Default::default()
-        };
+        let api = json!({"provider":"postmark","from_email":"no-reply@uasspain.com","sender_panel_confirmed":true});
         let mut tx = pool.begin().await.unwrap();
-        crate::mail_config::put_setting(&mut tx, "mail_api", json!(api))
-            .await
-            .unwrap();
-        crate::mail_config::put_setting(&mut tx, "mail_api_draft", json!(api))
+        crate::mail_config::put_setting(&mut tx, "mail_api", api.clone())
             .await
             .unwrap();
         crate::mail_config::put_setting(&mut tx, "mail_mode", json!({"api_exclusive":true}))
@@ -1032,27 +981,27 @@ mod tests {
         .await
         .unwrap();
         tx.commit().await.unwrap();
+        let legacy_secret: String = sqlx::query_scalar(
+            "SELECT ciphertext FROM core_systemsecret WHERE key='postmark_server_token'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         let mut tx = pool.begin().await.unwrap();
-        require_email_2fa_ready(&state, &mut tx).await.unwrap();
+        assert!(require_email_2fa_ready(&state, &mut tx).await.is_err());
         tx.rollback().await.unwrap();
         let status = crate::mail_config::status(&state).await.unwrap();
-        assert_eq!(status["sender_status"], "UNCONFIRMED");
-        assert_eq!(status["provider_verified"], true);
-        assert_eq!(status["activation_ready"], false);
-        assert_eq!(status["channel_ready"], true);
+        assert_eq!(status["provider"], "blocked_api_mode");
+        assert_eq!(status["api_exclusive"], true);
+        assert_eq!(status["channel_ready"], false);
         let general = crate::system_status::status(State(state.clone()), headers.clone())
             .await
             .unwrap()
             .0;
-        assert_eq!(general.mail["sender_status"], status["sender_status"]);
         assert_eq!(general.mail["channel_ready"], status["channel_ready"]);
-        sqlx::query("UPDATE mail_circuit SET state='OPEN',failures=17,opened_at=NOW() WHERE provider='postmark'").execute(&pool).await.unwrap();
+        // A preserved API selection blocks SMTP; it must never silently switch.
         let mut tx = pool.begin().await.unwrap();
-        assert!(require_email_2fa_ready(&state, &mut tx).await.is_err());
-        tx.rollback().await.unwrap();
-        // Queueing with API selected never silently falls back to SMTP.
-        let mut tx = pool.begin().await.unwrap();
-        let id = crate::mail_queue::enqueue(
+        let blocked = crate::mail_queue::enqueue(
             &state,
             &mut tx,
             crate::mail_queue::MailRequest {
@@ -1061,69 +1010,88 @@ mod tests {
                 subject: "Fixture only",
                 body: "Never delivered",
                 options: crate::mail_queue::QueueOptions {
-                    kind: "fixture",
+                    kind: "notification",
                     ttl: chrono::Duration::minutes(1),
                     validity: json!({}),
                     idempotency: None,
                 },
             },
         )
+        .await;
+        assert!(matches!(blocked, Err(AppError::Validation(_))));
+        tx.rollback().await.unwrap();
+        let before: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM core_systemsetting),(SELECT count(*) FROM mail_outbox)",
+        )
+        .fetch_one(&pool)
         .await
         .unwrap();
-        let provider: String = sqlx::query_scalar("SELECT provider FROM mail_outbox WHERE id=$1")
-            .bind(id)
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-        assert_eq!(provider, "postmark");
-        tx.rollback().await.unwrap();
-        let mut tx = pool.begin().await.unwrap();
-        crate::mail_config::put_setting(&mut tx, "mail_mode", json!({"api_exclusive":false}))
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-        let mut old = api;
-        old.sender_panel_confirmed = true;
+        let validated = smtp_validate(
+            State(state.clone()),
+            headers.clone(),
+            Json(SmtpWrite {
+                config: smtp(&state).await.unwrap().0,
+                password: String::new(),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(validated["valid"], true);
+        assert_eq!(validated["password_configured"], true);
+        assert!(validated.get("password").is_none());
+        let denied = smtp_test(
+            State(state.clone()),
+            headers.clone(),
+            Json(SmtpTest {
+                recipient: "fixture@example.invalid".into(),
+                confirm_authorized_recipient: false,
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert!(matches!(denied, Err(AppError::Validation(_))));
         assert!(
             crate::mail_config::put(
                 State(state.clone()),
-                headers,
-                Json(crate::mail_config::Write {
-                    api_exclusive: true,
-                    config: old.clone(),
-                    api_key: String::new(),
-                    confirm_rollback: false
-                })
+                headers.clone(),
+                Json(json!({"api_exclusive":true,"api_key":"never-persist-this"}))
             )
             .await
             .is_err()
         );
-        assert!(!crate::mail_config::api_exclusive(&state).await.unwrap());
-        old.verified_at = Some(chrono::Utc::now() - chrono::Duration::minutes(1));
-        let mut tx = pool.begin().await.unwrap();
-        crate::mail_config::put_setting(&mut tx, "mail_api", json!(old))
-            .await
-            .unwrap();
-        crate::mail_config::put_setting(&mut tx, "mail_api_draft", json!(old))
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-        let mut headers = HeaderMap::new();
-        headers.insert("x-uasspain-verified-session", jwt.parse().unwrap());
-        let rejected = crate::mail_config::put(
-            State(state.clone()),
-            headers,
-            Json(crate::mail_config::Write {
-                api_exclusive: true,
-                config: old,
-                api_key: String::new(),
-                confirm_rollback: false,
-            }),
-        )
-        .await;
         assert!(
-            matches!(rejected,Err(AppError::Validation(message)) if message.starts_with("Guarde la configuración API")),
-            "even a fresh proof must not activate a known blocked provider"
+            crate::mail_config::test(
+                State(state.clone()),
+                headers.clone(),
+                Json(json!({"dry_run":true}))
+            )
+            .await
+            .is_err()
+        );
+        let after: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM core_systemsetting),(SELECT count(*) FROM mail_outbox)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            before, after,
+            "validation and unauthorized/retired tests have no persistence effects"
+        );
+        assert_eq!(setting(&state, "mail_api").await.unwrap().unwrap(), api);
+        assert_eq!(
+            setting(&state, "mail_mode").await.unwrap().unwrap()["api_exclusive"],
+            true
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT ciphertext FROM core_systemsecret WHERE key='postmark_server_token'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            legacy_secret
         );
         let audit: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM core_auditlog WHERE action='preserved_fixture_audit'",
@@ -1243,6 +1211,99 @@ mod tests {
             config.host = host.into();
             assert!(validate_smtp(&config).is_ok());
         }
+    }
+    #[test]
+    fn smtp_rejects_header_injection_and_requires_administrative_contact_destination() {
+        let config = valid_smtp_fixture();
+        for field in [
+            "from_email",
+            "from_name",
+            "contact_recipient",
+            "username",
+            "provider",
+        ] {
+            let mut value = json!(config);
+            value[field] = json!("attacker@example.invalid\r\nBcc: victim@example.invalid");
+            assert!(
+                validate_smtp(&serde_json::from_value(value).unwrap()).is_err(),
+                "{field}"
+            );
+        }
+        let mut missing_contact = config;
+        missing_contact.contact_recipient.clear();
+        assert!(validate_smtp(&missing_contact).is_err());
+    }
+    #[tokio::test]
+    async fn smtp_validation_is_local_secret_free_and_admin_only() {
+        let state = Arc::new(AppState::for_test());
+        let headers = |role: &str| {
+            let now = chrono::Utc::now().timestamp() as usize;
+            let claims = crate::auth::Claims {
+                user_id: 0,
+                profile_id: Uuid::new_v4(),
+                role: role.into(),
+                token_type: "access".into(),
+                exp: now + 3600,
+                iat: now,
+                jti: Uuid::new_v4(),
+                session_key: String::new(),
+            };
+            let jwt = jsonwebtoken::encode(
+                &jsonwebtoken::Header::default(),
+                &claims,
+                &jsonwebtoken::EncodingKey::from_secret(
+                    b"test-only-not-for-production-test-only-not-for-production",
+                ),
+            )
+            .unwrap();
+            let mut result = HeaderMap::new();
+            result.insert("x-uasspain-verified-session", jwt.parse().unwrap());
+            result
+        };
+        for request_headers in [HeaderMap::new(), headers("instructor"), headers("alumno")] {
+            assert!(
+                smtp_validate(
+                    State(state.clone()),
+                    request_headers,
+                    Json(SmtpWrite {
+                        config: valid_smtp_fixture(),
+                        password: "local-fixture-secret".into()
+                    })
+                )
+                .await
+                .is_err()
+            );
+        }
+        let view = smtp_validate(
+            State(state.clone()),
+            headers("admin"),
+            Json(SmtpWrite {
+                config: valid_smtp_fixture(),
+                password: "local-fixture-secret".into(),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(view["configured"], true);
+        assert_eq!(view["valid"], true);
+        assert!(!view.to_string().contains("local-fixture-secret"));
+        assert!(view.get("password").is_none());
+        // No pool exists and the hostname cannot resolve externally: successful
+        // validation demonstrates that it neither writes nor opens SMTP.
+        assert!(matches!(
+            smtp_test(
+                State(state),
+                headers("admin"),
+                Json(SmtpTest {
+                    recipient: "fixture@example.invalid".into(),
+                    confirm_authorized_recipient: false,
+                    ..Default::default()
+                })
+            )
+            .await,
+            Err(AppError::Validation(_))
+        ));
     }
     #[tokio::test]
     async fn no_pool_is_not_connected() {

@@ -39,6 +39,7 @@ pub mod security;
 pub mod seo;
 mod service_images;
 pub mod services;
+pub mod smtp_services;
 pub mod student_directory;
 pub mod system_status;
 pub mod uploads;

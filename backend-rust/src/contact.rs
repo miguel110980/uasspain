@@ -8,7 +8,7 @@ use axum::{
 };
 use lettre::Address;
 #[cfg(test)]
-use lettre::{Message, message::Mailbox};
+use lettre::Message;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -32,9 +32,8 @@ pub fn mailbox() -> Result<String, AppError> {
     }
     Ok(email)
 }
-pub async fn public_config() -> Result<Json<Value>, AppError> {
-    let email = mailbox()?;
-    Ok(Json(json!({"email":email})))
+pub async fn public_config(State(_state): State<Arc<AppState>>) -> Result<Json<Value>, AppError> {
+    Ok(Json(json!({"email":mailbox()?})))
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,12 +97,6 @@ impl ContactWrite {
             body: self.text_body(),
             smtp: None,
         }
-    }
-    #[cfg(test)]
-    fn postmark_payload(&self, from: &str, recipient: &str) -> Result<Value, AppError> {
-        self.validate()?;
-        self.envelope(from, recipient)
-            .postmark_payload(uuid::Uuid::new_v4())
     }
     fn validate(&self) -> Result<(), AppError> {
         address(&self.email)?;
@@ -202,15 +195,16 @@ pub async fn send(
             ));
         }
     }
-    // Contact enquiries always reach the corporate inbox. Neither request
-    // fields nor legacy transport configuration may redirect personal data.
-    let recipient = mailbox()?;
     let mut tx = state
         .pool
         .as_ref()
         .ok_or(AppError::Unavailable)?
         .begin()
         .await?;
+    // Select the saved administrative destination under the same lock as queue
+    // creation, so an SMTP update cannot race sender and recipient selection.
+    crate::runtime_config::lock_email_auth_config(&mut tx).await?;
+    let recipient = mailbox()?;
     let request_id = input.request_id.unwrap_or_else(uuid::Uuid::new_v4);
     if request_id.is_nil() {
         return Err(AppError::Validation(
@@ -287,32 +281,6 @@ fn rejected_contact(id: uuid::Uuid, state: &str) -> (StatusCode, Json<Value>) {
 }
 
 #[cfg(test)]
-async fn postmark_request(endpoint: &str, token: &str, payload: &Value) -> Result<(), AppError> {
-    let from: Mailbox = payload["From"]
-        .as_str()
-        .ok_or(AppError::Unavailable)?
-        .parse()
-        .map_err(|_| AppError::Unavailable)?;
-    let envelope = crate::mail_provider::Envelope {
-        from: from.email.to_string(),
-        from_name: from.name.unwrap_or_default(),
-        to: payload["To"].as_str().unwrap_or_default().into(),
-        reply_to: payload["ReplyTo"].as_str().map(str::to_owned),
-        subject: payload["Subject"].as_str().unwrap_or_default().into(),
-        body: payload["TextBody"].as_str().unwrap_or_default().into(),
-        smtp: None,
-    };
-    if matches!(
-        crate::mail_provider::postmark_at(endpoint, &envelope, token, uuid::Uuid::new_v4()).await,
-        crate::mail_provider::Outcome::Accepted(Some(_))
-    ) {
-        Ok(())
-    } else {
-        Err(AppError::Unavailable)
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     fn sample() -> ContactWrite {
@@ -381,56 +349,5 @@ mod tests {
         assert!(rate.check("A", now).is_err());
         assert!(rate.check("B", now).is_ok());
         assert!(rate.check("A", now + Duration::from_secs(60)).is_ok());
-    }
-
-    #[test]
-    fn postmark_from_is_corporate_and_reply_to_is_visitor() {
-        let input = sample();
-        let payload = input
-            .postmark_payload("no-reply@uasspain.com", "info@uasspain.com")
-            .unwrap();
-        assert!(
-            payload["From"]
-                .as_str()
-                .unwrap()
-                .contains("no-reply@uasspain.com")
-        );
-        assert_eq!(payload["ReplyTo"], input.email);
-        assert_eq!(payload["TextBody"], input.text_body());
-        assert!(
-            input
-                .postmark_payload(&input.email, "info@uasspain.com")
-                .is_err()
-        );
-        assert!(!payload.to_string().contains("Token"));
-    }
-
-    #[tokio::test]
-    async fn postmark_http_success_requires_real_acceptance() {
-        use axum::{Router, routing::post};
-        let app = Router::new()
-            .route("/ok", post(|| async { Json(json!({"ErrorCode":0,"MessageID":"93bb2e8a-239b-4b4a-8534-833995cc3213","To":"info@uasspain.com"})) }))
-            .route("/rejected", post(|| async { Json(json!({"ErrorCode":300,"MessageID":"93bb2e8a-239b-4b4a-8534-833995cc3213","To":"info@uasspain.com"})) }))
-            .route("/fake", post(|| async { Json(json!({"ErrorCode":0,"MessageID":"00000000-0000-0000-0000-000000000000","To":"info@uasspain.com"})) }))
-            .route("/redirect", post(|| async { axum::response::Redirect::temporary("/ok") }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let payload = sample()
-            .postmark_payload("no-reply@uasspain.com", "info@uasspain.com")
-            .unwrap();
-        assert!(
-            postmark_request(&format!("{origin}/ok"), "isolated-fixture", &payload)
-                .await
-                .is_ok()
-        );
-        for path in ["rejected", "fake", "redirect"] {
-            assert!(
-                postmark_request(&format!("{origin}/{path}"), "isolated-fixture", &payload)
-                    .await
-                    .is_err()
-            );
-        }
-        server.abort();
     }
 }

@@ -2,121 +2,19 @@ use crate::{
     AppState,
     auth::{authenticate, require_role},
     error::AppError,
-    runtime_config,
 };
 use axum::{Json, extract::State, http::HeaderMap};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
-#[serde(default)]
-pub struct ApiConfig {
-    pub provider: String,
-    pub from_email: String,
-    pub from_name: String,
-    pub contact_recipient: String,
-    pub sender_panel_confirmed: bool,
-    pub verified_at: Option<DateTime<Utc>>,
-    pub verification_message_id: Option<Uuid>,
-}
-impl Default for ApiConfig {
-    fn default() -> Self {
-        Self {
-            provider: "postmark".into(),
-            from_email: "no-reply@uasspain.com".into(),
-            from_name: "UASSpain".into(),
-            contact_recipient: "info@uasspain.com".into(),
-            sender_panel_confirmed: false,
-            verified_at: None,
-            verification_message_id: None,
-        }
-    }
-}
-impl ApiConfig {
-    pub fn validate(&self) -> Result<(), AppError> {
-        if self.provider != "postmark"
-            || self.from_email != crate::mail_provider::AUTOMATED_FROM
-            || self.from_name != crate::mail_provider::FROM_NAME
-            || self.contact_recipient != crate::mail_provider::CONTACT_RECIPIENT
-        {
-            return Err(AppError::Validation(
-                "Use Postmark con UASSpain <no-reply@uasspain.com> y recepción de contacto en info@uasspain.com.".into(),
-            ));
-        }
-        crate::mail_provider::address(&self.contact_recipient)?;
-        Ok(())
-    }
-    pub fn verified(&self) -> bool {
-        self.sender_panel_confirmed && self.provider_verified() && self.verification_fresh()
-    }
-    pub fn provider_verified(&self) -> bool {
-        self.validate().is_ok()
-            && self.verified_at.is_some_and(|at| at <= Utc::now())
-            && self.verification_message_id.is_some()
-    }
-    pub fn verification_fresh(&self) -> bool {
-        self.provider_verified()
-            && self.verified_at.is_some_and(|at| {
-                let age = Utc::now() - at;
-                age >= chrono::Duration::zero() && age < chrono::Duration::hours(24)
-            })
-    }
-    fn sender_status(&self) -> &'static str {
-        if !self.sender_panel_confirmed {
-            "UNCONFIRMED"
-        } else if self.provider_verified() {
-            "VERIFIED"
-        } else {
-            "PENDING_VERIFICATION"
-        }
-    }
-}
-pub async fn api_config(state: &AppState, draft: bool) -> Result<ApiConfig, AppError> {
-    let key = if draft { "mail_api_draft" } else { "mail_api" };
-    if let Some(value) = runtime_config::setting(state, key).await? {
-        return serde_json::from_value(value).map_err(|_| AppError::Internal);
-    }
-    if draft && let Some(value) = runtime_config::setting(state, "mail_api").await? {
-        return serde_json::from_value(value).map_err(|_| AppError::Internal);
-    }
-    let from = std::env::var("POSTMARK_FROM")
-        .ok()
-        .filter(|v| !v.is_empty());
-    let contact = crate::contact::mailbox()?;
-    Ok(ApiConfig {
-        from_email: from.unwrap_or_else(|| "no-reply@uasspain.com".into()),
-        contact_recipient: contact,
-        ..Default::default()
-    })
-}
-pub async fn api_exclusive(state: &AppState) -> Result<bool, AppError> {
-    Ok(runtime_config::setting(state, "mail_mode")
-        .await?
-        .is_some_and(|v| v["api_exclusive"] == true))
-}
-pub async fn token(state: &AppState, draft: bool) -> Result<Option<String>, AppError> {
-    if draft && let Some(value) = runtime_config::secret(state, "postmark_candidate").await? {
-        return Ok(Some(value));
-    }
-    if let Some(value) = runtime_config::secret(state, "postmark_server_token").await? {
-        return Ok(Some(value));
-    }
-    let value = if let Ok(path) = std::env::var("POSTMARK_SERVER_TOKEN_FILE") {
-        std::fs::read_to_string(path).map_err(|_| AppError::Unavailable)?
-    } else {
-        std::env::var("POSTMARK_SERVER_TOKEN").unwrap_or_default()
-    };
-    Ok((!value.trim().is_empty()).then(|| value.trim().to_owned()))
-}
 pub fn admin(state: &AppState, headers: &HeaderMap) -> Result<Uuid, AppError> {
     let claims = authenticate(state, headers, "access")?;
     require_role(&claims, &["admin"])?;
     Ok(claims.profile_id)
 }
+
 pub async fn put_setting(
     tx: &mut Transaction<'_, Postgres>,
     key: &str,
@@ -126,16 +24,7 @@ pub async fn put_setting(
         .bind(Uuid::new_v4()).bind(key).bind(value).execute(&mut **tx).await?;
     Ok(())
 }
-async fn put_secret(
-    state: &AppState,
-    tx: &mut Transaction<'_, Postgres>,
-    key: &str,
-    value: &str,
-) -> Result<(), AppError> {
-    sqlx::query("INSERT INTO core_systemsecret(id,key,ciphertext) VALUES($1,$2,$3) ON CONFLICT(key) DO UPDATE SET ciphertext=EXCLUDED.ciphertext,updated_at=NOW(),rotated_at=NOW()")
-        .bind(Uuid::new_v4()).bind(key).bind(state.cipher.encrypt(value)?).execute(&mut **tx).await?;
-    Ok(())
-}
+
 pub async fn get(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -143,6 +32,7 @@ pub async fn get(
     admin(&state, &headers)?;
     Ok(Json(status(&state).await?))
 }
+
 pub async fn circuit_ready(state: &AppState, provider: &str) -> Result<bool, AppError> {
     let Some(pool) = &state.pool else {
         return Ok(false);
@@ -154,408 +44,85 @@ pub async fn circuit_ready(state: &AppState, provider: &str) -> Result<bool, App
             .await?;
     Ok(circuit.is_none_or(|value| value == "CLOSED"))
 }
-pub async fn active_api_ready(state: &AppState) -> Result<bool, AppError> {
-    Ok(api_config(state, false).await?.provider_verified()
-        && token(state, false).await?.is_some()
-        && circuit_ready(state, "postmark").await?)
-}
+
 pub async fn status(state: &AppState) -> Result<Value, AppError> {
-    let config = api_config(state, true).await?;
-    let key_configured = token(state, true).await?.is_some();
-    let exclusive = api_exclusive(state).await?;
-    let ready = if exclusive {
-        let active = api_config(state, false).await?;
-        active.provider_verified()
-            && token(state, false).await?.is_some()
-            && circuit_ready(state, "postmark").await?
-    } else {
-        let (smtp, password) = runtime_config::smtp(state).await?;
-        smtp.enabled
-            && runtime_config::validate_smtp(&smtp).is_ok()
-            && password.is_some()
-            && runtime_config::smtp_test_valid(&smtp, false)
-            && circuit_ready(state, "smtp").await?
-    };
-    let active = api_config(state, false).await?;
-    Ok(
-        json!({"api_exclusive":exclusive,"channel_ready":ready,"config":config,"key_configured":key_configured,
-        "provider":"postmark","api_key_configured":token(state,false).await?.is_some(),
-        "api_sender_verified":active.sender_status()=="VERIFIED","sender_status":config.sender_status(),
-        "provider_verified":config.provider_verified(),"verification_fresh":config.verification_fresh(),
-        "activation_ready":config.verified() && key_configured && circuit_ready(state,"postmark").await?,
-        "active_provider_verified":active.provider_verified(),
-        "account_api":"NOT_PROVIDED","real_inbox_reception":"BLOCKED_EXTERNAL","real_reply_to_validation":"BLOCKED_EXTERNAL"}),
+    let contact = crate::smtp_services::view(state, crate::smtp_services::Service::Contact).await?;
+    let automatic =
+        crate::smtp_services::view(state, crate::smtp_services::Service::Automatic).await?;
+    let api = crate::smtp_services::api_mode(state).await?;
+    let ready = !api && contact["active_ready"] == true && automatic["active_ready"] == true;
+    let configured = contact["configured"] == true && automatic["configured"] == true;
+    let verified = contact["verification_status"] == "ACCEPTED"
+        && automatic["verification_status"] == "ACCEPTED";
+    // Legacy API settings and encrypted credentials remain stored, but are never
+    // used for SMTP delivery. A saved API mode blocks switching pending authorization.
+    Ok(json!({
+        "provider":if api {"blocked_api_mode"} else {"smtp"}, "api_exclusive":api, "api_enabled":false,
+        "services":{"contact":contact,"automatic":automatic},"api_mode_blocked":api,
+        "channel_ready":ready, "configured":configured,
+        "provider_verified":verified, "activation_ready":ready,
+        "sender_status":if verified {"SMTP_ACCEPTED"} else {"NOT_TESTED"},
+        "api_key_configured":false, "api_sender_verified":false,
+        "real_inbox_reception":"BLOCKED_EXTERNAL"
+    }))
+}
+
+pub fn api_disabled() -> AppError {
+    AppError::Validation(
+        "El envío mediante API está desactivado. Configure exclusivamente SMTP.".into(),
     )
 }
-#[derive(Deserialize)]
-pub struct Write {
-    pub api_exclusive: bool,
-    pub config: ApiConfig,
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default)]
-    pub confirm_rollback: bool,
-}
+
+// Retain authenticated legacy endpoints as explicit refusals for old clients;
+// they cannot mutate stored API configuration, rotate credentials or send mail.
 pub async fn put(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(mut input): Json<Write>,
+    Json(_input): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    let actor = admin(&state, &headers)?;
-    input.config.validate()?;
-    if input.api_key.len() > 4096
-        || input.api_key.starts_with("v1:")
-        || input.api_key.chars().any(char::is_control)
-        || input.api_key == "POSTMARK_API_TEST"
-    {
-        return Err(AppError::Validation("API Key no válida.".into()));
-    }
-    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
-    let mut tx = pool.begin().await?;
-    runtime_config::lock_email_auth_config(&mut tx).await?;
-    let current: Option<Value> =
-        sqlx::query_scalar("SELECT value FROM core_systemsetting WHERE key='mail_api'")
-            .fetch_optional(&mut *tx)
-            .await?;
-    let verified = current
-        .clone()
-        .and_then(|v| serde_json::from_value::<ApiConfig>(v).ok());
-    let previous: Option<Value> =
-        sqlx::query_scalar("SELECT value FROM core_systemsetting WHERE key='mail_mode'")
-            .fetch_optional(&mut *tx)
-            .await?;
-    let was_api = previous
-        .as_ref()
-        .is_some_and(|v| v["api_exclusive"] == true);
-    let pending_key: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM core_systemsecret WHERE key='postmark_candidate')",
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-    // Trust neither a submitted timestamp nor a submitted provider message ID.
-    input.config.verified_at = None;
-    input.config.verification_message_id = None;
-    let same = verified.as_ref().is_some_and(|c| {
-        c.from_email == input.config.from_email
-            && c.from_name == input.config.from_name
-            && c.provider == input.config.provider
-    });
-    if same
-        && input.api_key.is_empty()
-        && !pending_key
-        && let Some(c) = &verified
-    {
-        input.config.verified_at = c.verified_at;
-        input.config.verification_message_id = c.verification_message_id;
-    }
-    if input.api_exclusive
-        && !was_api
-        && (!input.api_key.is_empty()
-            || !same
-            || !input.config.verified()
-            || !active_api_ready(&state).await?)
-    {
-        return Err(AppError::Validation("Guarde la configuración API sin activarla y verifique credenciales y remitente mediante una prueba autorizada antes de conmutar.".into()));
-    }
-    if !input.api_key.is_empty() {
-        put_secret(&state, &mut tx, "postmark_candidate", &input.api_key).await?;
-    }
-    put_setting(&mut tx, "mail_api_draft", json!(input.config)).await?;
-    if same && input.api_key.is_empty() && !pending_key {
-        put_setting(&mut tx, "mail_api", json!(input.config)).await?;
-    }
-    if was_api && !input.api_exclusive {
-        if !input.confirm_rollback {
-            return Err(AppError::Validation("Confirme expresamente la reversión a SMTP. Se conservarán la cola y las credenciales API.".into()));
-        }
-        let (smtp, password) = runtime_config::smtp(&state).await?;
-        if !smtp.enabled
-            || password.is_none()
-            || smtp.last_test_ok != Some(true)
-            || smtp
-                .last_test_at
-                .is_none_or(|at| Utc::now() - at > chrono::Duration::hours(24))
-        {
-            return Err(AppError::Validation("Compruebe SMTP con una prueba autorizada antes de cambiar el canal activo. La configuración API se conserva.".into()));
-        }
-        crate::mail_migration::transition(
-            &mut tx,
-            "ROLLBACK_REQUIRED",
-            json!({"source":"explicit_admin_request"}),
-            Some(actor),
-        )
-        .await?;
-        crate::mail_migration::transition(&mut tx,"ROLLBACK_IN_PROGRESS",json!({"source":"authorized_non_destructive_rollback","smtp_test_at":smtp.last_test_at}),Some(actor)).await?;
-    }
-    if was_api != input.api_exclusive {
-        let moved =
-            crate::mail_queue::move_pending(&state, &mut tx, input.api_exclusive, &input.config)
-                .await?;
-        audit_tx(
-            &mut tx,
-            actor,
-            "mail_pending_channel_changed",
-            json!({"eligible_messages":moved,"uncertain_or_accepted_untouched":true}),
-        )
-        .await?;
-    }
-    put_setting(
-        &mut tx,
-        "mail_mode",
-        json!({"api_exclusive":input.api_exclusive}),
-    )
-    .await?;
-    let phase: Option<String> = sqlx::query_scalar("SELECT last_passed FROM mail_migration")
-        .fetch_optional(&mut *tx)
-        .await?;
-    if phase.as_deref() == Some("DATA_VERIFIED")
-        && (!input.api_key.is_empty() || token(&state, true).await?.is_some())
-    {
-        crate::mail_migration::transition(&mut tx,"API_CONFIGURED",json!({"source":"saved_provider_configuration","provider":"postmark","secret_available":true}),Some(actor)).await?;
-    }
-    if input.api_exclusive && !was_api {
-        crate::mail_migration::transition(
-            &mut tx,
-            "CUTOVER_READY",
-            json!({"source":"provider_test","outbox_id":input.config.verification_message_id}),
-            Some(actor),
-        )
-        .await?;
-        crate::mail_migration::transition(
-            &mut tx,
-            "API_ACTIVE",
-            json!({"source":"atomic_channel_selection","fallback":false}),
-            Some(actor),
-        )
-        .await?;
-    }
-    if was_api && !input.api_exclusive {
-        crate::mail_migration::transition(&mut tx,"ROLLED_BACK",json!({"source":"atomic_channel_selection_after_smtp_check","queued_messages_preserved":true}),Some(actor)).await?;
-    }
-    audit_tx(
-        &mut tx,
-        actor,
-        "mail_configuration_saved",
-        json!({"api_exclusive":input.api_exclusive,"candidate_key":!input.api_key.is_empty()}),
-    )
-    .await?;
-    tx.commit().await?;
-    get(State(state), headers).await
+    admin(&state, &headers)?;
+    Err(api_disabled())
 }
+
+pub async fn test(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(_input): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    admin(&state, &headers)?;
+    Err(api_disabled())
+}
+
 pub async fn audit_tx(
     tx: &mut Transaction<'_, Postgres>,
     actor: Uuid,
     action: &str,
-    evidence: Value,
+    extra: Value,
 ) -> Result<(), AppError> {
     sqlx::query("INSERT INTO core_auditlog(id,created_date,updated_date,model_name,instance_id,action,extra,profile_id) VALUES($1,NOW(),NOW(),'MailSystem','',$2,$3,$4)")
-        .bind(Uuid::new_v4()).bind(action).bind(evidence).bind(actor).execute(&mut **tx).await?;
+        .bind(Uuid::new_v4()).bind(action).bind(extra).bind(actor).execute(&mut **tx).await?;
     Ok(())
-}
-#[derive(Deserialize)]
-pub struct Test {
-    pub recipient: String,
-    #[serde(default)]
-    pub confirm_authorized_recipient: bool,
-    #[serde(default)]
-    pub dry_run: bool,
-}
-pub async fn test(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(input): Json<Test>,
-) -> Result<(axum::http::StatusCode, Json<Value>), AppError> {
-    let actor = admin(&state, &headers)?;
-    crate::auth::enforce_login_rate(&headers, &format!("mail-api-test:{actor}"))?;
-    crate::mail_provider::address(&input.recipient)?;
-    if input.dry_run {
-        let config = api_config(&state, true).await?;
-        config.validate()?;
-        let envelope = crate::mail_provider::Envelope {
-            from: config.from_email,
-            from_name: config.from_name,
-            to: input.recipient,
-            reply_to: None,
-            subject: "Validación sin entrega UASSpain".into(),
-            body: crate::mail_provider::AUTOMATED_NOTICE.into(),
-            smtp: None,
-        };
-        let result = crate::mail_provider::validate_payload(&envelope).await;
-        let valid = matches!(result, crate::mail_provider::Outcome::Accepted(None));
-        return Ok((
-            if valid {
-                axum::http::StatusCode::OK
-            } else {
-                axum::http::StatusCode::SERVICE_UNAVAILABLE
-            },
-            Json(json!({
-                "ok":valid,"state":if valid {"VALIDATED"} else {"FAILED"},"dry_run":true,
-                "delivery_accepted":false,"live_credentials_verified":false,
-                "provider_code":result.code(),
-                "detail":if valid {"Formato validado con POSTMARK_API_TEST, sin entrega. La clave real, el remitente y el buzón siguen pendientes de verificación."} else {crate::mail_provider::failure_detail(result.code())}
-            })),
-        ));
-    }
-    let mut tx = state
-        .pool
-        .as_ref()
-        .ok_or(AppError::Unavailable)?
-        .begin()
-        .await?;
-    runtime_config::lock_email_auth_config(&mut tx).await?;
-    let mut config = api_config(&state, true).await?;
-    config.validate()?;
-    if !config.sender_panel_confirmed || !input.confirm_authorized_recipient {
-        return Err(AppError::Validation("Confirme primero el remitente en el panel de Postmark y autorice el destinatario de prueba.".into()));
-    }
-    let phase: Option<String> = sqlx::query_scalar("SELECT last_passed FROM mail_migration")
-        .fetch_optional(&mut *tx)
-        .await?;
-    if phase.as_deref() != Some("API_CONFIGURED")
-        && phase.as_deref() != Some("API_VERIFIED")
-        && phase.as_deref() != Some("API_ACTIVE")
-    {
-        return Err(AppError::Validation("Complete primero la auditoría, el backup recuperado y la verificación de datos de la migración.".into()));
-    }
-    let candidate_token = token(&state, true).await?.ok_or(AppError::Unavailable)?;
-    crate::mail_provider::check_server(&candidate_token).await?;
-    let envelope=crate::mail_provider::Envelope{from:config.from_email.clone(),from_name:config.from_name.clone(),to:input.recipient,reply_to:None,subject:"Prueba autorizada UASSpain".into(),body:"Prueba del canal transaccional de UASSpain. La aceptación del proveedor no acredita recepción en el buzón.".into(),smtp:None};
-    let id = crate::mail_queue::enqueue_explicit(
-        &state,
-        &mut tx,
-        "postmark",
-        &envelope,
-        crate::mail_queue::QueueOptions {
-            kind: "provider_test",
-            ttl: chrono::Duration::minutes(5),
-            validity: json!({}),
-            idempotency: None,
-        },
-    )
-    .await?;
-    // Persist PROCESSING before the external side effect. A crash is UNKNOWN,
-    // never an automatic resend. Configuration changes remain locked below.
-    tx.commit().await?;
-    let result = crate::mail_queue::process_test(&state, id, &candidate_token).await?;
-    if !matches!(result, crate::mail_provider::Outcome::Accepted(Some(_))) {
-        return Ok((
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "ok":false,"message_id":id,"state":match result {crate::mail_provider::Outcome::Unknown(_)=>"UNKNOWN",crate::mail_provider::Outcome::Retry(_,_)=>"RETRY_SCHEDULED",_=>"FAILED"},
-                "provider_code":result.code(),"delivery_accepted":false,"detail":crate::mail_provider::failure_detail(result.code())
-            })),
-        ));
-    }
-    let mut tx = state
-        .pool
-        .as_ref()
-        .ok_or(AppError::Unavailable)?
-        .begin()
-        .await?;
-    runtime_config::lock_email_auth_config(&mut tx).await?;
-    let latest = api_config(&state, true).await?;
-    let latest_token = token(&state, true).await?.ok_or(AppError::Unavailable)?;
-    let same_token: bool =
-        subtle::ConstantTimeEq::ct_eq(latest_token.as_bytes(), candidate_token.as_bytes()).into();
-    if latest != config || !same_token {
-        return Err(AppError::EditConflict);
-    }
-    config.verified_at = Some(Utc::now());
-    config.verification_message_id = Some(id);
-    put_secret(&state, &mut tx, "postmark_server_token", &candidate_token).await?;
-    // Remove only the candidate slot whose exact value was successfully tested.
-    sqlx::query("DELETE FROM core_systemsecret WHERE key='postmark_candidate'")
-        .execute(&mut *tx)
-        .await?;
-    put_setting(&mut tx, "mail_api", json!(config)).await?;
-    put_setting(&mut tx, "mail_api_draft", json!(config)).await?;
-    if phase.as_deref() == Some("API_CONFIGURED") {
-        crate::mail_migration::transition(
-            &mut tx,
-            "API_VERIFIED",
-            json!({"source":"postmark_live_api","outbox_id":id,"sender":config.from_email}),
-            Some(actor),
-        )
-        .await?;
-    }
-    audit_tx(
-        &mut tx,
-        actor,
-        "mail_api_verified",
-        json!({"outbox_id":id,"provider":"postmark"}),
-    )
-    .await?;
-    tx.commit().await?;
-    Ok((
-        axum::http::StatusCode::OK,
-        Json(
-            json!({"ok":true,"message_id":id,"state":"ACCEPTED","detail":"Postmark ha aceptado la prueba. Falta comprobar la recepción real en el buzón."}),
-        ),
-    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn corporate_identity_and_contact_destination_cannot_be_overridden() {
-        assert!(ApiConfig::default().validate().is_ok());
-        for (field, value) in [
-            ("from_email", "info@uasspain.com"),
-            ("from_email", "visitor@example.invalid"),
-            ("from_name", "Other Sender"),
-            ("contact_recipient", "other@example.invalid"),
-            (
-                "contact_recipient",
-                "info@uasspain.com\r\nBcc: other@example.invalid",
-            ),
-        ] {
-            let mut json = json!(ApiConfig::default());
-            json[field] = json!(value);
-            let config: ApiConfig = serde_json::from_value(json).unwrap();
-            assert!(config.validate().is_err());
-        }
-    }
-    #[test]
-    fn confirmation_provider_evidence_and_activation_age_are_independent() {
-        let mut config = ApiConfig {
-            verified_at: Some(Utc::now() - chrono::Duration::days(2)),
-            verification_message_id: Some(Uuid::new_v4()),
-            ..Default::default()
-        };
-        assert!(config.provider_verified());
-        assert_eq!(config.sender_status(), "UNCONFIRMED");
-        assert!(!config.verified());
-        config.sender_panel_confirmed = true;
-        assert_eq!(config.sender_status(), "VERIFIED");
-        assert!(
-            !config.verified(),
-            "old evidence must not enable a new cutover"
-        );
-        config.verified_at = Some(Utc::now() - chrono::Duration::minutes(1));
-        assert!(config.verified());
-        config.sender_panel_confirmed = false;
-        assert!(!config.verified());
-        assert!(
-            config.provider_verified(),
-            "administrative edits must not break an active transport"
-        );
-    }
-    #[test]
-    fn incomplete_future_or_invalid_provider_evidence_is_rejected() {
-        let mut config = ApiConfig {
-            sender_panel_confirmed: true,
-            verified_at: Some(Utc::now() + chrono::Duration::hours(1)),
-            verification_message_id: Some(Uuid::new_v4()),
-            ..Default::default()
-        };
-        assert!(!config.provider_verified());
-        config.verified_at = Some(Utc::now() - chrono::Duration::minutes(1));
-        config.verification_message_id = None;
-        assert!(!config.provider_verified());
-        config.verification_message_id = Some(Uuid::new_v4());
-        config.from_email = "unapproved@example.invalid".into();
-        assert!(!config.provider_verified());
-        assert!(!config.verified());
+
+    #[tokio::test]
+    async fn legacy_api_endpoints_require_authentication_before_disabled_response() {
+        let state = Arc::new(AppState::for_test());
+        assert!(matches!(
+            put(State(state.clone()), HeaderMap::new(), Json(json!({}))).await,
+            Err(AppError::Unauthorized)
+        ));
+        assert!(matches!(
+            test(
+                State(state),
+                HeaderMap::new(),
+                Json(json!({"dry_run":true}))
+            )
+            .await,
+            Err(AppError::Unauthorized)
+        ));
     }
 }
