@@ -6,6 +6,7 @@ import {
 import authService from '@/services/authService';
 import GoogleOAuthForm from '@/components/admin/GoogleOAuthForm';
 import MailIntegrationForm from '@/components/admin/MailIntegrationForm';
+import AuthPolicyForm from '@/components/admin/AuthPolicyForm';
 import type { SystemStatusResponse } from '@/api/systemStatus';
 import { websocketServiceStatus } from '@/lib/systemStatus';
 
@@ -141,6 +142,8 @@ export default function AdminConfiguracion() {
               </li>
             ))}
           </ul>
+          {activa === 'seguridad' && <AuthPolicyForm onChange={policy => setStatus(current => current ? { ...current, two_factor: policy } : current)} />}
+          {activa === 'integraciones' && <button type="button" className="mt-4 text-sm text-primary underline" onClick={() => setActiva('seguridad')}>Administrar 2FA/OTP</button>}
           {activa === 'smtp' && <MailIntegrationForm onSaved={() => { void authService.getSystemStatus().then(setStatus).catch(() => setStatus(null)); }} />}
           {activa === 'integraciones' && <GoogleOAuthForm onSaved={() => { void authService.getSystemStatus().then(setStatus).catch(() => setStatus(null)); }} />}
         </div>

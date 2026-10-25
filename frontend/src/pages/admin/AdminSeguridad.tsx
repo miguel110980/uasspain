@@ -1,4 +1,5 @@
 import DataLoadNotice from '@/components/ui/DataLoadNotice';
+import AuthPolicyForm from '@/components/admin/AuthPolicyForm';
 import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -44,17 +45,6 @@ export default function AdminSeguridad() {
     return authPolicy.enabled && authPolicy.required_roles.includes(profile.role || 'alumno');
   }).length;
   const smtpConfigured = Boolean(systemStatus?.smtp?.configured);
-
-  const updatePolicy = async (patch) => {
-    const next = { ...authPolicy, ...patch };
-    setAuthPolicy(next);
-    try {
-      const saved = await authService.updateSystemAuthPolicy(next);
-      setAuthPolicy(saved);
-    } catch {
-      load(true);
-    }
-  };
 
   useEffect(() => {
     load();
@@ -299,33 +289,7 @@ export default function AdminSeguridad() {
           </div>
         </div>
 
-        <div className="mt-4 grid md:grid-cols-2 gap-4">
-          <label htmlFor="adminseguridad-field-1" className="flex items-center justify-between gap-3 px-4 py-3 border border-border-subtle rounded bg-surface-subtle">
-            <span>
-              <span className="block text-sm text-foreground">Activar 2FA</span>
-              <span className="block text-xs text-muted-foreground">Habilita el segundo factor en login por contraseña.</span>
-            </span>
-            <input id="adminseguridad-field-1" type="checkbox" checked={authPolicy.enabled} onChange={(e) => updatePolicy({ enabled: e.target.checked })} />
-          </label>
-          <div className="px-4 py-3 border border-border-subtle rounded bg-surface-subtle space-y-2">
-            <p className="text-sm text-foreground">Obligatorio por rol</p>
-            {['admin', 'instructor', 'alumno'].map((role) => (
-              <label key={role} className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input id={`adminseguridad-role-${role}`}
-                  type="checkbox"
-                  checked={authPolicy.required_roles.includes(role)}
-                  onChange={(e) => {
-                    const nextRoles = e.target.checked
-                      ? [...authPolicy.required_roles, role]
-                      : authPolicy.required_roles.filter((item) => item !== role);
-                    updatePolicy({ required_roles: nextRoles });
-                  }}
-                />
-                <span>{role}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <AuthPolicyForm onChange={setAuthPolicy} refresh={lastUpdate.getTime()} />
       </div>
     </motion.div>
   );
