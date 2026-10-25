@@ -73,7 +73,7 @@ export default function AdminConfiguracion() {
       smtp: [
         { label: 'Canal activo', value: status.mail?.api_exclusive ? 'Postmark API' : 'SMTP' },
         { label: 'Servidor SMTP conservado', value: smtp.host || 'No configurado' },
-        { label: 'Estado del correo', value: status.mail?.api_exclusive ? (status.mail.api_sender_verified ? 'API verificada' : 'API pendiente de verificación') : smtp.configured ? 'SMTP configurado' : 'Sin transporte SMTP configurado', estado: (status.mail?.api_exclusive ? status.mail.api_sender_verified : smtp.configured) ? 'ok' : 'warning' },
+        { label: 'Estado del correo', value: status.mail?.channel_ready ? (status.mail.api_exclusive ? 'Canal API disponible' : 'Canal SMTP disponible') : 'Canal guardado no disponible; revise configuración y monitor', estado: status.mail?.channel_ready ? 'ok' : 'warning' },
         { label: 'Impacto en 2FA', value: 'Activarlo exige comprobar el canal de correo seleccionado.' },
       ],
       roles: [

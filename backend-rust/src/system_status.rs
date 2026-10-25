@@ -146,7 +146,7 @@ pub async fn status(
             operational,
         },
         smtp: runtime_config::smtp_view(&smtp, password.as_deref()),
-        mail: json!({"api_exclusive":crate::mail_config::api_exclusive(&state).await?,"provider":"postmark","api_key_configured":crate::mail_config::token(&state,false).await?.is_some(),"api_sender_verified":crate::mail_config::api_config(&state,false).await?.verified_at.is_some()}),
+        mail: crate::mail_config::status(&state).await?,
         google_oauth: runtime_config::google_view(google),
         users,
         academic,

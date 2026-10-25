@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import apiClient from '@/api/apiClient';
 
-const smtpDefaults = { enabled: false, provider: '', host: '', port: 587, security: 'STARTTLS', username: '', password: '', password_configured: false, from_email: '', from_name: '', contact_recipient: '', timeout_seconds: 30, configured: false };
+const smtpDefaults = { enabled: false, provider: '', host: '', port: 587, security: 'STARTTLS', username: '', password: '', password_configured: false, from_email: '', from_name: '', contact_recipient: '', timeout_seconds: 30, configured: false, pending_verification: false, ready_to_activate: false };
 const googleDefaults = { enabled: false, client_id: '', configured: false, origins: [] as string[] };
 type Props = { kind: 'smtp' | 'google'; onSaved: () => void; managedChannel?: boolean };
 
@@ -32,7 +32,7 @@ export default function RuntimeIntegrationForm({ kind, onSaved, managedChannel =
       const { data } = await apiClient.put(path, kind === 'smtp' ? { ...smtp, enabled: managedChannel ? true : smtp.enabled } : { enabled: google.enabled, client_id: google.client_id });
       if (kind === 'smtp') setSmtp({ ...smtpDefaults, ...data, password: '' });
       else { setGoogle({ ...googleDefaults, ...data }); window.dispatchEvent(new Event('uasspain.google-config-updated')); }
-      setNotice('Configuración guardada.'); onSaved();
+      setNotice(kind === 'smtp' && data.pending_verification ? 'Borrador SMTP guardado. El canal operativo y el 2FA se conservan; compruebe el borrador mediante una prueba autorizada y vuelva a guardar para aplicarlo.' : 'Configuración guardada.'); onSaved();
     } catch (error) { setNotice(error?.response?.data?.detail || 'No se pudo guardar la configuración.'); }
     finally { setBusy(false); }
   };
@@ -40,6 +40,7 @@ export default function RuntimeIntegrationForm({ kind, onSaved, managedChannel =
     setBusy(true); setNotice('');
     try {
       const { data } = await apiClient.post(kind === 'smtp' ? '/api/system/smtp/test/' : '/api/auth/google/challenge/', kind === 'smtp' ? { recipient } : {});
+      if (kind === 'smtp') { const refreshed = await apiClient.get(path); setSmtp(current => ({ ...current, pending_verification: refreshed.data.pending_verification === true, ready_to_activate: refreshed.data.ready_to_activate === true })); }
       setNotice(kind === 'smtp' ? data.detail : 'Challenge OAuth generado correctamente.');
     } catch (error) { setNotice(error?.response?.data?.detail || 'No se pudo completar la comprobación.'); }
     finally { setBusy(false); }
@@ -58,6 +59,7 @@ export default function RuntimeIntegrationForm({ kind, onSaved, managedChannel =
     <form onSubmit={save} className="mt-6 space-y-4 border-t border-border-subtle pt-5" aria-label={kind === 'smtp' ? 'Configuración SMTP' : 'Configuración Google OAuth'}>
       <h3 className="font-semibold">{kind === 'smtp' ? 'SMTP / Correo' : 'Google OAuth'}</h3>
       <p className="text-sm text-muted-foreground">{config.configured ? 'Configurado' : config.enabled ? 'No configurado' : 'Deshabilitado · No configurado'}</p>
+      {kind === 'smtp' && smtp.pending_verification && <p className="text-sm text-warning">Borrador SMTP: {smtp.ready_to_activate ? 'Prueba vigente; vuelva a guardar para aplicar.' : 'Pendiente de prueba autorizada.'} La configuración operativa y el 2FA no se han sustituido.</p>}
       {!managedChannel && <label className="flex gap-2 items-center"><input type="checkbox" checked={config.enabled} onChange={(e) => kind === 'smtp' ? setSmtp({ ...smtp, enabled: e.target.checked }) : setGoogle({ ...google, enabled: e.target.checked })} /> Habilitado</label>}
       {kind === 'smtp' ? <>
         <div className="grid sm:grid-cols-2 gap-4">

@@ -51,10 +51,28 @@ impl ApiConfig {
         Ok(())
     }
     pub fn verified(&self) -> bool {
-        self.verified_at.is_some_and(|at| {
-            let age = Utc::now() - at;
-            age >= chrono::Duration::zero() && age < chrono::Duration::hours(24)
-        }) && self.verification_message_id.is_some()
+        self.sender_panel_confirmed && self.provider_verified() && self.verification_fresh()
+    }
+    pub fn provider_verified(&self) -> bool {
+        self.validate().is_ok()
+            && self.verified_at.is_some_and(|at| at <= Utc::now())
+            && self.verification_message_id.is_some()
+    }
+    pub fn verification_fresh(&self) -> bool {
+        self.provider_verified()
+            && self.verified_at.is_some_and(|at| {
+                let age = Utc::now() - at;
+                age >= chrono::Duration::zero() && age < chrono::Duration::hours(24)
+            })
+    }
+    fn sender_status(&self) -> &'static str {
+        if !self.sender_panel_confirmed {
+            "UNCONFIRMED"
+        } else if self.provider_verified() {
+            "VERIFIED"
+        } else {
+            "PENDING_VERIFICATION"
+        }
     }
 }
 pub async fn api_config(state: &AppState, draft: bool) -> Result<ApiConfig, AppError> {
@@ -123,24 +141,51 @@ pub async fn get(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     admin(&state, &headers)?;
-    let config = api_config(&state, true).await?;
-    let key_configured = token(&state, true).await?.is_some();
-    let exclusive = api_exclusive(&state).await?;
-    let ready = if exclusive {
-        let active = api_config(&state, false).await?;
-        active.validate().is_ok()
-            && active.verified_at.is_some()
-            && active.verification_message_id.is_some()
-            && token(&state, false).await?.is_some()
-    } else {
-        let (smtp, password) = runtime_config::smtp(&state).await?;
-        smtp.enabled && runtime_config::validate_smtp(&smtp).is_ok() && password.is_some()
+    Ok(Json(status(&state).await?))
+}
+pub async fn circuit_ready(state: &AppState, provider: &str) -> Result<bool, AppError> {
+    let Some(pool) = &state.pool else {
+        return Ok(false);
     };
-    Ok(Json(
+    let circuit: Option<String> =
+        sqlx::query_scalar("SELECT state FROM mail_circuit WHERE provider=$1")
+            .bind(provider)
+            .fetch_optional(pool)
+            .await?;
+    Ok(circuit.is_none_or(|value| value == "CLOSED"))
+}
+pub async fn active_api_ready(state: &AppState) -> Result<bool, AppError> {
+    Ok(api_config(state, false).await?.provider_verified()
+        && token(state, false).await?.is_some()
+        && circuit_ready(state, "postmark").await?)
+}
+pub async fn status(state: &AppState) -> Result<Value, AppError> {
+    let config = api_config(state, true).await?;
+    let key_configured = token(state, true).await?.is_some();
+    let exclusive = api_exclusive(state).await?;
+    let ready = if exclusive {
+        let active = api_config(state, false).await?;
+        active.provider_verified()
+            && token(state, false).await?.is_some()
+            && circuit_ready(state, "postmark").await?
+    } else {
+        let (smtp, password) = runtime_config::smtp(state).await?;
+        smtp.enabled
+            && runtime_config::validate_smtp(&smtp).is_ok()
+            && password.is_some()
+            && runtime_config::smtp_test_valid(&smtp, false)
+            && circuit_ready(state, "smtp").await?
+    };
+    let active = api_config(state, false).await?;
+    Ok(
         json!({"api_exclusive":exclusive,"channel_ready":ready,"config":config,"key_configured":key_configured,
-        "sender_status":if config.validate().is_ok() && config.verified(){"VERIFIED"}else if config.sender_panel_confirmed{"PENDING_VERIFICATION"}else{"UNCONFIRMED"},
+        "provider":"postmark","api_key_configured":token(state,false).await?.is_some(),
+        "api_sender_verified":active.sender_status()=="VERIFIED","sender_status":config.sender_status(),
+        "provider_verified":config.provider_verified(),"verification_fresh":config.verification_fresh(),
+        "activation_ready":config.verified() && key_configured && circuit_ready(state,"postmark").await?,
+        "active_provider_verified":active.provider_verified(),
         "account_api":"NOT_PROVIDED","real_inbox_reception":"BLOCKED_EXTERNAL","real_reply_to_validation":"BLOCKED_EXTERNAL"}),
-    ))
+    )
 }
 #[derive(Deserialize)]
 pub struct Write {
@@ -205,7 +250,10 @@ pub async fn put(
     }
     if input.api_exclusive
         && !was_api
-        && (!input.api_key.is_empty() || !same || !input.config.verified())
+        && (!input.api_key.is_empty()
+            || !same
+            || !input.config.verified()
+            || !active_api_ready(&state).await?)
     {
         return Err(AppError::Validation("Guarde la configuración API sin activarla y verifique credenciales y remitente mediante una prueba autorizada antes de conmutar.".into()));
     }
@@ -467,5 +515,47 @@ mod tests {
             let config: ApiConfig = serde_json::from_value(json).unwrap();
             assert!(config.validate().is_err());
         }
+    }
+    #[test]
+    fn confirmation_provider_evidence_and_activation_age_are_independent() {
+        let mut config = ApiConfig {
+            verified_at: Some(Utc::now() - chrono::Duration::days(2)),
+            verification_message_id: Some(Uuid::new_v4()),
+            ..Default::default()
+        };
+        assert!(config.provider_verified());
+        assert_eq!(config.sender_status(), "UNCONFIRMED");
+        assert!(!config.verified());
+        config.sender_panel_confirmed = true;
+        assert_eq!(config.sender_status(), "VERIFIED");
+        assert!(
+            !config.verified(),
+            "old evidence must not enable a new cutover"
+        );
+        config.verified_at = Some(Utc::now() - chrono::Duration::minutes(1));
+        assert!(config.verified());
+        config.sender_panel_confirmed = false;
+        assert!(!config.verified());
+        assert!(
+            config.provider_verified(),
+            "administrative edits must not break an active transport"
+        );
+    }
+    #[test]
+    fn incomplete_future_or_invalid_provider_evidence_is_rejected() {
+        let mut config = ApiConfig {
+            sender_panel_confirmed: true,
+            verified_at: Some(Utc::now() + chrono::Duration::hours(1)),
+            verification_message_id: Some(Uuid::new_v4()),
+            ..Default::default()
+        };
+        assert!(!config.provider_verified());
+        config.verified_at = Some(Utc::now() - chrono::Duration::minutes(1));
+        config.verification_message_id = None;
+        assert!(!config.provider_verified());
+        config.verification_message_id = Some(Uuid::new_v4());
+        config.from_email = "unapproved@example.invalid".into();
+        assert!(!config.provider_verified());
+        assert!(!config.verified());
     }
 }

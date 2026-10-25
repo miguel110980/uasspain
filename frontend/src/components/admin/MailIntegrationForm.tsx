@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import apiClient from '@/api/apiClient';
 import RuntimeIntegrationForm from './RuntimeIntegrationForm';
+import { canTestMailApi, mailApiDefaults as defaults, mailApiDirty, mergeMailApiConfig } from '@/lib/mailSettings';
 
-const defaults = { provider: 'postmark', from_email: 'no-reply@uasspain.com', from_name: 'UASSpain', contact_recipient: 'info@uasspain.com', sender_panel_confirmed: false };
 type Message = { id: string; message_type: string; provider: string; state: string; attempts: number; created_at: string; last_error: string; provider_latency_ms: number | null };
 type Monitor = { channel: string; counts: Record<string, number>; alerts: string[]; queue_age_seconds: number | null; circuits: { provider: string; state: string; failures: number }[]; migration: { state: string; last_passed: string } | null; transitions: { id: string; previous_state: string; new_state: string; created_at: string }[]; messages: Message[] };
 
@@ -15,6 +15,8 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
   const [key, setKey] = useState('');
   const [keyConfigured, setKeyConfigured] = useState(false);
   const [senderStatus, setSenderStatus] = useState('UNCONFIRMED');
+  const [providerVerified, setProviderVerified] = useState(false);
+  const [activationReady, setActivationReady] = useState(false);
   const [recipient, setRecipient] = useState('');
   const [authorized, setAuthorized] = useState(false);
   const [rollback, setRollback] = useState(false);
@@ -24,9 +26,10 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
   const [monitor, setMonitor] = useState<Monitor | null>(null);
   const load = useCallback(async (selection?: boolean) => {
     const [{ data }, { data: status }] = await Promise.all([apiClient.get('/api/system/mail/'), apiClient.get('/api/system/mail/monitor/')]);
-    const saved = { ...data.config, ...defaults, sender_panel_confirmed: data.config.sender_panel_confirmed };
+    const saved = mergeMailApiConfig(data.config);
     setConfig(saved); setSavedConfig(saved); setExclusive(selection ?? data.api_exclusive); setActiveExclusive(data.api_exclusive);
     setKeyConfigured(data.key_configured); setSenderStatus(data.sender_status); setChannelReady(data.channel_ready === true); setMonitor(status); setLoaded(true);
+    setProviderVerified(data.provider_verified === true); setActivationReady(data.activation_ready === true);
   }, []);
   useEffect(() => { let mounted = true; void load().catch(() => { if (mounted) setNotice('No se pudo cargar la configuración de correo.'); }); return () => { mounted = false; }; }, [load]);
   const refreshMonitor = async () => { const { data } = await apiClient.get('/api/system/mail/monitor/'); setMonitor(data); };
@@ -39,7 +42,7 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
     finally { setBusy(false); }
   };
   const save = (event: React.FormEvent) => { event.preventDefault(); void run(async () => {
-    const draftOnly = exclusive && !activeExclusive && (!!key || senderStatus !== 'VERIFIED');
+    const draftOnly = exclusive && !activeExclusive && (mailApiDirty(config, savedConfig, key) || !activationReady);
     try {
       await apiClient.put('/api/system/mail/', { api_exclusive: draftOnly ? activeExclusive : exclusive, config: exclusive ? config : savedConfig, api_key: exclusive ? key : '', confirm_rollback: rollback });
     } catch (error) {
@@ -48,10 +51,12 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
     }
     if (exclusive) setKey(''); setRollback(false); await load(draftOnly ? exclusive : undefined); setNotice(draftOnly ? 'Configuración API guardada sin activar. SMTP sigue vigente; verifique las credenciales y el remitente mediante una prueba autorizada y vuelva a guardar para cambiar de canal.' : 'Configuración guardada. Una clave nueva queda pendiente de prueba antes de sustituir la activa.'); onSaved();
   }); };
-  const test = () => void run(async () => {
+  const dirty = mailApiDirty(config, savedConfig, key);
+  const testAllowed = canTestMailApi({ loaded, busy, selectedApi: exclusive, dirty, keyConfigured, savedConfirmed: savedConfig.sender_panel_confirmed, authorized, recipient });
+  const test = () => { if (!testAllowed) return; void run(async () => {
     const { data } = await apiClient.post('/api/system/mail/test/', { recipient, confirm_authorized_recipient: authorized });
     await load(exclusive); setNotice(data.detail);
-  });
+  }); };
   const validatePayload = () => void run(async () => {
     const { data } = await apiClient.post('/api/system/mail/test/', { recipient: 'info@uasspain.com', dry_run: true });
     await load(exclusive); setNotice(data.detail);
@@ -61,11 +66,13 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
     const { data } = await apiClient.post('/api/system/smtp/test/', { recipient, confirm_rollback: rollback }); setNotice(data.detail); await refreshMonitor();
   });
   const inputClass = 'w-full min-w-0 rounded border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-foreground disabled:opacity-50';
-  const field = (name: 'from_email' | 'from_name' | 'contact_recipient', label: string, type = 'text') => <label className="block space-y-1"><span className="text-sm text-muted-foreground">{label}</span><input className={inputClass} type={type} value={defaults[name]} readOnly /></label>;
+  const field = (name: 'from_email' | 'from_name' | 'contact_recipient', label: string, type = 'text') => <label className="block space-y-1"><span className="text-sm text-muted-foreground">{label}</span><input className={inputClass} type={type} value={config[name]} readOnly /></label>;
   return <div className="mt-6 space-y-5 border-t border-border-subtle pt-5 min-w-0">
     <form aria-label="Configuración API de correo" className="space-y-4" onSubmit={save}>
       <h3 className="font-semibold">API / SMTP</h3>
       <p className="text-sm text-muted-foreground">Canal guardado: {activeExclusive ? 'Postmark API' : 'SMTP'}{channelReady ? '' : ' (no disponible)'}. Remitente API: {senderStatus === 'VERIFIED' ? 'Verificado por el proveedor' : senderStatus === 'PENDING_VERIFICATION' ? 'Pendiente de prueba con el proveedor' : 'Sin confirmar'}.</p>
+      <p className="text-xs text-muted-foreground">Confirmación administrativa guardada: {savedConfig.sender_panel_confirmed ? 'Sí' : 'No'}. Verificación técnica histórica: {providerVerified ? 'Disponible' : 'Pendiente'}. Requisitos para una nueva activación: {activationReady ? 'Cumplidos' : 'Pendientes'}.</p>
+      {dirty && <p role="status" className="text-sm text-warning">Cambios API sin guardar. Guarde antes de enviar una prueba; la prueba utiliza exclusivamente la configuración persistida.</p>}
       {exclusive !== activeExclusive && <p role="status" className="text-sm text-warning">Cambio de canal sin guardar. Sigue vigente {activeExclusive ? 'Postmark API' : 'SMTP'}. Activar API requiere credenciales y remitente verificados.</p>}
       <fieldset disabled={!loaded || busy} className="flex flex-wrap gap-4">
         <legend className="mb-2 text-sm font-medium">Canal de correo</legend>
@@ -87,7 +94,7 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
       </div>
       <div className="flex flex-wrap gap-3">
         <button className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50" disabled={!loaded || busy} type="button" onClick={validatePayload}>Validar formato sin enviar</button>
-        <button className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50" disabled={!loaded || busy || !keyConfigured || !recipient || !authorized || !config.sender_panel_confirmed} type="button" onClick={test}>Enviar correo de prueba API</button>
+        <button className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50" disabled={!testAllowed} type="button" onClick={test}>Enviar correo de prueba API</button>
       </div>
       </fieldset>
       {activeExclusive && <fieldset disabled={!loaded || busy || exclusive} aria-label="Reversión SMTP" className="space-y-3">
@@ -105,6 +112,7 @@ export default function MailIntegrationForm({ onSaved }: { onSaved: () => void }
     </fieldset>
     <section aria-label="Monitorización de correo" className="space-y-3 min-w-0">
       <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">Monitorización de correo</h3><button type="button" className="text-sm text-primary" disabled={busy} onClick={() => void run(refreshMonitor)}>Actualizar correo</button></div>
+      <button type="button" className="rounded border border-border-subtle px-3 py-2 text-sm disabled:opacity-50" disabled={busy || !monitor?.messages.length} onClick={() => { if (window.confirm('¿Limpiar únicamente la tabla de últimos envíos? Los mensajes, estadísticas y auditoría se conservan. Actualizar correo recuperará la lista.')) setMonitor(value => value ? { ...value, messages: [] } : value); }}>Limpiar últimos envíos</button>
       <p className="text-sm">Migración: {monitor?.migration?.state || 'NOT_STARTED'} · Última fase superada: {monitor?.migration?.last_passed || 'NOT_STARTED'}</p>
       <p className="text-sm text-muted-foreground">Pendientes: {(monitor?.counts.PENDING || 0) + (monitor?.counts.RETRY_SCHEDULED || 0)} · Aceptados: {monitor?.counts.ACCEPTED || 0} · Entregados según proveedor: {monitor?.counts.DELIVERED || 0} · Fallidos: {monitor?.counts.FAILED || 0} · Inciertos: {monitor?.counts.UNKNOWN || 0}</p>
       <p className="text-xs text-muted-foreground">{monitor?.circuits.map(circuit => `${circuit.provider}: ${circuit.state} (${circuit.failures} fallos)`).join(' · ')}</p>

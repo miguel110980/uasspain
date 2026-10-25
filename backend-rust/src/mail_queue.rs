@@ -96,10 +96,7 @@ pub async fn enqueue(
         config.validate().map_err(|_| AppError::Unavailable)?;
         // Verified credentials remain usable after the test's activation window;
         // later failures open the circuit, never silently switch transports.
-        if config.verified_at.is_none()
-            || config.verification_message_id.is_none()
-            || crate::mail_config::token(state, false).await?.is_none()
-        {
+        if !config.provider_verified() || crate::mail_config::token(state, false).await?.is_none() {
             return Err(AppError::Unavailable);
         }
         ("postmark", config.from_email, config.from_name, None)
@@ -261,6 +258,15 @@ async fn finish(
     outcome: &Outcome,
     latency: u128,
 ) -> Result<(), AppError> {
+    finish_scoped(state, job, outcome, latency, true).await
+}
+async fn finish_scoped(
+    state: &AppState,
+    job: &Job,
+    outcome: &Outcome,
+    latency: u128,
+    affects_active_circuit: bool,
+) -> Result<(), AppError> {
     let mut tx = state
         .pool
         .as_ref()
@@ -280,7 +286,7 @@ async fn finish(
     };
     sqlx::query("UPDATE mail_outbox SET state=$2,external_id=$3,last_error=$4,next_attempt_at=$5,provider_latency_ms=$6,lease_until=NULL,updated_at=NOW() WHERE id=$1 AND state='PROCESSING'")
         .bind(job.id).bind(status).bind(external).bind(outcome.code()).bind(next).bind(latency.min(i64::MAX as u128) as i64).execute(&mut *tx).await?;
-    if job.provider != "isolated" {
+    if job.provider != "isolated" && affects_active_circuit {
         // An inactive recipient is a definitive provider response. It proves
         // the transport recovered and must release a HALF_OPEN probe.
         if matches!(
@@ -300,6 +306,7 @@ async fn deliver_job(
     state: &AppState,
     job: &Job,
     candidate_token: Option<&str>,
+    affects_active_circuit: bool,
 ) -> Result<Outcome, AppError> {
     if !validity_live(state, &job.validity).await? || job.expires_at <= Utc::now() {
         sqlx::query("UPDATE mail_outbox SET state='EXPIRED',last_error='credential_expired_or_replaced',lease_until=NULL,updated_at=NOW() WHERE id=$1 AND state='PROCESSING'").bind(job.id).execute(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
@@ -322,7 +329,11 @@ async fn deliver_job(
             }
         }
         "smtp" => {
-            let (_, password) = runtime_config::smtp(state).await?;
+            let password = if let Some(value) = candidate_token.filter(|v| !v.is_empty()) {
+                Some(value.to_owned())
+            } else {
+                runtime_config::smtp(state).await?.1
+            };
             if let (Some(config), Some(password)) = (&envelope.smtp, password) {
                 crate::mail_provider::smtp(&envelope, config, &password).await
             } else {
@@ -339,18 +350,36 @@ async fn deliver_job(
         }
         _ => Outcome::Failed("configuration_invalid"),
     };
-    finish(state, job, &outcome, start.elapsed().as_millis()).await?;
+    if affects_active_circuit {
+        finish(state, job, &outcome, start.elapsed().as_millis()).await?;
+    } else {
+        finish_scoped(state, job, &outcome, start.elapsed().as_millis(), false).await?;
+    }
     Ok(outcome)
 }
 pub async fn process_test(state: &AppState, id: Uuid, token: &str) -> Result<Outcome, AppError> {
     let job = claim(state, Some(id), true)
         .await?
         .ok_or(AppError::EditConflict)?;
-    deliver_job(state, &job, Some(token)).await
+    deliver_job(state, &job, Some(token), true).await
+}
+pub async fn process_smtp_candidate_test(
+    state: &AppState,
+    id: Uuid,
+    password: &str,
+) -> Result<Outcome, AppError> {
+    let job = claim(state, Some(id), true)
+        .await?
+        .ok_or(AppError::EditConflict)?;
+    if job.provider != "smtp" {
+        return Err(AppError::EditConflict);
+    }
+    // Draft failures are persisted without poisoning the circuit used by 2FA.
+    deliver_job(state, &job, Some(password), false).await
 }
 pub async fn process_id(state: &AppState, id: Uuid) -> Result<Option<Outcome>, AppError> {
     if let Some(job) = claim(state, Some(id), false).await? {
-        return deliver_job(state, &job, None).await.map(Some);
+        return deliver_job(state, &job, None, true).await.map(Some);
     }
     Ok(None)
 }
@@ -362,7 +391,7 @@ pub fn spawn_worker(state: Arc<AppState>) {
             for _ in 0..10 {
                 match claim(&state, None, false).await {
                     Ok(Some(job)) => {
-                        if deliver_job(&state, &job, None).await.is_err() {
+                        if deliver_job(&state, &job, None, true).await.is_err() {
                             tracing::warn!(
                                 "mail worker operation failed; persistent lease retained"
                             );
@@ -382,6 +411,76 @@ pub fn spawn_worker(state: Arc<AppState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires the marked disposable mail-repair database"]
+    async fn smtp_candidate_failures_preserve_the_active_circuit_and_unknown_messages() {
+        let url = std::env::var("MAIL_REPAIR_TEST_DATABASE_URL").expect("dedicated fixture URL");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .unwrap();
+        let marker: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('uasspain.mail_fixture',true)")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(marker.as_deref(), Some("mail-repair-20261025"));
+        let before: (String, i32) =
+            sqlx::query_as("SELECT state,failures FROM mail_circuit WHERE provider='smtp'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let mut state = AppState::for_test();
+        state.pool = Some(pool.clone());
+        for outcome in [
+            Outcome::Failed("provider_authentication_failed"),
+            Outcome::Failed("provider_unreachable"),
+            Outcome::Failed("sender_unverified"),
+            Outcome::Unknown("provider_result_unknown"),
+        ] {
+            let id = Uuid::new_v4();
+            sqlx::query("INSERT INTO mail_outbox(id,message_type,provider,payload_ciphertext,idempotency_key,state,expires_at) VALUES($1,'provider_test','smtp',$2,$3,'PROCESSING',NOW()+INTERVAL '1 hour')").bind(id).bind(state.cipher.encrypt("synthetic payload, never transported").unwrap()).bind(id.to_string()).execute(&pool).await.unwrap();
+            let job = Job {
+                id,
+                provider: "smtp".into(),
+                payload_ciphertext: String::new(),
+                attempts: 1,
+                expires_at: Utc::now() + Duration::hours(1),
+                validity: serde_json::json!({}),
+            };
+            finish_scoped(&state, &job, &outcome, 0, false)
+                .await
+                .unwrap();
+            let current: (String, i32) =
+                sqlx::query_as("SELECT state,failures FROM mail_circuit WHERE provider='smtp'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                current, before,
+                "an unactivated draft must not disable the working 2FA circuit"
+            );
+            let status: String = sqlx::query_scalar("SELECT state FROM mail_outbox WHERE id=$1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                status,
+                if matches!(outcome, Outcome::Unknown(_)) {
+                    "UNKNOWN"
+                } else {
+                    "FAILED"
+                }
+            );
+            assert!(
+                claim(&state, Some(id), true).await.unwrap().is_none(),
+                "uncertain or definitively rejected tests cannot be automatically resent"
+            );
+        }
+    }
 
     #[tokio::test]
     #[ignore = "requires a disposable E2E database with its delivery worker stopped"]
