@@ -34,6 +34,7 @@ pub mod material_text;
 pub mod materials;
 pub mod observability;
 pub mod registration;
+pub mod registration_requests;
 pub mod runtime_config;
 pub mod security;
 pub mod seo;

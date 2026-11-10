@@ -56,7 +56,7 @@ export default function AlumnoDashboard({ alumnoId, alumnoNombre, assignedInstru
     if (manual) setRefreshing(true); else setLoading(true);
     try {
       const { values, failed } = await loadResources({
-        Resultados: () => examenesService.resultados.filter({ alumno_id: alumnoId }, '-fecha', 200),
+        Resultados: () => examenesService.resultados.listAll({ alumno_id: alumnoId }),
         Material: () => materialesService.materiales.list(),
         Completados: () => materialesService.completados.filter({ alumno_id: alumnoId }),
         Exámenes: () => examenesService.examenes.list(),

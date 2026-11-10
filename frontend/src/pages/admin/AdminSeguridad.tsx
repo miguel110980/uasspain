@@ -9,6 +9,7 @@ import authService from '@/services/authService';
 import conexionesService from '@/services/conexionesService';
 import { rolBadgeClass } from '@/lib/adminActivity';
 import { useRefreshableLoad } from '@/hooks/useRefreshableLoad';
+import { publicTlsBlocklistStatus } from '@/lib/systemStatus';
 
 const fmt = (iso) => {
   if (!iso) return '—';
@@ -45,6 +46,7 @@ export default function AdminSeguridad() {
     return authPolicy.enabled && authPolicy.required_roles.includes(profile.role || 'alumno');
   }).length;
   const smtpConfigured = Boolean(systemStatus?.smtp?.configured);
+  const tlsBlocklist = publicTlsBlocklistStatus(systemStatus?.security?.tls_pending_hosts);
 
   useEffect(() => {
     load();
@@ -128,7 +130,7 @@ export default function AdminSeguridad() {
             ['URL pública frontend', systemStatus?.platform?.frontend_url || 'No disponible'],
             ['Origen Google OAuth', systemStatus?.security?.google_public_origin || 'No disponible'],
             ['Hosts permitidos', systemStatus?.security?.allowed_hosts?.join(', ') || 'No disponible'],
-            ['Hosts pendientes de TLS público', Array.isArray(systemStatus?.security?.tls_pending_hosts) ? systemStatus.security.tls_pending_hosts.join(', ') || 'Ninguno' : 'No disponible'],
+            [tlsBlocklist.label, tlsBlocklist.value],
           ].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words text-foreground">{value}</dd></div>)}
         </dl>
       </section>
@@ -152,7 +154,7 @@ export default function AdminSeguridad() {
           <AlertTriangle className="w-4 h-4 text-warning" /> Alertas de seguridad
         </h3>
         {alertas.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-4 text-center">No hay alertas activas. El sistema está seguro.</p>
+          <p className="text-xs text-muted-foreground py-4 text-center">No se han detectado alertas de acceso en los registros consultados.</p>
         ) : (
           <div className="space-y-2">
             {alertas.map((a, i) => (

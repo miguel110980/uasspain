@@ -19,6 +19,8 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 pub struct ExamWrite {
+    duration_seconds: Option<i32>,
+    passing_percent: Option<i32>,
     nombre: Option<String>,
     categoria: Option<String>,
     descripcion: Option<String>,
@@ -28,6 +30,7 @@ pub struct ExamWrite {
 
 #[derive(Debug, Deserialize)]
 pub struct PracticalQuery {
+    offset: Option<u32>,
     alumno_id: Option<Uuid>,
     limit: Option<i64>,
 }
@@ -63,6 +66,22 @@ pub struct PracticalRecord {
     created_date: DateTime<Utc>,
 }
 
+async fn practical_transaction(
+    state: &AppState,
+    claims: &Claims,
+    student: Uuid,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, AppError> {
+    let mut tx = pool(state)?.begin().await?;
+    crate::account_lifecycle::lock(&mut tx).await?;
+    crate::account_lifecycle::actor_active(&mut tx, claims).await?;
+    let assigned: Option<Uuid> = sqlx::query_scalar("SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$1 AND (role='alumno' OR roles ? 'alumno') FOR UPDATE")
+        .bind(student).fetch_optional(&mut *tx).await?.ok_or(AppError::NotFound)?;
+    if claims.role == "instructor" && assigned != Some(claims.profile_id) {
+        return Err(AppError::Forbidden);
+    }
+    Ok(tx)
+}
+
 pub async fn list_practical(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -70,7 +89,9 @@ pub async fn list_practical(
 ) -> Result<Json<Vec<PracticalRecord>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     let limit = query.limit.unwrap_or(200).clamp(1, 500);
-    let rows=match claims.role.as_str(){"alumno"=>sqlx::query_as::<_,PracticalRecord>("SELECT id,alumno_id,instructor_id,alumno_nombre,instructor_nombre,categoria,nota::float8 AS nota,aprobado,observaciones,fecha,created_date FROM examenes_resultadopractico WHERE alumno_id=$1 ORDER BY fecha DESC NULLS LAST,created_date DESC LIMIT $2").bind(claims.profile_id).bind(limit).fetch_all(pool(&state)?).await?,"instructor"=>sqlx::query_as::<_,PracticalRecord>("SELECT r.id,r.alumno_id,r.instructor_id,r.alumno_nombre,r.instructor_nombre,r.categoria,r.nota::float8 AS nota,r.aprobado,r.observaciones,r.fecha,r.created_date FROM examenes_resultadopractico r JOIN accounts_userprofile p ON p.id=r.alumno_id WHERE p.assigned_instructor_id=$1 AND ($2::uuid IS NULL OR r.alumno_id=$2) ORDER BY r.fecha DESC NULLS LAST,r.created_date DESC LIMIT $3").bind(claims.profile_id).bind(query.alumno_id).bind(limit).fetch_all(pool(&state)?).await?,"admin"=>sqlx::query_as::<_,PracticalRecord>("SELECT id,alumno_id,instructor_id,alumno_nombre,instructor_nombre,categoria,nota::float8 AS nota,aprobado,observaciones,fecha,created_date FROM examenes_resultadopractico WHERE ($1::uuid IS NULL OR alumno_id=$1) ORDER BY fecha DESC NULLS LAST,created_date DESC LIMIT $2").bind(query.alumno_id).bind(limit).fetch_all(pool(&state)?).await?,_=>return Err(AppError::Forbidden)};
+    require_role(&claims, &["admin", "instructor", "alumno"])?;
+    let rows = sqlx::query_as::<_,PracticalRecord>("SELECT r.id,r.alumno_id,r.instructor_id,r.alumno_nombre,r.instructor_nombre,r.categoria,r.nota::float8 AS nota,r.aprobado,r.observaciones,r.fecha,r.created_date FROM examenes_resultadopractico r JOIN accounts_userprofile p ON p.id=r.alumno_id WHERE ($1='admin' OR ($1='alumno' AND r.alumno_id=$2) OR ($1='instructor' AND p.assigned_instructor_id=$2)) AND ($3::uuid IS NULL OR r.alumno_id=$3) ORDER BY r.fecha DESC NULLS LAST,r.created_date DESC,r.id DESC LIMIT $4 OFFSET $5")
+        .bind(&claims.role).bind(claims.profile_id).bind(query.alumno_id).bind(limit).bind(i64::from(query.offset.unwrap_or(0))).fetch_all(pool(&state)?).await?;
     Ok(Json(rows))
 }
 
@@ -84,17 +105,8 @@ pub async fn create_practical(
     if !input.nota.is_finite() || !(0.0..=10.0).contains(&input.nota) {
         return Err(AppError::Validation("Nota fuera de rango.".into()));
     }
-    let assigned: Option<Uuid> = sqlx::query_scalar(
-        "SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$1 AND (role='alumno' OR roles ? 'alumno')",
-    )
-    .bind(input.alumno_id)
-    .fetch_optional(pool(&state)?)
-    .await?
-    .flatten();
-    if claims.role == "instructor" && assigned != Some(claims.profile_id) {
-        return Err(AppError::Forbidden);
-    }
-    let names:Option<(String,String,String,String)>=sqlx::query_as("SELECT a.nombre,a.apellidos,i.nombre,i.apellidos FROM accounts_userprofile a LEFT JOIN accounts_userprofile i ON i.id=$2 WHERE a.id=$1").bind(input.alumno_id).bind(claims.profile_id).fetch_optional(pool(&state)?).await?;
+    let mut tx = practical_transaction(&state, &claims, input.alumno_id).await?;
+    let names:Option<(String,String,String,String)>=sqlx::query_as("SELECT a.nombre,a.apellidos,i.nombre,i.apellidos FROM accounts_userprofile a LEFT JOIN accounts_userprofile i ON i.id=$2 WHERE a.id=$1").bind(input.alumno_id).bind(claims.profile_id).fetch_optional(&mut *tx).await?;
     let (an, aa, insn, insa) = names.ok_or(AppError::NotFound)?;
     let alumno = format!(
         "{} {}",
@@ -119,7 +131,8 @@ pub async fn create_practical(
     {
         return Err(AppError::Validation("Datos no válidos.".into()));
     }
-    let row=sqlx::query_as::<_,PracticalRecord>("INSERT INTO examenes_resultadopractico (id,created_date,updated_date,alumno_id,instructor_id,alumno_nombre,instructor_nombre,categoria,nota,aprobado,observaciones,fecha) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10,NOW())) RETURNING id,alumno_id,instructor_id,alumno_nombre,instructor_nombre,categoria,nota::float8 AS nota,aprobado,observaciones,fecha,created_date").bind(Uuid::new_v4()).bind(input.alumno_id).bind(claims.profile_id).bind(alumno).bind(instructor).bind(categoria).bind(input.nota).bind(input.aprobado.unwrap_or(input.nota>=5.0)).bind(input.observaciones.unwrap_or_default()).bind(input.fecha).fetch_one(pool(&state)?).await?;
+    let row=sqlx::query_as::<_,PracticalRecord>("INSERT INTO examenes_resultadopractico (id,created_date,updated_date,alumno_id,instructor_id,alumno_nombre,instructor_nombre,categoria,nota,aprobado,observaciones,fecha) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10,NOW())) RETURNING id,alumno_id,instructor_id,alumno_nombre,instructor_nombre,categoria,nota::float8 AS nota,aprobado,observaciones,fecha,created_date").bind(Uuid::new_v4()).bind(input.alumno_id).bind(claims.profile_id).bind(alumno).bind(instructor).bind(categoria).bind(input.nota).bind(input.aprobado.unwrap_or(input.nota>=5.0)).bind(input.observaciones.unwrap_or_default()).bind(input.fecha).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
     Ok((StatusCode::CREATED, Json(row)))
 }
 
@@ -142,15 +155,13 @@ pub async fn update_practical(
     {
         return Err(AppError::Validation("Datos no válidos.".into()));
     }
-    let owner: Option<Option<Uuid>> =
-        sqlx::query_scalar("SELECT instructor_id FROM examenes_resultadopractico WHERE id=$1")
+    let student: Uuid =
+        sqlx::query_scalar("SELECT alumno_id FROM examenes_resultadopractico WHERE id=$1")
             .bind(id)
             .fetch_optional(pool(&state)?)
-            .await?;
-    let owner = owner.ok_or(AppError::NotFound)?;
-    if claims.role == "instructor" && owner != Some(claims.profile_id) {
-        return Err(AppError::Forbidden);
-    }
+            .await?
+            .ok_or(AppError::NotFound)?;
+    let mut tx = practical_transaction(&state, &claims, student).await?;
     let row = sqlx::query_as::<_, PracticalRecord>(
         "UPDATE examenes_resultadopractico SET categoria=COALESCE($2,categoria),nota=COALESCE($3,nota),aprobado=COALESCE($4,aprobado),observaciones=COALESCE($5,observaciones),fecha=COALESCE($6,fecha),updated_date=NOW() WHERE id=$1 RETURNING id,alumno_id,instructor_id,alumno_nombre,instructor_nombre,categoria,nota::float8 AS nota,aprobado,observaciones,fecha,created_date",
     )
@@ -160,8 +171,9 @@ pub async fn update_practical(
     .bind(input.aprobado.or_else(|| input.nota.map(|nota| nota >= 5.0)))
     .bind(input.observaciones)
     .bind(input.fecha)
-    .fetch_one(pool(&state)?)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(Json(row))
 }
 
@@ -172,26 +184,28 @@ pub async fn delete_practical(
 ) -> Result<StatusCode, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin", "instructor"])?;
-    let result = if claims.role == "admin" {
-        sqlx::query("DELETE FROM examenes_resultadopractico WHERE id=$1")
+    let student: Uuid =
+        sqlx::query_scalar("SELECT alumno_id FROM examenes_resultadopractico WHERE id=$1")
             .bind(id)
-            .execute(pool(&state)?)
+            .fetch_optional(pool(&state)?)
             .await?
-    } else {
-        sqlx::query("DELETE FROM examenes_resultadopractico WHERE id=$1 AND instructor_id=$2")
-            .bind(id)
-            .bind(claims.profile_id)
-            .execute(pool(&state)?)
-            .await?
-    };
+            .ok_or(AppError::NotFound)?;
+    let mut tx = practical_transaction(&state, &claims, student).await?;
+    let result = sqlx::query("DELETE FROM examenes_resultadopractico WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, FromRow, Serialize)]
 pub struct ExamRecord {
+    duration_seconds: i32,
+    passing_percent: i32,
     id: Uuid,
     nombre: String,
     categoria: String,
@@ -202,6 +216,17 @@ pub struct ExamRecord {
     updated_date: DateTime<Utc>,
 }
 
+fn validate_exam_policy(duration: Option<i32>, passing: Option<i32>) -> Result<(), AppError> {
+    if duration.is_some_and(|value| !(1..=86400).contains(&value))
+        || passing.is_some_and(|value| !(1..=100).contains(&value))
+    {
+        return Err(AppError::Validation(
+            "Duración o porcentaje de aprobado no válidos.".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn create_exam(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -210,15 +235,20 @@ pub async fn create_exam(
     let claims = staff(&state, &headers)?;
     let nombre = required_text(input.nombre, "Nombre obligatorio.", 255)?;
     let categoria = optional_text(input.categoria, 50)?;
+    validate_exam_policy(input.duration_seconds, input.passing_percent)?;
+    let duration = input
+        .duration_seconds
+        .unwrap_or(if categoria == "A2" { 1800 } else { 2400 });
+    let passing = input.passing_percent.unwrap_or(75);
     let descripcion = input.descripcion.unwrap_or_default();
     let count = positive_i32(input.num_preguntas.unwrap_or(0), "NÃºmero de preguntas")?;
     let pool = pool(&state)?;
     let row = sqlx::query_as::<_, ExamRecord>(
         "INSERT INTO examenes_examen (id, created_date, updated_date, nombre, categoria, \
-         descripcion, activo, num_preguntas, creado_por_id) \
-         VALUES ($1, NOW(), NOW(), $2, $3, $4, $5, $6, $7) \
+         descripcion, activo, num_preguntas, creado_por_id,duration_seconds,passing_percent) \
+         VALUES ($1, NOW(), NOW(), $2, $3, $4, $5, $6, $7,$8,$9) \
          RETURNING id, nombre, categoria, descripcion, activo, num_preguntas::integer, \
-         created_date, updated_date",
+         created_date, updated_date,duration_seconds,passing_percent",
     )
     .bind(Uuid::new_v4())
     .bind(nombre)
@@ -227,6 +257,8 @@ pub async fn create_exam(
     .bind(input.activo.unwrap_or(true))
     .bind(count)
     .bind(claims.profile_id)
+    .bind(duration)
+    .bind(passing)
     .fetch_one(pool)
     .await?;
     Ok((StatusCode::CREATED, Json(row)))
@@ -240,6 +272,7 @@ pub async fn update_exam(
 ) -> Result<Json<ExamRecord>, AppError> {
     let claims = staff(&state, &headers)?;
     crate::academic_scope::staff_resource(pool(&state)?, &claims, "examen", id, false).await?;
+    validate_exam_policy(input.duration_seconds, input.passing_percent)?;
     let has_nombre = input.nombre.is_some();
     let has_categoria = input.categoria.is_some();
     let nombre = optional_text(input.nombre, 255)?;
@@ -254,9 +287,9 @@ pub async fn update_exam(
          categoria = CASE WHEN $4 THEN $5 ELSE categoria END, \
          descripcion = CASE WHEN $6 THEN $7 ELSE descripcion END, \
          activo = CASE WHEN $8 THEN $9 ELSE activo END, \
-         num_preguntas = CASE WHEN $10 THEN $11 ELSE num_preguntas END, updated_date = NOW() \
+         num_preguntas = CASE WHEN $10 THEN $11 ELSE num_preguntas END,duration_seconds=COALESCE($12,duration_seconds),passing_percent=COALESCE($13,passing_percent), updated_date = NOW() \
          WHERE id = $1 RETURNING id, nombre, categoria, descripcion, activo, \
-         num_preguntas::integer, created_date, updated_date",
+         num_preguntas::integer, created_date, updated_date,duration_seconds,passing_percent",
     )
     .bind(id)
     .bind(has_nombre)
@@ -268,7 +301,7 @@ pub async fn update_exam(
     .bind(input.activo.is_some())
     .bind(input.activo.unwrap_or(false))
     .bind(count.is_some())
-    .bind(count.unwrap_or_default())
+    .bind(count.unwrap_or_default()).bind(input.duration_seconds).bind(input.passing_percent)
     .fetch_optional(pool(&state)?)
     .await?
     .ok_or(AppError::NotFound)?;

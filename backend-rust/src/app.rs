@@ -56,7 +56,7 @@ impl AppState {
         Self {
             pool: None,
             tokens: auth::TokenService::for_test(),
-            cipher: FieldCipher::from_env().expect("test cipher"),
+            cipher: FieldCipher::for_test(),
             events: crate::cache::EventBus::default(),
             restores: Arc::new(RwLock::new(HashMap::new())),
             started: Instant::now(),
@@ -69,6 +69,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let request_id = HeaderName::from_static("x-request-id");
     let cors = cors_layer();
     Router::new()
+        .route(
+            "/api/registration-requests/",
+            get(crate::registration_requests::list),
+        )
+        .route(
+            "/api/registration-requests/{id}/resolve/",
+            post(crate::registration_requests::resolve),
+        )
         .route(
             "/api/admin/students/{id}/courses/",
             post(crate::student_directory::register_course),

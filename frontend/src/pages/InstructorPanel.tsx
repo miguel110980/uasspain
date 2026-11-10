@@ -12,6 +12,7 @@ import { loadResources } from '@/lib/loadResources';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 import AdminTopbar from '@/components/admin/AdminTopbar';
 import InstructorDashboard from '@/pages/instructor/InstructorDashboard';
+const InstructorSolicitudes = lazy(() => import('@/pages/instructor/InstructorSolicitudes'));
 const InstructorMaterial = lazy(() => import('@/pages/instructor/InstructorMaterial'));
 const InstructorExamenes = lazy(() => import('@/pages/instructor/InstructorExamenes'));
 const InstructorConexiones = lazy(() => import('@/pages/instructor/InstructorConexiones'));
@@ -36,6 +37,7 @@ const NAV_GROUPS = [
   {
     label: 'Gestión',
     items: [
+      { id: 'solicitudes', label: 'Solicitudes', icon: ClipboardList },
       { id: 'usuarios', label: 'Alumnos', icon: Users },
       { id: 'examenes', label: 'Exámenes', icon: ClipboardList },
       { id: 'material', label: 'Material', icon: BookOpen },
@@ -62,6 +64,7 @@ const NAV_GROUPS = [
 const TITLES = Object.fromEntries(NAV_GROUPS.flatMap((g) => g.items.map((i) => [i.id, i.label])));
 
 export default function InstructorPanel() {
+  const [academicRevision, setAcademicRevision] = useState(0);
   const [section, setSection] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profiles, setProfiles] = useState([]);
@@ -90,6 +93,10 @@ export default function InstructorPanel() {
     window.addEventListener('uasspain:academic-resources-changed', refreshAcademic);
     const unsubscribe = conexionesService.subscribeConexiones((event) => {
       const payload = conexionesService.parseWsPayload(event);
+      if (payload?.type === 'asignacion') {
+        loadVersion.current++; setProfiles([]); setResultados([]);
+        setModalResultados(null); setModalAccesos(null); setAcademicRevision(value => value + 1);
+      }
       if (payload?.type === 'conexion' || payload?.type === 'asignacion' || event.type === 'poll') {
         clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = setTimeout(() => {
@@ -154,7 +161,7 @@ export default function InstructorPanel() {
         Alumnos: () => authService.listProfiles('-created_date', 200),
         Exámenes: () => examenesService.examenes.list(),
         Bloqueos: () => examenesService.bloqueos.list(),
-        Resultados: () => examenesService.resultados.list('-created_date', 500),
+        Resultados: () => examenesService.resultados.listAll(),
         Totales: () => authService.dashboardCounts(),
       });
       if (request !== loadVersion.current) return;
@@ -200,7 +207,7 @@ export default function InstructorPanel() {
       id: 'alumnos-pending',
       title: `${pendientesCount} alumno(s) pendiente(s)`,
       description: 'Valida nuevas solicitudes de acceso.',
-      onSelect: () => handleSelect('usuarios'),
+      onSelect: () => handleSelect('solicitudes'),
     });
   }
   if (chatSinLeerAlumno > 0) {
@@ -268,6 +275,7 @@ export default function InstructorPanel() {
           counts={counts}
         />
       </div>
+      {visitedTabs.has('solicitudes') && <div className={section === 'solicitudes' ? '' : 'hidden'}><PanelSection><InstructorSolicitudes /></PanelSection></div>}
       {visitedTabs.has('usuarios') && <div className={section === 'usuarios' ? '' : 'hidden'}>{usuariosView}</div>}
       {visitedTabs.has('examenes') && (
         <div className={section === 'examenes' ? '' : 'hidden'}><PanelSection><InstructorExamenes /></PanelSection></div>
@@ -330,7 +338,7 @@ export default function InstructorPanel() {
           pendingCount={pendientesCount + chatSinLeer + (videoEntrante ? 1 : 0)}
           notifications={topbarNotifications}
         />
-        <main className="flex-1 p-4 md:p-6 max-w-[1400px] w-full mx-auto">
+        <main key={academicRevision} className="flex-1 p-4 md:p-6 max-w-[1400px] w-full mx-auto">
           {renderSection()}
         </main>
       </div>

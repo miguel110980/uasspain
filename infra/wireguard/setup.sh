@@ -4,7 +4,7 @@
 # =============================================================================
 # Installs WireGuard if needed, activates tunnel, validates handshake.
 #
-# Usage: ./infra/wireguard/setup.sh [--server SERVER_NAME] [--dry-run]
+# Usage: ./infra/wireguard/setup.sh [--server SERVER_NAME] [--dry-run] [--allow-install]
 # =============================================================================
 set -euo pipefail
 
@@ -12,10 +12,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT_DIR/infra/config.sh"
 
-TARGET_SERVER="${1:-}"
+TARGET_SERVER=""
 DRY_RUN=false
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
-[[ "${2:-}" == "--dry-run" ]] && DRY_RUN=true
+ALLOW_INSTALL=false
+while (($#)); do
+    case "$1" in
+        --server) [[ $# -ge 2 && -z "$TARGET_SERVER" ]] || { printf '%s\n' 'Missing or duplicate --server value' >&2; exit 2; }; TARGET_SERVER=$2; shift 2 ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        --allow-install) ALLOW_INSTALL=true; shift ;;
+        server1|server2|backup1|backup2|backup3) [[ -z "$TARGET_SERVER" ]] || { printf '%s\n' 'Duplicate server' >&2; exit 2; }; TARGET_SERVER=$1; shift ;;
+        *) printf '%s\n' 'Unknown option or server' >&2; exit 2 ;;
+    esac
+done
+case "$TARGET_SERVER" in ''|server1|server2|backup1|backup2|backup3) ;; *) printf '%s\n' 'Invalid server' >&2; exit 2 ;; esac
 
 step()  { echo -e "\n\033[0;36m==> $1\033[0m"; }
 ok()    { echo -e "    \033[0;32mOK: $1\033[0m"; }
@@ -39,11 +48,13 @@ detect_server_role() {
 
 # ─── Install WireGuard ──────────────────────────────────────────
 install_wireguard() {
+    if $DRY_RUN; then echo '[dry-run] Tool check only; installation requires --allow-install.'; return; fi
     if command -v wg &>/dev/null; then
         ok "WireGuard already installed: $(wg --version)"
         return
     fi
 
+    $ALLOW_INSTALL || fail 'WireGuard missing; explicit --allow-install authorization required'
     step "Installing WireGuard..."
 
     if command -v apt-get &>/dev/null; then
@@ -60,12 +71,14 @@ install_wireguard() {
         fail "No se encontró un gestor de paquetes compatible (apt/dnf/pacman/yum)"
     fi
 
+    command -v wg >/dev/null && command -v wg-quick >/dev/null || fail 'Installation did not provide both WireGuard tools'
     ok "WireGuard installed"
 }
 
 # ─── Activate WireGuard tunnel ───────────────────────────────────
 activate_tunnel() {
     local server_name="$1"
+    if $DRY_RUN; then echo "[dry-run] Tunnel $server_name not activated."; return; fi
     local conf_file="$ROOT_DIR/$WG_CONFIG_DIR/${server_name}.conf"
 
     if [[ ! -f "$conf_file" ]]; then
@@ -83,14 +96,19 @@ activate_tunnel() {
     fi
 
     # Copy config and activate
-    run sudo cp "$conf_file" "/etc/wireguard/${VPN_INTERFACE_LINUX}.conf"
-    run sudo chmod 600 "/etc/wireguard/${VPN_INTERFACE_LINUX}.conf"
+    local destination="/etc/wireguard/${VPN_INTERFACE_LINUX}.conf"
+    sudo test ! -L "$destination" || fail 'Existing tunnel configuration is a symlink; not replaced'
+    if sudo test -e "$destination"; then
+        sudo cmp -s "$conf_file" "$destination" || fail 'Existing tunnel configuration differs; not overwritten'
+    else
+        run sudo install -m 600 -- "$conf_file" "$destination"
+    fi
 
     # Enable on boot
-    run sudo systemctl enable wg-quick@"$VPN_INTERFACE_LINUX" 2>/dev/null || true
+    run sudo systemctl enable wg-quick@"$VPN_INTERFACE_LINUX" || fail 'Could not enable tunnel persistence'
 
     # Bring up interface
-    run sudo wg-quick up "$VPN_INTERFACE_LINUX"
+    run sudo wg-quick up "$VPN_INTERFACE_LINUX" || fail 'Tunnel activation failed; no success claimed'
 
     sleep 2
     ok "WireGuard tunnel activated"
@@ -98,6 +116,7 @@ activate_tunnel() {
 
 # ─── Validate handshake ──────────────────────────────────────────
 validate_handshake() {
+    if $DRY_RUN; then echo '[dry-run] Handshake NOT_VALIDATED.'; return; fi
     step "Validating WireGuard handshake..."
 
     local show_output
@@ -107,21 +126,7 @@ validate_handshake() {
         fail "No se pudo obtener el estado de WireGuard"
     fi
 
-    local has_handshake=false
-    while IFS= read -r line; do
-        local timestamp
-        timestamp=$(echo "$line" | awk '{print $2}')
-        if [[ "$timestamp" != "0" ]] && [[ -n "$timestamp" ]]; then
-            has_handshake=true
-            local seconds_ago=$(( $(date +%s) - timestamp ))
-            ok "Handshake received ${seconds_ago}s ago"
-        fi
-    done <<< "$show_output"
-
-    if ! $has_handshake; then
-        warn "No se ha recibido ningún handshake aún"
-        warn "Esto puede ser normal si el peer remoto no está activo"
-    fi
+    printf '%s\n' "$show_output" | awk -v now="$(date +%s)" '$2 ~ /^[0-9]+$/ && $2>0 && now-$2>=0 && now-$2<=180 {ok=1} END {exit !ok}' || fail 'No recent WireGuard handshake; connectivity not validated'
 }
 
 # ─── Validate connectivity ───────────────────────────────────────
@@ -131,13 +136,18 @@ validate_connectivity() {
 
     step "Validating connectivity to $target_name ($target_ip)..."
 
-    if ping -c 3 -W 2 "$target_ip" &>/dev/null; then
-        ok "$target_name reachable via WireGuard"
-        return 0
-    else
-        warn "$target_name no responde a ping (puede ser normal si ICMP está bloqueado)"
-        return 0
-    fi
+    if $DRY_RUN; then echo '[dry-run] Peer route/handshake NOT_VALIDATED.'; return; fi
+    local route allowed peer handshakes
+    route=$(ip route get "$target_ip") || fail 'Could not determine selected route'
+    printf '%s\n' "$route" | awk -v iface="$VPN_INTERFACE_LINUX" '{for(i=1;i<NF;i++)if($i=="dev" && $(i+1)==iface)ok=1}END{exit !ok}' || fail 'Selected route does not use the requested WireGuard interface'
+    ping -c 1 -W 2 "$target_ip" >/dev/null 2>&1 || true
+    allowed=$(sudo wg show "$VPN_INTERFACE_LINUX" allowed-ips) || fail 'Could not read allowed peers'
+    # Repository-generated topology uses explicit IPv4 /32 peer destinations.
+    peer=$(printf '%s\n' "$allowed" | awk -v target="$target_ip/32" '{for(i=2;i<=NF;i++){n=split($i,a,",");for(j=1;j<=n;j++)if(a[j]==target)print $1}}' | sort -u)
+    [[ -n "$peer" && "$peer" != *$'\n'* ]] || fail 'No unique configured peer covers the target address'
+    handshakes=$(sudo wg show "$VPN_INTERFACE_LINUX" latest-handshakes) || fail 'Could not read peer handshake'
+    printf '%s\n' "$handshakes" | awk -v key="$peer" -v now="$(date +%s)" '$1==key {count++; if($2 ~ /^[0-9]+$/ && $2>0 && now-$2>=0 && now-$2<=180)ok=1} END {exit !(count==1 && ok)}' || fail 'Target peer handshake missing, invalid or stale'
+    ok "$target_name: selected tunnel route and recent target-peer handshake verified; SFTP not tested"
 }
 
 # ─── Main ────────────────────────────────────────────────────────
@@ -149,9 +159,13 @@ fi
 
 step "Setting up WireGuard for: $SERVER_NAME"
 
+if $DRY_RUN; then
+    echo "[dry-run] Plan for $SERVER_NAME only; no installation, sudo, service change, network probe or activation. VPN/SFTP NOT_VALIDATED."
+    exit 0
+fi
+
 install_wireguard
 activate_tunnel "$SERVER_NAME"
-validate_handshake
 
 # Validate connectivity to peers based on server role
 case "$SERVER_NAME" in

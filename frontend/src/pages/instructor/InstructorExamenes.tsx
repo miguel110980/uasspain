@@ -1,3 +1,4 @@
+import PanelModal from '@/components/ui/PanelModal';
 import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import { loadResources } from '@/lib/loadResources';
 import React, { useState, useEffect, useRef } from 'react';
@@ -27,6 +28,7 @@ export default function InstructorExamenes() {
   const [archivosExamen, setArchivosExamen] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [importPreview, setImportPreview] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
   const [archivoToDelete, setArchivoToDelete] = useState(null);
   const [deleteArchivoLoading, setDeleteArchivoLoading] = useState(false);
@@ -112,13 +114,10 @@ export default function InstructorExamenes() {
       });
       if (cancelUploadRef.current) return;
 
-      if (res.data?.error || !res.data?.examenes_creados?.length) {
-        console.error('Error importando examen:', res.data?.error || 'No se detectaron preguntas válidas en el archivo');
-        toast({ title: 'Error al importar', description: 'No se pudieron detectar preguntas válidas. Revisa el formato.', variant: 'destructive' });
+      if (res.data?.error || !res.data?.preguntas?.length) {
+        toast({ title: 'No se puede importar', description: res.data?.error || 'No hay preguntas válidas con cuatro opciones y una solución.', variant: 'destructive' });
       } else {
-        toast({ title: 'Examen importado', description: 'Se han creado los simulacros a partir del archivo.' });
-        await loadData();
-        window.dispatchEvent(new Event('uasspain:academic-resources-changed'));
+        setImportPreview({ result: res.data, fileUrl: uploadPregs.file_url, categoria: formArchivos.categoria, metadata });
       }
 
       setFormArchivos({ categoria: 'A1/A3', archivo_preguntas: null });
@@ -132,6 +131,26 @@ export default function InstructorExamenes() {
       abortRef.current = null;
       setUploading(false);
     }
+  };
+
+  const confirmImport = async () => {
+    if (!importPreview) return;
+    setUploading(true);
+    try {
+      const result = await examenesService.importarExamenPDF({ ...importPreview, confirm: true, previewToken: importPreview.result.preview_token });
+      if (!result.data?.examenes_creados?.length) throw new Error(result.data?.error || 'No se pudieron confirmar los borradores.');
+      setImportPreview(null);
+      toast({ title: 'Borradores creados', description: 'Revisa los simulacros antes de publicarlos.' });
+      await loadData(); window.dispatchEvent(new Event('uasspain:academic-resources-changed'));
+    } catch (error) { toast({ title: 'Error al confirmar', description: extractErrorMessage(error), variant: 'destructive' }); }
+    finally { setUploading(false); }
+  };
+
+  const publishDraft = async (id: string) => {
+    try {
+      await examenesService.examenes.update(id, { activo: true });
+      await loadData(); window.dispatchEvent(new Event('uasspain:academic-resources-changed'));
+    } catch (error) { toast({ title: 'No se pudo publicar', description: extractErrorMessage(error), variant: 'destructive' }); }
   };
 
   const handleAddPregunta = async (e) => {
@@ -244,6 +263,19 @@ export default function InstructorExamenes() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+      {importPreview && <PanelModal label="Previsualización de la importación" onClose={() => { if (!uploading) setImportPreview(null); }} className="glass-card max-w-4xl p-6">
+        <h2 className="font-heading text-xl">Revisar preguntas antes de importar</h2>
+        <p>{importPreview.categoria} · {importPreview.result.total_validas} válidas · {importPreview.result.total_errores} rechazadas</p>
+        <div className="max-h-[60vh] overflow-auto space-y-4 my-4">
+          {importPreview.result.preguntas.map((question, index) => <article key={index} className="border border-border-subtle p-3">
+            <p>{index + 1}. {question.enunciado}</p>
+            {Object.entries(question.opciones).map(([key, text]) => <p key={key}>{key.toUpperCase()}. {String(text)}{key === question.respuesta_correcta ? ' · Correcta' : ''}</p>)}
+          </article>)}
+          {importPreview.result.errores.map((error, index) => <p key={'error-'+index} className="text-warning">{error.numero ? 'Pregunta '+error.numero+': ' : ''}{error.motivo}</p>)}
+        </div>
+        <button type="button" disabled={uploading} onClick={() => void confirmImport()} className="text-primary">Confirmar importación en borrador</button>
+        <button type="button" disabled={uploading} onClick={() => setImportPreview(null)} className="ml-4">Cancelar importación</button>
+      </PanelModal>}
       <DataLoadNotice error={loadError} retry={loadData} />
       {/* Subir Archivos de Exámenes */}
       <div className="space-y-4">
@@ -321,7 +353,7 @@ export default function InstructorExamenes() {
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
             <h4 className="font-heading text-base font-bold text-foreground mb-4">Simulacros Subidos</h4>
             {CATEGORIAS.map((cat) => {
-              const archivosCat = archivosExamen.filter((a) => a.descripcion?.includes(cat));
+              const archivosCat = archivosExamen.filter((a) => a.categoria === cat || (!a.categoria && a.descripcion?.includes(cat)));
               if (archivosCat.length === 0) return null;
               return (
                 <div key={cat} className="mb-6">
@@ -439,6 +471,7 @@ export default function InstructorExamenes() {
                 >
                   <p className="font-heading text-sm font-bold text-foreground">{ex.nombre}</p>
                   <p className="text-xs text-muted-foreground mt-1">Categoría {ex.categoria}</p>
+                  {!ex.activo && <button type="button" onClick={event => { event.stopPropagation(); void publishDraft(ex.id); }} className="text-primary underline mt-2">Publicar borrador</button>}
                   <div className="flex gap-3 mt-3 text-xs">
                     {tieneArchivos && <span className="text-primary font-mono">📎 Archivos</span>}
                     {conteo > 0 && <span className="text-primary font-mono">❓ {conteo} preguntas</span>}

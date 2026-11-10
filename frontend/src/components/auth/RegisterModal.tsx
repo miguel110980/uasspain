@@ -121,18 +121,17 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
 
     setLoading(true);
     try {
-      let foto_perfil = `https://ui-avatars.com/api/?background=00e5ff&color=050507&bold=true&size=128&name=${encodeURIComponent(form.nombre.trim() + '+' + form.apellidos.trim())}`;
+      let foto_perfil = '';
+      let avatar_upload_token = '';
 
       if (photo) {
         const fd = new FormData();
         fd.append('file', photo);
-        try {
-          const res = await apiClient.post(endpoints.uploadsRegisterAvatar, fd);
-          const { absolute_url } = normalizeUploadResponse(res.data);
-          if (absolute_url) foto_perfil = absolute_url;
-        } catch {
-          // keep default avatar if upload fails
-        }
+        const res = await apiClient.post(endpoints.uploadsRegisterAvatar, fd);
+        const { absolute_url } = normalizeUploadResponse(res.data);
+        if (!absolute_url || !res.data?.avatar_upload_token) throw new Error('No se pudo confirmar la fotografía. Reinténtelo o continúe sin foto.');
+        foto_perfil = absolute_url;
+        avatar_upload_token = res.data.avatar_upload_token;
       }
 
       await authService.register({
@@ -144,6 +143,7 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
         dni_nie: form.dni_nie.trim().toUpperCase(),
         username: form.username.trim(),
         foto_perfil,
+        avatar_upload_token,
       });
       setShowOtp(true);
     } catch (err) {
@@ -348,6 +348,7 @@ export default function RegisterModal({ onClose, onBack }: RegisterModalProps) {
                 onChange={handlePhoto}
               />
             </div>
+            {photo && <button type="button" disabled={loading} onClick={() => { setPhoto(null); setPhotoPreview(null); if (fileRef.current) fileRef.current.value=''; }} className="text-xs text-primary underline">Continuar sin foto</button>}
             {errors.photo && <p className="text-xs text-danger">{errors.photo}</p>}
           </div>
 

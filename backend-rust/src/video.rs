@@ -68,7 +68,7 @@ pub async fn list(
     Query(q): Query<VideoQuery>,
 ) -> Result<Json<Vec<Value>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
-    let rows = sqlx::query_scalar::<_, Value>("SELECT to_jsonb(v) FROM conexiones_videollamada v WHERE (($1='admin' AND v.administrador_id=$2) OR ($1='alumno' AND v.canal='alumnos' AND v.alumno_id=$2) OR ($1='instructor' AND (v.instructor_id=$2 OR (v.canal='instructores' AND v.instructor_peer_id=$2)))) AND ($3::uuid IS NULL OR v.alumno_id = $3) AND ($4::uuid IS NULL OR v.instructor_id = $4) AND ($5::text IS NULL OR v.estado = $5) AND ($6::text IS NULL OR v.iniciada_por = $6) AND ($8::text IS NULL OR v.canal=$8) ORDER BY v.created_date DESC LIMIT $7")
+    let rows = sqlx::query_scalar::<_, Value>("SELECT to_jsonb(v) FROM conexiones_videollamada v WHERE (v.canal<>'alumnos' OR EXISTS(SELECT 1 FROM accounts_userprofile p WHERE p.id=v.alumno_id AND p.assigned_instructor_id=v.instructor_id)) AND (($1='admin' AND v.administrador_id=$2) OR ($1='alumno' AND v.canal='alumnos' AND v.alumno_id=$2) OR ($1='instructor' AND (v.instructor_id=$2 OR (v.canal='instructores' AND v.instructor_peer_id=$2)))) AND ($3::uuid IS NULL OR v.alumno_id = $3) AND ($4::uuid IS NULL OR v.instructor_id = $4) AND ($5::text IS NULL OR v.estado = $5) AND ($6::text IS NULL OR v.iniciada_por = $6) AND ($8::text IS NULL OR v.canal=$8) ORDER BY v.created_date DESC LIMIT $7")
         .bind(&claims.role).bind(claims.profile_id).bind(q.alumno_id).bind(q.instructor_id)
         .bind(q.estado.as_deref()).bind(q.iniciada_por.as_deref()).bind(q.limit.unwrap_or(100).clamp(1, 500))
         .bind(q.canal).fetch_all(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
@@ -365,7 +365,7 @@ pub async fn socket(
 }
 
 async fn authorize(state: &AppState, id: Uuid, profile: Uuid, role: &str) -> Result<(), AppError> {
-    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conexiones_videollamada v WHERE v.id=$1 AND (($2='admin' AND v.administrador_id=$3) OR ($2='alumno' AND v.canal='alumnos' AND v.alumno_id=$3) OR ($2='instructor' AND (v.instructor_id=$3 OR (v.canal='instructores' AND v.instructor_peer_id=$3)))))")
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conexiones_videollamada v WHERE v.id=$1 AND (v.canal<>'alumnos' OR EXISTS(SELECT 1 FROM accounts_userprofile p WHERE p.id=v.alumno_id AND p.assigned_instructor_id=v.instructor_id)) AND (($2='admin' AND v.administrador_id=$3) OR ($2='alumno' AND v.canal='alumnos' AND v.alumno_id=$3) OR ($2='instructor' AND (v.instructor_id=$3 OR (v.canal='instructores' AND v.instructor_peer_id=$3)))))")
         .bind(id).bind(role).bind(profile).fetch_one(state.pool.as_ref().ok_or(AppError::Unavailable)?).await?;
     allowed.then_some(()).ok_or(AppError::Forbidden)
 }
@@ -448,8 +448,11 @@ async fn run_socket(
                     || authorize_active(&state, id, claims.profile_id, &claims.role).await.is_err()
                     || output.send(Message::Text(event.payload.to_string().into())).await.is_err()) { break; },
             _ = authorization.tick() => {
-                if !session_is_active(&state, &claims).await.unwrap_or(false) {
-                    let _ = output.send(Message::Close(Some(axum::extract::ws::CloseFrame { code: 1008, reason: "session_expired".into() }))).await;
+                let active = session_is_active(&state, &claims).await.unwrap_or(false);
+                // Revoke quiet signaling sessions too, without waiting for a new frame or heartbeat.
+                if !active || authorize_active(&state, id, claims.profile_id, &claims.role).await.is_err() {
+                    let reason = if active { "access_revoked" } else { "session_expired" };
+                    let _ = output.send(Message::Close(Some(axum::extract::ws::CloseFrame { code: 1008, reason: reason.into() }))).await;
                     break;
                 }
             },

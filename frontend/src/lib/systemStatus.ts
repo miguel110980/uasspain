@@ -6,6 +6,21 @@ export const STATUS_UI = {
   err: { dot: 'bg-danger', text: 'text-danger', label: 'Error' },
 };
 
+/** The backend field is an operator-maintained routing blocklist, not a TLS probe. */
+export function publicTlsBlocklistStatus(hosts: unknown) {
+  const available = Array.isArray(hosts)
+    && hosts.every((host) => typeof host === 'string' && host.trim().length > 0);
+  return {
+    label: 'Bloqueos TLS configurados',
+    value: !available
+      ? 'No disponible; validación de certificados no comprobada.'
+      : hosts.length
+        ? hosts.map((host: string) => host.trim()).join(', ')
+        : 'Sin bloqueos configurados; validación de certificados no comprobada.',
+    estado: 'warning' as const,
+  };
+}
+
 export function databaseConnected(status) {
   const p = status?.platform;
   if (!p) return false;

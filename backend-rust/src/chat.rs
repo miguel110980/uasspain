@@ -160,7 +160,21 @@ async fn run_socket(socket: WebSocket, state: Arc<AppState>, room_id: String, cl
                 Ok(event) if event.topic == event_topic || (event.topic == "connections" && event.payload.get("type").and_then(serde_json::Value::as_str) == Some("asignacion")) => {
                     if !session_is_active(&state, &claims).await.unwrap_or(false)
                         || authorize_room(&state, claims.profile_id, &claims.role, &room_id).await.is_err() { break; }
-                    if event.topic == event_topic && output.send(Message::Text(event.payload.to_string().into())).await.is_err() { break; }
+                    if event.topic == event_topic {
+                        // A late event from the previous instructor must not enter
+                        // the new pair's channel after an assignment changes.
+                        if let Ok(student) = room_id.parse::<Uuid>()
+                            && event.payload.get("type").and_then(serde_json::Value::as_str) == Some("message")
+                        {
+                            let Some(pool) = &state.pool else { break; };
+                            let current: Option<Uuid> = sqlx::query_scalar("SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$1")
+                                .bind(student).fetch_optional(pool).await.unwrap_or(None).flatten();
+                            let sender_instructor = event.payload.get("data").and_then(|data| data.get("instructor_id"))
+                                .and_then(serde_json::Value::as_str).and_then(|id| id.parse::<Uuid>().ok());
+                            if current.is_none() || sender_instructor != current { continue; }
+                        }
+                        if output.send(Message::Text(event.payload.to_string().into())).await.is_err() { break; }
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     if output.send(Message::Text(serde_json::json!({"type":"resync_required","room_id":room_id}).to_string().into())).await.is_err() { break; }

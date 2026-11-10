@@ -31,6 +31,16 @@ pub struct ExamScore {
 }
 
 pub fn score(answers: &[AnswerKey]) -> Result<ExamScore, AppError> {
+    score_with_threshold(answers, 75)
+}
+
+fn score_with_threshold(
+    answers: &[AnswerKey],
+    passing_percent: i32,
+) -> Result<ExamScore, AppError> {
+    if !(1..=100).contains(&passing_percent) {
+        return Err(AppError::Validation("Umbral no válido.".into()));
+    }
     if answers.is_empty() {
         return Err(AppError::Validation(
             "El examen no tiene preguntas.".to_owned(),
@@ -69,7 +79,7 @@ pub fn score(answers: &[AnswerKey]) -> Result<ExamScore, AppError> {
         errores,
         porcentaje: (porcentaje * 10.0).round() / 10.0,
         nota,
-        aprobado: nota >= 7.0,
+        aprobado: u64::from(aciertos) * 100 >= answers.len() as u64 * passing_percent as u64,
     })
 }
 
@@ -83,6 +93,8 @@ pub struct ExamQuery {
 
 #[derive(Debug, FromRow, Serialize)]
 pub struct ExamView {
+    duration_seconds: i32,
+    passing_percent: i32,
     id: Uuid,
     nombre: String,
     categoria: String,
@@ -102,7 +114,7 @@ pub async fn list_exams(
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let statement = format!(
         "SELECT e.id, e.nombre, e.categoria, e.descripcion, e.activo, \
-         e.num_preguntas::integer, e.created_date, e.updated_date \
+         e.num_preguntas::integer, e.duration_seconds, e.passing_percent, e.created_date, e.updated_date \
          FROM examenes_examen e \
          WHERE ($1::text IS NULL OR e.categoria = $1) \
            AND ($2::boolean IS NULL OR e.activo = $2) \
@@ -132,7 +144,7 @@ pub async fn exam_detail(
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let statement = format!(
         "SELECT e.id, e.nombre, e.categoria, e.descripcion, e.activo, \
-         e.num_preguntas::integer, e.created_date, e.updated_date \
+         e.num_preguntas::integer, e.duration_seconds, e.passing_percent, e.created_date, e.updated_date \
          FROM examenes_examen e WHERE e.id = $1 \
            AND {} AND {}",
         crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3),
@@ -265,6 +277,7 @@ pub async fn question_detail(
 
 #[derive(Debug, Deserialize)]
 pub struct ResultQuery {
+    offset: Option<u32>,
     alumno_id: Option<Uuid>,
     examen_id: Option<Uuid>,
     categoria: Option<String>,
@@ -340,7 +353,7 @@ pub async fn list_results(
            AND ($4::uuid IS NULL OR r.examen_id = $4) \
            AND ($5::text IS NULL OR r.categoria = $5) \
            AND ($6::boolean IS NULL OR r.aprobado = $6) \
-         ORDER BY r.fecha DESC NULLS LAST, r.created_date DESC LIMIT $7",
+         ORDER BY r.fecha DESC NULLS LAST, r.created_date DESC,r.id DESC LIMIT $7 OFFSET $8",
     )
     .bind(&claims.role)
     .bind(claims.profile_id)
@@ -352,7 +365,7 @@ pub async fn list_results(
     .bind(query.examen_id)
     .bind(query.categoria.as_deref())
     .bind(query.aprobado)
-    .bind(safe_limit(query.limit))
+    .bind(safe_limit(query.limit)).bind(i64::from(query.offset.unwrap_or(0)))
     .fetch_all(pool)
     .await?;
     Ok(Json(
@@ -392,6 +405,7 @@ pub async fn delete_result(
 
 #[derive(Debug, Deserialize)]
 pub struct SubmitResult {
+    expected_revision: i64,
     examen_id: Uuid,
     attempt_id: Uuid,
     #[serde(default)]
@@ -406,6 +420,9 @@ pub struct StartAttempt {
 
 #[derive(Debug, FromRow)]
 struct AttemptRow {
+    duration_seconds: i32,
+    passing_percent: i32,
+    answer_revision: i64,
     id: Uuid,
     alumno_id: Uuid,
     examen_id: Uuid,
@@ -431,6 +448,7 @@ fn attempt_view(row: AttemptRow, now: DateTime<Utc>) -> Result<Value, AppError> 
         "modalidad": row.modalidad, "started_at": row.started_at,
         "expires_at": row.expires_at, "server_now": now,
         "preguntas": questions, "respuestas": row.respuestas,
+        "duration_seconds":row.duration_seconds,"passing_percent":row.passing_percent,"answer_revision":row.answer_revision,
     }))
 }
 
@@ -480,8 +498,8 @@ pub async fn start_attempt(
         validate_question_bank(&questions)?;
         let snapshot = serde_json::to_value(questions).map_err(|_| AppError::Internal)?;
         sqlx::query_as::<_, AttemptRow>(
-            "INSERT INTO examenes_intento (id, alumno_id, examen_id, modalidad, expires_at, preguntas) VALUES ($1,$2,$3,$4,CASE WHEN $4='tiempo' THEN NOW()+INTERVAL '40 minutes' ELSE NULL END,$5) RETURNING *",
-        ).bind(Uuid::new_v4()).bind(claims.profile_id).bind(exam_id).bind(&input.modalidad).bind(snapshot)
+            "INSERT INTO examenes_intento (id, alumno_id, examen_id, modalidad, expires_at, preguntas,duration_seconds,passing_percent) VALUES ($1,$2,$3,$4,CASE WHEN $4='tiempo' THEN NOW()+($6::integer * INTERVAL '1 second') ELSE NULL END,$5,$6,$7) RETURNING *",
+        ).bind(Uuid::new_v4()).bind(claims.profile_id).bind(exam_id).bind(&input.modalidad).bind(snapshot).bind(exam.duration_seconds).bind(exam.passing_percent)
             .fetch_one(&mut *transaction).await?
     };
     let now = sqlx::query_scalar("SELECT clock_timestamp()")
@@ -493,6 +511,7 @@ pub async fn start_attempt(
 
 #[derive(Debug, Deserialize)]
 pub struct SaveAnswers {
+    expected_revision: i64,
     respuestas: HashMap<String, Value>,
 }
 
@@ -501,7 +520,7 @@ pub async fn save_answers(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(input): Json<SaveAnswers>,
-) -> Result<StatusCode, AppError> {
+) -> Result<Json<Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     if claims.role != "alumno" {
         return Err(AppError::Forbidden);
@@ -512,6 +531,9 @@ pub async fn save_answers(
         .ok_or(AppError::Unavailable)?
         .begin()
         .await?;
+    let received_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *transaction)
+        .await?;
     let attempt = sqlx::query_as::<_, AttemptRow>(
         "SELECT * FROM examenes_intento WHERE id=$1 AND alumno_id=$2 FOR UPDATE",
     )
@@ -520,23 +542,25 @@ pub async fn save_answers(
     .fetch_optional(&mut *transaction)
     .await?
     .ok_or(AppError::NotFound)?;
-    let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
-        .fetch_one(&mut *transaction)
-        .await?;
-    if attempt.submitted_at.is_some() || attempt.expires_at.is_some_and(|end| now >= end) {
+    if input.expected_revision != attempt.answer_revision {
+        return Err(AppError::EditConflict);
+    }
+    if attempt.submitted_at.is_some() || attempt.expires_at.is_some_and(|end| received_at >= end) {
         return Err(AppError::Validation("El intento ha finalizado.".to_owned()));
     }
     fetch_submittable_exam(&mut transaction, claims.profile_id, attempt.examen_id).await?;
     let questions = serde_json::from_value::<Vec<QuestionRow>>(attempt.preguntas)
         .map_err(|_| AppError::Internal)?;
     validate_answers(&input.respuestas, &questions)?;
-    sqlx::query("UPDATE examenes_intento SET respuestas=$2 WHERE id=$1")
-        .bind(id)
-        .bind(serde_json::to_value(input.respuestas).map_err(|_| AppError::Internal)?)
-        .execute(&mut *transaction)
-        .await?;
+    sqlx::query(
+        "UPDATE examenes_intento SET respuestas=$2,answer_revision=answer_revision+1 WHERE id=$1",
+    )
+    .bind(id)
+    .bind(serde_json::to_value(input.respuestas).map_err(|_| AppError::Internal)?)
+    .execute(&mut *transaction)
+    .await?;
     transaction.commit().await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(json!({"answer_revision":attempt.answer_revision+1})))
 }
 
 fn validate_answers(
@@ -614,6 +638,9 @@ pub async fn submit_result(
     }
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let mut transaction = pool.begin().await?;
+    let received_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *transaction)
+        .await?;
     let attempt = sqlx::query_as::<_, AttemptRow>(
         "SELECT * FROM examenes_intento WHERE id=$1 AND alumno_id=$2 AND examen_id=$3 FOR UPDATE",
     )
@@ -631,6 +658,9 @@ pub async fn submit_result(
             result_detail(State(state), headers, Path(id)).await?,
         ));
     }
+    if input.expected_revision != attempt.answer_revision {
+        return Err(AppError::EditConflict);
+    }
     if !input.modalidad.is_empty() && input.modalidad != attempt.modalidad {
         return Err(AppError::Validation(
             "La modalidad no coincide con el intento.".to_owned(),
@@ -643,12 +673,13 @@ pub async fn submit_result(
         .fetch_one(&mut *transaction)
         .await?;
     // Late submissions can only grade answers saved before the deadline.
-    let respuestas: HashMap<String, Value> = if attempt.expires_at.is_some_and(|end| now >= end) {
-        serde_json::from_value(attempt.respuestas).map_err(|_| AppError::Internal)?
-    } else {
-        validate_answers(&input.respuestas, &questions)?;
-        input.respuestas
-    };
+    let respuestas: HashMap<String, Value> =
+        if attempt.expires_at.is_some_and(|end| received_at >= end) {
+            serde_json::from_value(attempt.respuestas).map_err(|_| AppError::Internal)?
+        } else {
+            validate_answers(&input.respuestas, &questions)?;
+            input.respuestas
+        };
     if questions.is_empty() {
         return Err(AppError::Validation(
             "El examen no tiene preguntas.".to_owned(),
@@ -663,7 +694,7 @@ pub async fn submit_result(
             answer: answer_value(&respuestas, question.id),
         })
         .collect();
-    let scored = score(&answer_keys)?;
+    let scored = score_with_threshold(&answer_keys, attempt.passing_percent)?;
     let revision = build_revision(&questions, &answer_keys);
     let result_id = Uuid::new_v4();
     let respuestas = serde_json::to_value(&respuestas).map_err(|_| AppError::Internal)?;
@@ -741,8 +772,9 @@ async fn fetch_submittable_exam(
     exam_id: Uuid,
 ) -> Result<ExamIdentity, AppError> {
     let statement = format!(
-        "SELECT e.id,e.nombre,e.categoria,e.num_preguntas::integer FROM examenes_examen e WHERE e.id=$1 AND e.activo AND {}",
-        crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3)
+        "SELECT e.id,e.nombre,e.categoria,e.num_preguntas::integer,e.duration_seconds,e.passing_percent FROM examenes_examen e WHERE e.id=$1 AND {access} AND {}",
+        crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3),
+        access = crate::academic_scope::exam_access("e", 2, 3)
     );
     let exam = sqlx::query_as::<_, ExamIdentity>(&statement)
         .bind(exam_id)
@@ -785,6 +817,8 @@ async fn fetch_submittable_exam(
 
 #[derive(Debug, FromRow)]
 struct ExamIdentity {
+    duration_seconds: i32,
+    passing_percent: i32,
     id: Uuid,
     nombre: String,
     categoria: String,
@@ -874,11 +908,22 @@ mod tests {
     }
 
     #[test]
-    fn seven_out_of_ten_passes() {
-        let answers: Vec<_> = (0..10)
-            .map(|index| answer("a", (index < 7).then_some("a")))
-            .collect();
-        assert!(score(&answers).unwrap().aprobado);
+    fn threshold_uses_exact_counts_and_never_the_rounded_grade() {
+        for (count, correct, passes) in [
+            (40, 29, false),
+            (40, 30, true),
+            (30, 22, false),
+            (30, 23, true),
+        ] {
+            let answers: Vec<_> = (0..count)
+                .map(|i| answer("a", Some(if i < correct { "a" } else { "b" })))
+                .collect();
+            assert_eq!(
+                score(&answers).unwrap().aprobado,
+                passes,
+                "{correct}/{count}"
+            );
+        }
     }
 
     #[test]
@@ -994,6 +1039,9 @@ mod tests {
         let now = Utc::now();
         let view = attempt_view(
             AttemptRow {
+                duration_seconds: 2400,
+                passing_percent: 75,
+                answer_revision: 0,
                 id: Uuid::new_v4(),
                 alumno_id: Uuid::new_v4(),
                 examen_id: question.examen_id,

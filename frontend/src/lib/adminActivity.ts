@@ -123,7 +123,7 @@ export function buildActivityFeed(data) {
 
   resultados.forEach((r) => {
     const detalleParts = [r.examen_nombre].filter(Boolean);
-    if (r.nota != null && r.nota !== '') detalleParts.push(`${r.nota}%`);
+    if (r.nota != null && r.nota !== '') detalleParts.push(`${r.nota}/10`);
     events.push({
       id: `res-${r.id}`,
       tipo: 'resultado',

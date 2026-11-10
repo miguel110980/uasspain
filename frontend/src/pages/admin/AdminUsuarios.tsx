@@ -5,9 +5,7 @@ import {
   Users, Search, Filter, Loader2, CheckCircle, Ban, Trash2, Edit, X, UserCheck, Shield, Download, ClipboardList, BarChart2, AlertCircle, Lock,
 } from 'lucide-react';
 import authService from '@/services/authService';
-import examenesService from '@/services/examenesService';
 import conexionesService from '@/services/conexionesService';
-import materialesService from '@/services/materialesService';
 import { extractErrorMessage } from '@/lib/errors';
 import { useToast } from '@/components/ui/use-toast';
 import { getRoles, hasRole, profileHasAdmin, profileHasInstructor } from '@/lib/roles';
@@ -153,13 +151,7 @@ export default function AdminUsuarios({ scopeRole = null, onExamenes, onResultad
     if (!window.confirm('¿Eliminar este usuario? Se borrarán también sus exámenes, resultados, conexiones, mensajes y materiales completados.')) return;
     setActionLoading((p) => ({ ...p, [id]: true }));
     try {
-      // Limpiar datos relacionados del alumno antes de eliminar el perfil
-      await Promise.allSettled([
-        examenesService.resultados.deleteMany({ alumno_id: id }),
-        conexionesService.conexiones.deleteMany({ alumno_id: id }),
-        examenesService.bloqueos.deleteMany({ alumno_id: id }),
-        materialesService.completados.deleteMany({ alumno_id: id }),
-      ]);
+      // The backend authorizes and commits the lifecycle operation atomically.
       await authService.deleteProfile(id);
       setProfiles((prev) => prev.filter((p) => p.id !== id));
       toast({ title: 'Usuario eliminado', description: 'Se han borrado también sus datos asociados.' });

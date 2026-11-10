@@ -41,14 +41,13 @@ pub async fn list(
              'id', m.id, 'titulo', m.titulo, 'descripcion', m.descripcion, \
              'categoria', m.categoria, 'tipo', m.tipo, 'activo', m.activo, \
              'created_date', m.created_date, 'curso', NULL, \
-             'acceso', m.activo AND NOT EXISTS(SELECT 1 FROM materiales_permisoaccesomaterial p \
-               WHERE p.alumno_id=$1 AND NOT p.permitido AND (p.material_id=m.id \
-                 OR (p.material_id IS NULL AND p.categoria=m.categoria))), \
+             'acceso', {grant}, \
              'heredado', EXISTS(SELECT 1 FROM materiales_permisoaccesomaterial p \
                WHERE p.alumno_id=$1 AND p.material_id IS NULL AND p.categoria=m.categoria AND NOT p.permitido)) \
          FROM materiales_material m \
          WHERE {} ORDER BY m.categoria, m.titulo",
-        crate::academic_scope::resource_scope("m", "subido_por_id", 2, 3)
+        crate::academic_scope::resource_scope("m", "subido_por_id", 2, 3),
+        grant = crate::academic_scope::material_grant("m", 1)
     ))
     .bind(student_id)
     .bind(&claims.role)
@@ -60,16 +59,14 @@ pub async fn list(
         "SELECT jsonb_build_object(\
              'id', e.id, 'nombre', e.nombre, 'descripcion', e.descripcion, \
              'categoria', e.categoria, 'activo', e.activo, 'created_date', e.created_date, 'curso', NULL, \
-             'acceso', e.activo AND NOT EXISTS(SELECT 1 FROM examenes_bloqueoexamen b \
-               WHERE b.alumno_id=$1 AND b.bloqueado AND (b.fecha_inicio IS NULL OR b.fecha_inicio<=NOW()) \
-                 AND (b.fecha_fin IS NULL OR b.fecha_fin>NOW()) \
-                 AND (b.examen_id=e.id OR (b.examen_id IS NULL AND b.categoria=e.categoria))), \
+             'acceso', {grant}, \
              'heredado', EXISTS(SELECT 1 FROM examenes_bloqueoexamen b \
                WHERE b.alumno_id=$1 AND b.examen_id IS NULL AND b.categoria=e.categoria AND b.bloqueado \
                  AND (b.fecha_inicio IS NULL OR b.fecha_inicio<=NOW()) AND (b.fecha_fin IS NULL OR b.fecha_fin>NOW()))) \
          FROM examenes_examen e \
          WHERE {} ORDER BY e.categoria, e.nombre",
-        crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3)
+        crate::academic_scope::resource_scope("e", "creado_por_id", 2, 3),
+        grant = crate::academic_scope::exam_grant("e", 1)
     ))
     .bind(student_id)
     .bind(&claims.role)

@@ -52,6 +52,7 @@ const TITLES = Object.fromEntries(NAV_GROUPS.flatMap((g) => g.items.map((i) => [
 // Nota: las pestañas del contenido principal permanecen montadas (toggle con 'hidden')
 // para evitar recargas de datos al cambiar de pestaña y mejorar la fluidez en móvil.
 export default function AlumnoPanel() {
+  const [academicRevision, setAcademicRevision] = useState(0);
   const [section, setSection] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, profile: authProfile } = usePanelAuthContext();
@@ -134,6 +135,18 @@ export default function AlumnoPanel() {
     const unsubscribe = conexionesService.subscribeVideollamadas(() => checkVideo());
     return () => unsubscribe();
   }, [profile?.id]);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = conexionesService.subscribeConexiones(event => {
+      const payload = conexionesService.parseWsPayload(event);
+      if (payload?.type !== 'asignacion') return;
+      setAcademicRevision(value => value + 1);
+      setChatSinLeer(false); setVideoEntrante(false);
+      authService.me().then(current => { if (active) setProfile(current.profile); }).catch(() => {});
+    });
+    return () => { active = false; unsubscribe(); };
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -219,7 +232,7 @@ export default function AlumnoPanel() {
           pendingCount={topbarNotifications.length}
           notifications={topbarNotifications}
         />
-        <main className="flex-1 p-4 md:p-6 max-w-[1400px] w-full mx-auto">
+        <main key={academicRevision} className="flex-1 p-4 md:p-6 max-w-[1400px] w-full mx-auto">
           {examenActivo ? (
             <PanelSection><ExamenActivo
               examen={examenActivo.examen}
