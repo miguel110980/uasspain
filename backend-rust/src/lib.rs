@@ -47,5 +47,6 @@ pub mod uploads;
 pub mod users;
 pub mod video;
 pub mod vpn;
+pub mod vpn_apply;
 
 pub use app::{AppState, build_router};

@@ -1,0 +1,62 @@
+{
+  "observed_at": "2026-11-12T23:55:27.5780323Z",
+  "scope": "ORIGINAL local HTTPS, genuine Google provider",
+  "services": [
+    {
+      "health": "healthy",
+      "image": "sha256:cf5c9d685f5f310044582b7a8fb20b3f686866e7ab44c6e4a34531960c42feca",
+      "name": "nginx",
+      "id": "b7500899651b78400ac9b09cc38467223538eb13e3cf4e318d68e8be39f1d0a1"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:5f04d3ab91290c28d7464a6f7b8574ea4df5d2b784b7d27edd9337674089904d",
+      "name": "frontend",
+      "id": "0247b00f14f343338eed733ae7e4303cecb36fc5f553f16acf2cf0a584a3be9c"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:2af5204f212cd5495d50c3fd234d9ac9899dd21a7d4145cf84ad4d6a92ff55f3",
+      "name": "backend",
+      "id": "0d668060244da72ffa329eca9bb9750cd2846be570545968d6a5671047386999"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:c4abfd8d90e9778d0df185f6f8547d59acd9e97b80264619059d6acc144317e3",
+      "name": "postgres",
+      "id": "b156c8f22d7bc13d31f40e68355a94e27b331e905c7c7fb6175089ae2c429958"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:41ab076c0cf4886f65c4373b15dbba5594f182c20c70ddc5a9660beff835f4e3",
+      "name": "redis",
+      "id": "07aa74741ac027a3b27995f15a5f848bfebe3e4caa8a59d6517f12ef7fc1d5d9"
+    }
+  ],
+  "http": [
+    {
+      "status": 200,
+      "path": "/healthz"
+    },
+    {
+      "status": 200,
+      "path": "/readyz"
+    },
+    {
+      "status": 200,
+      "path": "/api/health/live/"
+    },
+    {
+      "status": 200,
+      "path": "/api/health/ready/"
+    }
+  ],
+  "tls": "Windows default validation, no bypass",
+  "public_configured": true,
+  "public_client_id_present": true,
+  "real_verification": "PASS",
+  "explicit_link": "PASS_USER_AUTHORIZED",
+  "public_login": "PASS_REAL_GOOGLE_RETURNED_ADMIN_DASHBOARD",
+  "browser_role": "admin",
+  "browser_account_count": 8
+}

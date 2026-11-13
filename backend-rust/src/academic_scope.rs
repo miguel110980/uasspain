@@ -54,6 +54,12 @@ pub(crate) fn material_access(alias: &str, role: usize, profile: usize) -> Strin
     )
 }
 
+// Publication controls catalog visibility; personal grants control content.
+// resource_scope still excludes private resources belonging to another instructor.
+pub(crate) fn material_listing_scope(alias: &str, role: usize) -> String {
+    format!("(${role}::text<>'alumno' OR {alias}.activo)")
+}
+
 pub(crate) async fn staff_resource<'e, E>(
     executor: E,
     claims: &Claims,

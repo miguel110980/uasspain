@@ -222,8 +222,6 @@ export default function AlumnoPanel() {
 
       <div className="flex-1 min-w-0 flex flex-col">
         <AdminTopbar
-          navigation={examenActivo ? [] : NAV_GROUPS.flatMap(group => group.items)}
-          onNavigate={handleSelect}
           title={examenActivo ? 'Examen en curso' : (TITLES[section] || 'Panel')}
           onMenu={() => setSidebarOpen(true)}
           user={topbarUser}

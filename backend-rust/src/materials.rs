@@ -78,13 +78,15 @@ pub async fn list_materials(
 ) -> Result<Json<Vec<Value>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     let rows = sqlx::query_scalar::<_, Value>(&format!(
-        "SELECT to_jsonb(m) FROM materiales_material m WHERE \
+        "SELECT to_jsonb(m) || jsonb_build_object('bloqueado', \
+         $4::text='alumno' AND NOT ({grant})) FROM materiales_material m WHERE \
          ($1::text IS NULL OR m.categoria = $1) AND ($2::text IS NULL OR m.tipo = $2) \
          AND ($3::boolean IS NULL OR m.activo = $3) AND \
          {access} \
          AND {} ORDER BY m.orden, m.created_date DESC LIMIT $6",
         crate::academic_scope::resource_scope("m", "subido_por_id", 4, 5),
-        access = crate::academic_scope::material_access("m", 4, 5)
+        access = crate::academic_scope::material_listing_scope("m", 4),
+        grant = crate::academic_scope::material_grant("m", 5)
     ))
     .bind(query.categoria.as_deref())
     .bind(query.tipo.as_deref())
@@ -94,7 +96,22 @@ pub async fn list_materials(
     .bind(limit(query.limit))
     .fetch_all(pool(&state)?)
     .await?;
-    Ok(Json(rows))
+    Ok(Json(rows.into_iter().map(material_list_item).collect()))
+}
+
+fn material_list_item(row: Value) -> Value {
+    if row["bloqueado"] != true {
+        return row;
+    }
+    // Whitelist metadata: a locked assignment must never reveal a file URL,
+    // storage path, hash, video URL or future content-bearing columns.
+    let mut metadata = json!({"bloqueado": true});
+    for field in ["id", "titulo", "categoria", "tipo", "orden", "activo"] {
+        if let Some(value) = row.get(field) {
+            metadata[field] = value.clone();
+        }
+    }
+    metadata
 }
 
 pub async fn create_material(
@@ -774,7 +791,33 @@ async fn delete(pool: &PgPool, table: &str, id: Uuid) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_url;
+    use super::{material_list_item, validate_url};
+    use serde_json::json;
+
+    #[test]
+    fn locked_material_exposes_only_catalog_metadata() {
+        let row = json!({
+            "id": "assigned", "titulo": "Course document", "categoria": "A2",
+            "tipo": "pdf", "orden": 1, "activo": true, "bloqueado": true,
+            "descripcion": "private description", "archivo_url": "private URL",
+            "archivo_path": "private path", "archivo_sha256": "private hash",
+            "video_url": "private video", "future_content": "private column"
+        });
+        assert_eq!(
+            material_list_item(row),
+            json!({
+                "id": "assigned", "titulo": "Course document", "categoria": "A2",
+                "tipo": "pdf", "orden": 1, "activo": true, "bloqueado": true
+            })
+        );
+    }
+
+    #[test]
+    fn unlocked_material_retains_download_metadata() {
+        let row = json!({"id": "allowed", "bloqueado": false,
+            "archivo_url": "/api/media/uploads/document.pdf", "archivo_nombre_original": "document.pdf"});
+        assert_eq!(material_list_item(row.clone()), row);
+    }
     #[test]
     fn rejects_active_url_schemes() {
         assert!(validate_url("javascript:alert(1)").is_err());

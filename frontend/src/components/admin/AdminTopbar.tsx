@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, type RefObject } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, Search, Bell, ChevronDown, LogOut, User } from 'lucide-react';
+import { Menu, Bell, ChevronDown, LogOut, User } from 'lucide-react';
 import ThemeControl from '@/components/ui/ThemeControl';
 
 function usePopoverFocus(ref: RefObject<HTMLDivElement | null>, open: boolean, close: () => void) {
@@ -53,8 +53,6 @@ type AdminTopbarProps = {
   notifications?: Array<{ id: string; title: string; description?: string; onSelect?: () => void }>;
   onViewAllNotifications?: () => void;
   viewAllLabel?: string;
-  navigation?: Array<{ id: string; label: string }>;
-  onNavigate?: (id: string) => void;
 };
 
 export default function AdminTopbar({
@@ -67,8 +65,6 @@ export default function AdminTopbar({
   notifications = [],
   onViewAllNotifications,
   viewAllLabel = 'Ver todas las notificaciones',
-  navigation = [],
-  onNavigate,
 }: AdminTopbarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -76,10 +72,6 @@ export default function AdminTopbar({
   const notifRef = useRef<HTMLDivElement | null>(null);
   usePopoverFocus(menuRef, menuOpen, () => setMenuOpen(false));
   usePopoverFocus(notifRef, notifOpen, () => setNotifOpen(false));
-  const searchRef = useRef<HTMLInputElement | null>(null);
-  const [search, setSearch] = useState('');
-  const matches = search.trim() ? navigation.filter(item => item.label.toLocaleLowerCase('es').includes(search.trim().toLocaleLowerCase('es'))) : [];
-  const navigate = (id: string) => { setSearch(''); onNavigate?.(id); };
 
   const badgeCount = pendingCount > 0 ? pendingCount : notifications.length;
 
@@ -89,12 +81,7 @@ export default function AdminTopbar({
       if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
     };
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        searchRef.current?.focus();
-      }
       if (e.key === 'Escape') {
-        setSearch('');
         setMenuOpen(false);
         setNotifOpen(false);
       }
@@ -120,29 +107,7 @@ export default function AdminTopbar({
 
       <h1 className={`font-heading text-base md:text-lg font-semibold text-foreground ${['Conexiones VPN', 'Copias de seguridad'].includes(title) ? 'min-w-0 whitespace-normal break-words leading-tight' : 'truncate'}`}>{title}</h1>
 
-      <div className="relative ml-auto hidden md:flex items-center gap-2 px-3 h-9 w-64 border border-border-subtle rounded-md bg-surface-subtle focus-within:border-primary/30 transition-colors">
-        <Search className="w-4 h-4 text-muted-foreground/60" />
-        <input
-          ref={searchRef}
-          aria-label="Buscar sección"
-          placeholder="Buscar sección…"
-          value={search}
-          disabled={navigation.length === 0}
-          onChange={event => setSearch(event.target.value)}
-          onKeyDown={event => { if (event.key === 'Enter' && matches[0]) navigate(matches[0].id); }}
-          className="bg-transparent text-sm text-foreground placeholder:text-muted-foreground/40 outline-none w-full"
-        />
-        <kbd className="text-[10px] font-mono text-muted-foreground/40 border border-border-subtle px-1 rounded">⌘K</kbd>
-        {search.trim() && (
-          <div className="absolute left-0 right-0 top-full mt-2 bg-popover border border-border-subtle rounded-md shadow-xl">
-            {matches.length ? matches.map(item => (
-              <button key={item.id} onClick={() => navigate(item.id)} className="block w-full text-left px-3 py-2 text-sm text-foreground hover:bg-primary/10">{item.label}</button>
-            )) : <p className="px-3 py-2 text-xs text-muted-foreground">Sin resultados</p>}
-          </div>
-        )}
-      </div>
-
-      <ThemeControl className="ml-auto md:ml-0" />
+      <ThemeControl className="ml-auto" />
       <div className="relative" ref={notifRef}>
         <button
           type="button"

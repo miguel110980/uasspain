@@ -328,8 +328,6 @@ export default function InstructorPanel() {
       <div className="flex-1 min-w-0 flex flex-col">
         {dataError && <div role="alert" className="p-3 border border-danger-border bg-danger-soft text-danger text-sm">{dataError} <button onClick={() => loadAll()} className="underline">Reintentar</button></div>}
         <AdminTopbar
-          navigation={NAV_GROUPS.flatMap(group => group.items)}
-          onNavigate={handleSelect}
           title={TITLES[section] || 'Panel'}
           onMenu={() => setSidebarOpen(true)}
           user={user ? { ...user, full_name: `${authProfile?.nombre || ''} ${authProfile?.apellidos || ''}`.trim() || user.full_name } : null}

@@ -287,6 +287,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(crate::google_oauth::login_complete),
         )
         .route("/api/vpn/status/", get(crate::vpn::status))
+        .route("/api/infrastructure/apply/", post(crate::vpn_apply::submit))
+        .route(
+            "/api/infrastructure/apply/{id}/",
+            get(crate::vpn_apply::status),
+        )
         .route(
             "/api/infrastructure/",
             get(crate::infrastructure::get).put(crate::infrastructure::put),

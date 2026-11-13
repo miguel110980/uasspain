@@ -76,7 +76,8 @@ try{
   gate((await call(student,`/api/materiales/${item.id}/contenido/`)).status===403,'student_cannot_use_staff_extraction_'+source.id);
   const permission=await call(teacher,'/api/permisos-acceso-material/','POST',{alumno_id:pupil.id,material_id:item.id,categoria:source.category,permitido:false});gate(permission.status===201,'revoke_material_'+source.id);
   gate((await download(student,item.url)).status===404,'revocation_protects_exact_download_'+source.id);
-  gate(!(await call(student,'/api/materiales/')).body.some(m=>m.id===item.id),'revocation_hides_list_'+source.id);
+  const locked=(await call(student,'/api/materiales/')).body.find(m=>m.id===item.id);
+  gate(locked?.bloqueado===true&&!('archivo_url' in locked)&&!('archivo_path' in locked)&&!('archivo_sha256' in locked),'revocation_lists_only_locked_metadata_'+source.id);
   gate((await call(teacher,`/api/permisos-acceso-material/${permission.body.id}/`,'DELETE')).status===204,'restore_fixture_grant_'+source.id);
   const raw=sql(`SELECT archivo_url,archivo_path FROM materiales_material WHERE id='${item.id}'::uuid`);gate(raw.includes(item.url)&&raw.endsWith('|'),'legacy_row_unchanged_by_extraction_'+source.id);
   if(extracted.status===200){

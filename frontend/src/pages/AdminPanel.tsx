@@ -239,8 +239,6 @@ export default function AdminPanel() {
 
       <div className="flex-1 min-w-0 flex flex-col">
         <AdminTopbar
-          navigation={NAV_GROUPS.flatMap(group => group.items)}
-          onNavigate={handleSelectSection}
           title={TITLES[section] || 'Centro de Operaciones'}
           onMenu={() => setSidebarOpen(true)}
           user={user ? { ...user, full_name: `${authProfile?.nombre || ''} ${authProfile?.apellidos || ''}`.trim() || user.full_name } : null}
