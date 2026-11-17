@@ -17,7 +17,7 @@ ENV VITE_CONTACT_EMAIL=${VITE_CONTACT_EMAIL}
 RUN npm run build
 
 # ─── Stage 2: Production (nginx) ─────────────────────────────────
-FROM nginx:1.30.6-alpine3.24@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951 AS production
+FROM nginx:1.31.8-alpine3.24@sha256:fed7e14be83cbd2661a75cdc5b872d936cf155d46c327084d30b8df19ae88d72 AS production
 
 # Actualiza paquetes del sistema dentro de la tag inmutable (CVEs de alpine/openssl)
 RUN apk upgrade --no-cache \
