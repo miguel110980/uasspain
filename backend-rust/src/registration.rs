@@ -35,6 +35,8 @@ pub struct RegisterRequest {
     fecha_nacimiento: Option<NaiveDate>,
     #[serde(default)]
     foto_perfil: String,
+    #[serde(default)]
+    avatar_upload_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,23 +141,20 @@ pub async fn register(
             "Email, usuario o DNI/NIE ya registrado.".to_owned(),
         ));
     }
-    let hashes: Vec<String> = sqlx::query_scalar("SELECT password FROM auth_user")
-        .fetch_all(pool)
-        .await?;
-    if hashes
-        .iter()
-        .any(|hash| verify_password_hash(&input.password, hash))
-    {
-        return Err(AppError::Validation(
-            "Esta contrasena ya esta en uso por otro usuario.".to_owned(),
-        ));
-    }
     let profile_id = Uuid::new_v4();
     let password = hash_argon2(&input.password)?;
     let auth_username = format!("u_{}", Uuid::new_v4().simple());
     let otp = format!("{:06}", rand::rng().random_range(100_000..1_000_000));
     let otp_hash = hash_argon2(&otp)?;
     let mut tx = pool.begin().await?;
+    crate::uploads::claim_registration_avatar(
+        &state,
+        &mut tx,
+        profile_id,
+        &input.foto_perfil,
+        &input.avatar_upload_token,
+    )
+    .await?;
     let user_id: i32 = sqlx::query_scalar("INSERT INTO auth_user (password,last_login,is_superuser,username,first_name,last_name,email,is_staff,is_active,date_joined) VALUES ($1,NULL,FALSE,$2,'','',$3,FALSE,TRUE,NOW()) RETURNING id")
         .bind(password).bind(auth_username).bind(format!("user-{profile_id}@internal.uasspain.local")).fetch_one(&mut *tx).await?;
     sqlx::query("INSERT INTO accounts_userprofile (id,created_date,updated_date,nombre,apellidos,email,username,dni_nie,foto_perfil,status,role,otp_hash,otp_verified,user_id,roles,username_lookup,email_lookup,dni_lookup,fecha_nacimiento,active_session_key,login_otp_created_at,login_otp_hash,login_2fa_enabled_override,session_role,assigned_instructor_id) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,'pendiente','alumno',$8,FALSE,$9,'[\"alumno\"]'::jsonb,$10,$11,$12,$13,'',NULL,'',NULL,'',NULL)")
@@ -434,16 +433,9 @@ pub async fn password_reset_confirm(
         &profile_email,
         &dni,
     )?;
-    let hashes: Vec<String> = sqlx::query_scalar("SELECT password FROM auth_user WHERE id<>$1")
-        .bind(user_id)
-        .fetch_all(&mut *tx)
-        .await?;
-    if hashes
-        .iter()
-        .any(|hash| verify_password_hash(&input.password, hash))
-    {
+    if verify_password_hash(&input.password, &user.password) {
         return Err(AppError::Validation(
-            "Esta contrasena ya esta en uso por otro usuario.".into(),
+            "La contraseña nueva debe ser distinta de la actual.".into(),
         ));
     }
     let hash = hash_argon2(&input.password)?;
@@ -503,17 +495,6 @@ pub async fn create_instructor(
     if exists {
         return Err(AppError::Validation(
             "Email, usuario o DNI/NIE ya registrado.".into(),
-        ));
-    }
-    let hashes: Vec<String> = sqlx::query_scalar("SELECT password FROM auth_user")
-        .fetch_all(state.pool.as_ref().ok_or(AppError::Unavailable)?)
-        .await?;
-    if hashes
-        .iter()
-        .any(|hash| verify_password_hash(&input.password, hash))
-    {
-        return Err(AppError::Validation(
-            "Esta contraseña ya está en uso por otro usuario.".into(),
         ));
     }
     let profile_id = Uuid::new_v4();

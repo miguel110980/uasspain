@@ -1,12 +1,14 @@
 FROM rust:1.99.0-slim-bookworm@sha256:452176c0cefca88c0b3184ce85a4eb03e3d4fa05d2afb5366abcba853221019e AS builder
 
 WORKDIR /build
+ARG CARGO_BUILD_JOBS=2
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY migrations ./migrations
 COPY src ./src
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    cargo build --locked --release && cp target/release/uasspain-backend /build/uasspain-backend
+    cargo build --locked --release && cp target/release/uasspain-backend /build/uasspain-backend \
+    && cp target/release/uasspain-document-converter /build/uasspain-document-converter
 
 FROM builder AS test
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -22,10 +24,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+RUN --network=none printf 'isolation probe' | /build/uasspain-document-converter --probe
 
 FROM postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722 AS pgtools
 
 FROM ubuntu:26.04@sha256:3595d7fc4286a33fad0fd853a4063e654287a9c3787437d7937c94ca3f7a804e AS production
+
+ARG SECURITY_REFRESH=2026-11-09
 
 # The base contains a standalone Pebble service manager. This image starts the
 # Rust executable directly and uses Docker init, so the manager is unused.
@@ -41,6 +46,7 @@ RUN apt-get update \
     && chown -R 10001:10001 /app
 
 COPY --from=builder /build/uasspain-backend /usr/local/bin/uasspain-backend
+COPY --from=builder /build/uasspain-document-converter /usr/local/bin/uasspain-document-converter
 COPY --from=pgtools /usr/lib/x86_64-linux-gnu/libpq.so.5.18 /usr/lib/x86_64-linux-gnu/libpq.so.5.18
 COPY --from=pgtools /usr/lib/x86_64-linux-gnu/libpq.so.5 /usr/lib/x86_64-linux-gnu/libpq.so.5
 COPY --from=pgtools /usr/lib/postgresql/18/bin/pg_dump /usr/bin/pg_dump

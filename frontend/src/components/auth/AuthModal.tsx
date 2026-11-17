@@ -322,7 +322,7 @@ export default function AuthModal({ isOpen, onClose }) {
                       ? 'No se pudo cargar Google en este navegador. Puedes acceder con correo y contraseña o volver a intentarlo.'
                       : 'Google no está activado en esta instalación. El administrador debe configurarlo en Configuración → Integraciones. Puedes acceder con correo y contraseña.'}
               </p>
-              {!google.loading && <button type="button" disabled={loading} onClick={() => { setGoogleScriptError(false); setGoogleAttempt(value => value + 1); }} className="text-xs text-primary underline">Comprobar disponibilidad</button>}
+              {!google.loading && <button type="button" aria-disabled={loading || google.refreshing} onClick={() => { if (loading || google.refreshing) return; setGoogleScriptError(false); setGoogleAttempt(value => value + 1); }} className="text-xs text-primary underline">Comprobar disponibilidad</button>}
             </div>}
           </>
         )}

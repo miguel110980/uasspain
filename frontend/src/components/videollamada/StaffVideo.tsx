@@ -59,6 +59,12 @@ export default function StaffVideo({ role, peerRole: requestedPeerRole }: { role
       setCurrent(null);
     } catch { setError('No se pudo finalizar la llamada. Vuelve a pulsar Colgar.'); }
   };
+  const reject = async (call) => {
+    try {
+      await conexionesService.videollamadas.update(call.id, { estado: 'finalizada' });
+      setCalls(previous => previous.filter(item => item.id !== call.id));
+    } catch { setError('No se pudo rechazar la llamada. Vuelve a intentarlo.'); }
+  };
   if (current) return <>
     <Videoconferencia callId={current.id} displayName={`${profile?.nombre || ''} ${profile?.apellidos || ''}`.trim()} onColgar={hangup} />
     {error && <p role="alert" className="fixed bottom-4 left-4 z-[70] bg-card text-danger p-3">{error}</p>}
@@ -76,6 +82,7 @@ export default function StaffVideo({ role, peerRole: requestedPeerRole }: { role
         <button disabled={busy === peer.id} onClick={() => { void callPeer(peer); }} className="bg-primary text-primary-foreground px-4 py-2 text-sm disabled:opacity-50">
           {busy === peer.id ? 'Conectando…' : call ? 'Unirse' : 'Llamar'}
         </button>
+        {call && String(call.iniciador_id) !== String(profile?.id) && <button onClick={() => { void reject(call); }} className="px-3 py-2 border border-border-subtle text-sm">Rechazar llamada</button>}
       </article>;
     })}
     {!contacts.length && !error && <p className="text-muted-foreground">No hay contactos disponibles.</p>}

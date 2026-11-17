@@ -6,8 +6,6 @@ use std::{
 };
 
 use axum::{Json, extract::State, http::HeaderMap};
-use lopdf::{Document, LoadOptions, content::Content};
-use quick_xml::{Reader, events::Event};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -27,31 +25,32 @@ const MAX_IMPORT_BYTES: usize = 20 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LINES: usize = 20_000;
 static IMPORT_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+mod questions;
+mod rich_text;
 
 #[derive(Debug, Deserialize)]
 pub struct ImportRequest {
     file_url: String,
     categoria: Option<String>,
     metadata: Option<Value>,
+    #[serde(default)]
+    confirm: bool,
+    #[serde(default)]
+    preview_token: String,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 struct Line {
     text: String,
     bold: bool,
+    #[serde(default)]
+    color: Option<String>,
 }
 #[derive(Debug)]
 struct Question {
-    statement: String,
-    options: BTreeMap<char, String>,
-    answer: char,
-}
-#[derive(Debug)]
-struct PendingQuestion {
     number: usize,
     statement: String,
     options: BTreeMap<char, String>,
-    answer: Option<char>,
-    multiple_bold_answers: bool,
+    answer: char,
 }
 
 pub async fn import(
@@ -102,10 +101,33 @@ pub async fn import(
     })
     .await
     .map_err(|_| AppError::Internal)??;
-    let (questions, errors) = parse_questions(&lines);
+    let (mut questions, mut errors) = parse_questions(&lines);
+    let mut seen = std::collections::HashSet::new();
+    questions.retain(|question| {
+        let key = question
+            .statement
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        if seen.insert(key) {
+            true
+        } else {
+            errors.push(json!({"motivo":"Pregunta duplicada en el documento."}));
+            false
+        }
+    });
     let detected = questions.len() + errors.len();
+    if input.confirm && !errors.is_empty() {
+        return Err(invalid(
+            "La importación contiene preguntas con errores o respuestas ambiguas. Corrija el documento y vuelva a previsualizarlo; no se ha guardado ningún examen.",
+        ));
+    }
     let categoria = input.categoria.unwrap_or_else(|| "A1/A3".into());
-    if categoria.len() > 50 {
+    if !matches!(
+        categoria.as_str(),
+        "A1/A3" | "A2" | "STS" | "STS-01" | "STS-02"
+    ) {
         return Err(invalid("Categoría no válida."));
     }
     if questions.is_empty() {
@@ -113,12 +135,59 @@ pub async fn import(
             json!({"total_detectadas":detected,"total_validas":0,"total_errores":errors.len(),"examenes_creados":[],"errores":errors,"error":"No se encontraron preguntas válidas. Use preguntas numeradas con opciones A-D y la respuesta correcta en negrita."}),
         ));
     }
+    let proof = state.cipher.blind_index(&format!(
+        "exam-import-preview:{}:{checksum}:{categoria}",
+        claims.profile_id
+    ))?;
+    if !input.confirm {
+        let preview:Vec<Value>=questions.iter().map(|question|json!({"numero":question.number,"enunciado":question.statement,"opciones":question.options,"respuesta_correcta":question.answer})).collect();
+        return Ok(Json(
+            json!({"total_detectadas":detected,"total_validas":questions.len(),"total_errores":errors.len(),"preguntas":preview,"errores":errors,"examenes_creados":[],"preview_token":proof}),
+        ));
+    }
+    if input.preview_token.len() != proof.len()
+        || !bool::from(subtle::ConstantTimeEq::ct_eq(
+            input.preview_token.as_bytes(),
+            proof.as_bytes(),
+        ))
+    {
+        return Err(invalid(
+            "La previsualización no corresponde a este archivo y categoría. Analice el documento de nuevo.",
+        ));
+    }
     let mut tx = pool.begin().await?;
-    let base = Path::new(&name)
+    crate::account_lifecycle::lock(&mut tx).await?;
+    crate::account_lifecycle::actor_active(&mut tx, &claims).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(&checksum)
+        .execute(&mut *tx)
+        .await?;
+    let duplicate: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM examenes_archivoexamen WHERE archivo_sha256=$1)",
+    )
+    .bind(&checksum)
+    .fetch_one(&mut *tx)
+    .await?;
+    if duplicate {
+        return Err(invalid("El contenido de este archivo ya se importó."));
+    }
+    let meta = input.metadata.unwrap_or_else(|| json!({}));
+    let original_name = meta
+        .get("original_name")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.trim().is_empty() && value.len() <= 255 && !value.chars().any(char::is_control)
+        })
+        .unwrap_or(&name);
+    let filename = original_name.rsplit(['/', '\\']).next().unwrap_or(&name);
+    let base = Path::new(filename)
         .file_stem()
         .and_then(|v| v.to_str())
+        .filter(|value| !value.is_empty())
         .unwrap_or("Examen");
-    let chunks: Vec<&[Question]> = questions.chunks(40).collect();
+    let chunks: Vec<&[Question]> = questions
+        .chunks(if categoria == "A2" { 30 } else { 40 })
+        .collect();
     let mut created = Vec::new();
     let mut ids = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
@@ -128,14 +197,13 @@ pub async fn import(
         } else {
             base.to_owned()
         };
-        sqlx::query("INSERT INTO examenes_examen (id,created_date,updated_date,nombre,categoria,descripcion,activo,num_preguntas,creado_por_id) VALUES ($1,NOW(),NOW(),$2,$3,$4,TRUE,$5,$6)").bind(id).bind(title.chars().take(255).collect::<String>()).bind(&categoria).bind(format!("Importado desde {name}")).bind(i32::try_from(chunk.len()).unwrap_or(i32::MAX)).bind(claims.profile_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO examenes_examen (id,created_date,updated_date,nombre,categoria,descripcion,activo,num_preguntas,creado_por_id,duration_seconds,passing_percent) VALUES ($1,NOW(),NOW(),$2,$3,$4,FALSE,$5,$6,$7,75)").bind(id).bind(title.chars().take(255).collect::<String>()).bind(&categoria).bind(format!("Importado desde {filename}")).bind(i32::try_from(chunk.len()).unwrap_or(i32::MAX)).bind(claims.profile_id).bind(if categoria=="A2" {1800} else {2400}).execute(&mut *tx).await?;
         for (order, q) in chunk.iter().enumerate() {
             sqlx::query("INSERT INTO examenes_pregunta (id,created_date,updated_date,examen_id,enunciado,opcion_a,opcion_b,opcion_c,opcion_d,respuesta_correcta,orden,imagen_url) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,$8,$9,'')").bind(Uuid::new_v4()).bind(id).bind(&q.statement).bind(q.options.get(&'a').cloned().unwrap_or_default()).bind(q.options.get(&'b').cloned().unwrap_or_default()).bind(q.options.get(&'c').cloned().unwrap_or_default()).bind(q.options.get(&'d').cloned().unwrap_or_default()).bind(q.answer.to_string()).bind(i32::try_from(order+1).unwrap_or(i32::MAX)).execute(&mut *tx).await?;
         }
         ids.push(id.to_string());
         created.push(json!({"id":id,"nombre":title,"num_preguntas":chunk.len()}));
     }
-    let meta = input.metadata.unwrap_or_else(|| json!({}));
     sqlx::query("INSERT INTO examenes_archivoexamen (id,created_date,updated_date,examen_id,nombre_archivo,archivo_url,archivo_path,archivo_content_type,archivo_tamano,archivo_sha256,descripcion,categoria,num_examenes,subido_por_id) VALUES ($1,NOW(),NOW(),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)").bind(Uuid::new_v4()).bind(ids.join(",")).bind(meta.get("original_name").and_then(Value::as_str).unwrap_or(&name)).bind(&input.file_url).bind(&relative).bind(meta.get("content_type").and_then(Value::as_str).unwrap_or("")).bind(size).bind(&checksum).bind(format!("Importación automática — {} preguntas",questions.len())).bind(&categoria).bind(i32::try_from(created.len()).unwrap_or(i32::MAX)).bind(claims.profile_id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(
@@ -145,14 +213,99 @@ pub async fn import(
 
 fn extract_lines(data: &[u8], extension: &str) -> Result<Vec<Line>, AppError> {
     validate_input_size(data.len())?;
+    let signature_matches = match extension {
+        "pdf" => data.starts_with(b"%PDF-"),
+        "docx" => data.starts_with(b"PK\x03\x04"),
+        "doc" => data.starts_with(&[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+        _ => false,
+    };
+    if !signature_matches {
+        return Err(invalid(
+            "El contenido no corresponde al formato del documento.",
+        ));
+    }
     match extension {
         "docx" => docx_lines(data),
         "pdf" => pdf_lines(data),
-        "doc" => Err(invalid(
-            "Formato .doc no soportado. Convierta el archivo a PDF o DOCX.",
-        )),
+        "doc" => legacy_doc_lines(data),
         _ => Err(invalid("Formato de archivo no soportado.")),
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn legacy_doc_lines(_data: &[u8]) -> Result<Vec<Line>, AppError> {
+    Err(invalid(
+        "La lectura aislada de DOC requiere el runtime Linux de la aplicación.",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn legacy_doc_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+        thread,
+        time::{Duration, Instant},
+    };
+    let mut child = Command::new("/usr/bin/prlimit")
+        .args([
+            "--as=268435456",
+            "--cpu=10",
+            "--fsize=0",
+            "--nofile=16",
+            "--nproc=1",
+            "--",
+            "/usr/local/bin/uasspain-document-converter",
+        ])
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| invalid("No está disponible el lector aislado de DOC."))?;
+    let mut input = child.stdin.take().ok_or(AppError::Internal)?;
+    let output = child.stdout.take().ok_or(AppError::Internal)?;
+    let owned = data.to_vec();
+    let writer = thread::spawn(move || input.write_all(&owned));
+    let reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        output
+            .take(3 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    });
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let written = writer.join().ok().and_then(Result::ok).is_some();
+    let bytes = reader
+        .join()
+        .ok()
+        .and_then(Result::ok)
+        .ok_or_else(|| invalid("Salida DOC no válida."))?;
+    if !written || !status.is_some_and(|status| status.success()) || bytes.len() > 3 * 1024 * 1024 {
+        return Err(invalid(
+            "DOC rechazado, demasiado complejo o fuera de los límites de conversión.",
+        ));
+    }
+    let parsed: Vec<Line> =
+        serde_json::from_slice(&bytes).map_err(|_| invalid("Salida DOC no válida."))?;
+    let mut lines = Vec::new();
+    let mut total = 0;
+    for line in parsed {
+        push_line(&mut lines, &mut total, line.text, line.bold)?;
+        lines.last_mut().expect("line just appended").color = line.color;
+    }
+    Ok(lines)
 }
 
 fn validate_input_size(size: usize) -> Result<(), AppError> {
@@ -175,7 +328,11 @@ fn push_line(
     if lines.len() >= MAX_LINES {
         return Err(invalid("Demasiadas líneas en el documento."));
     }
-    lines.push(Line { text, bold });
+    lines.push(Line {
+        text,
+        bold,
+        color: None,
+    });
     Ok(())
 }
 
@@ -184,12 +341,40 @@ fn docx_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
     if zip.len() > 4096 {
         return Err(invalid("DOCX con demasiadas entradas."));
     }
+    let mut expanded = 0_u64;
+    for index in 0..zip.len() {
+        let entry = zip
+            .by_index(index)
+            .map_err(|_| invalid("DOCX no válido."))?;
+        let name = entry
+            .name()
+            .map_err(|_| invalid("Nombre ZIP no válido."))?
+            .replace('\\', "/")
+            .to_lowercase();
+        expanded = expanded
+            .checked_add(entry.size())
+            .ok_or_else(|| invalid("DOCX demasiado grande."))?;
+        if expanded > 32 * 1024 * 1024
+            || name.starts_with('/')
+            || name.contains(':')
+            || name.split('/').any(|part| part == "..")
+            || name.contains("vba")
+            || name.contains("macros")
+            || name.starts_with("word/embeddings/")
+        {
+            return Err(invalid(
+                "DOCX con contenido activo, ruta no válida o expansión excesiva.",
+            ));
+        }
+    }
     let mut xml = String::new();
     let index = (0..zip.len())
         .find(|index| {
-            zip.by_index(*index)
-                .ok()
-                .is_some_and(|file| file.name().replace('\\', "/") == "word/document.xml")
+            zip.by_index(*index).ok().is_some_and(|file| {
+                file.name()
+                    .ok()
+                    .is_some_and(|name| name.replace('\\', "/") == "word/document.xml")
+            })
         })
         .ok_or_else(|| invalid("DOCX sin documento."))?;
     let file = zip
@@ -204,201 +389,17 @@ fn docx_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
     if xml.len() > MAX_DOCX_XML_BYTES {
         return Err(invalid("Contenido DOCX descomprimido mayor de 8 MiB."));
     }
-    let mut reader = Reader::from_str(&xml);
-    let mut lines = Vec::new();
-    let mut text = String::new();
-    let mut bold = false;
-    let mut in_text = false;
-    let mut bytes = 0;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) => match e.name().as_ref() {
-                "w:p" => {
-                    text.clear();
-                    bold = false
-                }
-                "w:t" => in_text = true,
-                "w:b" => bold = true,
-                _ => {}
-            },
-            Ok(Event::Empty(e)) if e.name().as_ref() == "w:b" => bold = true,
-            Ok(Event::Text(e)) if in_text => text.push_str(&e.xml10_content()),
-            Ok(Event::End(e)) => match e.name().as_ref() {
-                "w:t" => in_text = false,
-                "w:p" => {
-                    let clean = text.trim();
-                    if !clean.is_empty() {
-                        push_line(&mut lines, &mut bytes, clean.to_owned(), bold)?;
-                    }
-                }
-                _ => {}
-            },
-            Ok(Event::Eof) => break,
-            Err(_) => return Err(invalid("DOCX ilegible.")),
-            _ => {}
-        }
-    }
-    Ok(lines)
+    rich_text::docx_xml(&xml)
 }
+
 fn pdf_lines(data: &[u8]) -> Result<Vec<Line>, AppError> {
-    let doc = Document::load_mem_with_options(
-        data,
-        LoadOptions {
-            strict: true,
-            max_decompressed_size: Some(MAX_IMPORT_BYTES),
-            ..Default::default()
-        },
-    )
-    .map_err(|_| invalid("PDF no válido o demasiado extenso al descomprimir."))?;
-    let pages = doc.get_pages();
-    if doc.is_encrypted() || doc.was_encrypted() || pages.is_empty() || pages.len() > 500 {
-        return Err(invalid("PDF cifrado, vacío o con más de 500 páginas."));
-    }
-    let mut lines = Vec::new();
-    let mut bytes = 0;
-    let mut decoded_bytes = 0usize;
-    let mut operations = 0usize;
-    for (page_number, page_id) in pages {
-        let fonts = doc
-            .get_page_fonts(page_id)
-            .map_err(|_| invalid("PDF ilegible."))?;
-        if fonts.len() > 256 {
-            return Err(invalid("Demasiadas fuentes en una página PDF."));
-        }
-        let bold_fonts: BTreeMap<Vec<u8>, bool> = fonts
-            .into_iter()
-            .map(|(name, dict)| {
-                let base = dict
-                    .get(b"BaseFont")
-                    .ok()
-                    .and_then(|value| value.as_name().ok())
-                    .map(|value| String::from_utf8_lossy(value).to_ascii_lowercase())
-                    .unwrap_or_default();
-                (
-                    name,
-                    base.contains("bold") || base.contains("black") || base.contains("heavy"),
-                )
-            })
-            .collect();
-        let content_bytes = doc
-            .get_page_content_with_limit(page_id, MAX_IMPORT_BYTES)
-            .map_err(|_| invalid("PDF ilegible."))?;
-        decoded_bytes = decoded_bytes
-            .checked_add(content_bytes.len())
-            .filter(|total| *total <= 64 * 1024 * 1024)
-            .ok_or_else(|| invalid("Contenido PDF descomprimido demasiado extenso."))?;
-        let content =
-            Content::decode_strict(&content_bytes).map_err(|_| invalid("PDF ilegible."))?;
-        operations = operations
-            .checked_add(content.operations.len())
-            .filter(|total| *total <= 1_000_000)
-            .ok_or_else(|| invalid("Demasiadas operaciones en el PDF."))?;
-        let mut flags = Vec::new();
-        let mut current_bold = false;
-        let mut has_text = false;
-        for operation in content.operations {
-            match operation.operator.as_str() {
-                "Tf" => {
-                    if has_text {
-                        flags.push(current_bold);
-                        has_text = false;
-                    }
-                    current_bold = operation
-                        .operands
-                        .first()
-                        .and_then(|value| value.as_name().ok())
-                        .and_then(|name| bold_fonts.get(name))
-                        .copied()
-                        .unwrap_or(false);
-                }
-                "Tj" | "TJ" => has_text = true,
-                _ => {}
-            }
-        }
-        if has_text {
-            flags.push(current_bold);
-        }
-        for (index, chunk) in doc
-            .extract_text_chunks_with_limit(&[page_number], MAX_IMPORT_BYTES)
-            .into_iter()
-            .enumerate()
-        {
-            let chunk = chunk.map_err(|_| invalid("No se pudo extraer texto del PDF."))?;
-            let font_bold = flags.get(index).copied().unwrap_or(false);
-            for raw in chunk.lines() {
-                let clean = raw.trim();
-                if !clean.is_empty() {
-                    push_line(
-                        &mut lines,
-                        &mut bytes,
-                        clean.trim_matches('*').trim().to_owned(),
-                        font_bold || (clean.starts_with("**") && clean.ends_with("**")),
-                    )?;
-                }
-            }
-        }
-    }
-    Ok(lines)
+    rich_text::pdf(data)
 }
+
 fn parse_questions(lines: &[Line]) -> (Vec<Question>, Vec<Value>) {
-    let mut good = Vec::new();
-    let mut errors = Vec::new();
-    let mut current: Option<PendingQuestion> = None;
-    let flush = |current: &mut Option<PendingQuestion>,
-                 good: &mut Vec<Question>,
-                 errors: &mut Vec<Value>| {
-        if let Some(pending) = current.take() {
-            if let Some(answer) = pending
-                .answer
-                .filter(|_| pending.options.len() >= 2 && !pending.multiple_bold_answers)
-            {
-                good.push(Question {
-                    statement: pending.statement,
-                    options: pending.options,
-                    answer,
-                })
-            } else {
-                errors.push(json!({"numero":pending.number,"motivo":if pending.multiple_bold_answers {"Más de una respuesta en negrita."} else {"Faltan opciones o respuesta correcta en negrita."}}))
-            }
-        }
-    };
-    for line in lines {
-        if let Some((number, statement)) = question_start(&line.text) {
-            flush(&mut current, &mut good, &mut errors);
-            current = Some(PendingQuestion {
-                number,
-                statement,
-                options: BTreeMap::new(),
-                answer: None,
-                multiple_bold_answers: false,
-            });
-            continue;
-        }
-        if let Some(pending) = &mut current
-            && let Some((letter, value)) = option_line(&line.text)
-        {
-            pending.options.insert(letter, value);
-            if line.bold {
-                if pending.answer.is_some_and(|old| old != letter) {
-                    pending.multiple_bold_answers = true;
-                } else {
-                    pending.answer = Some(letter)
-                }
-            }
-            continue;
-        }
-        if let Some(pending) = &mut current
-            && pending.options.is_empty()
-        {
-            if !pending.statement.is_empty() {
-                pending.statement.push(' ');
-            }
-            pending.statement.push_str(line.text.trim());
-        }
-    }
-    flush(&mut current, &mut good, &mut errors);
-    (good, errors)
+    questions::parse(lines)
 }
+
 fn question_start(text: &str) -> Option<(usize, String)> {
     let trimmed = text.trim();
     let split = trimmed.find(|c: char| !c.is_ascii_digit())?;
@@ -471,6 +472,42 @@ mod tests {
         dictionary,
     };
 
+    #[test]
+    #[ignore = "requires the three owner-provided STS PDFs via UASSPAIN_STS_DIRECTORY"]
+    fn owner_desktop_sts_pdfs_preserve_questions_and_identify_unmarked_source() {
+        let root =
+            std::env::var("UASSPAIN_STS_DIRECTORY").expect("explicit STS directory required");
+        let mut complete = true;
+        for index in 1..=3 {
+            let path = std::path::Path::new(&root).join(format!("EXAMEN STS {index}.pdf"));
+            let bytes = std::fs::read(path).expect("owner-provided PDF must exist");
+            let lines = pdf_lines(&bytes).expect("PDF extraction must succeed");
+            let (questions, errors) = parse_questions(&lines);
+            eprintln!(
+                "STS_DOCUMENT_{index}: lines={}, valid={}, errors={}",
+                lines.len(),
+                questions.len(),
+                errors.len()
+            );
+            eprintln!("STS_DOCUMENT_{index}_DIAGNOSTICS: {errors:?}");
+            if index < 3 {
+                complete &= questions.len() == 40 && errors.is_empty();
+            } else {
+                complete &= questions.len() == 36
+                    && errors.len() == 4
+                    && errors
+                        .iter()
+                        .filter_map(|error| error["numero"].as_u64())
+                        .collect::<Vec<_>>()
+                        == vec![5, 7, 21, 22];
+            }
+        }
+        assert!(
+            complete,
+            "STS1/2 must retain all 40 valid questions; STS3 must explicitly diagnose its four independently verified unmarked questions"
+        );
+    }
+
     fn docx(xml: &[u8]) -> Vec<u8> {
         use std::io::{Cursor, Write};
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -496,14 +533,51 @@ mod tests {
     }
 
     #[test]
-    fn docx_keeps_three_options_and_bold_solution() {
+    fn docx_rejects_three_options_even_with_bold_solution() {
         let bytes = docx(br#"<w:document><w:p><w:r><w:t>1. Question</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>A. Correct</w:t></w:r></w:p><w:p><w:r><w:t>B. Wrong</w:t></w:r></w:p><w:p><w:r><w:t>C. Other</w:t></w:r></w:p></w:document>"#);
         let lines = docx_lines(&bytes).unwrap();
         let (questions, errors) = parse_questions(&lines);
+        assert!(questions.is_empty());
+        assert_eq!(errors.len(), 1);
+    }
+
+    #[test]
+    fn docx_keeps_four_options_and_bold_solution() {
+        let bytes=docx(br#"<w:document><w:p><w:r><w:t>1. Question</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>A. Correct</w:t></w:r></w:p><w:p><w:r><w:t>B. Wrong</w:t></w:r></w:p><w:p><w:r><w:t>C. Other</w:t></w:r></w:p><w:p><w:r><w:t>D. Last</w:t></w:r></w:p></w:document>"#);
+        let (questions, errors) = parse_questions(&docx_lines(&bytes).unwrap());
         assert!(errors.is_empty());
         assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].options.len(), 3);
+        assert_eq!(questions[0].options.len(), 4);
         assert_eq!(questions[0].answer, 'a');
+    }
+
+    #[test]
+    fn docx_preserves_entities_color_and_disabled_bold() {
+        let bytes=docx(br#"<w:document><w:p><w:r><w:t>1. A &amp; B &#x2713;</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>A. Primera</w:t></w:r></w:p><w:p><w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>B. Correcta</w:t></w:r></w:p><w:p><w:r><w:t>C. Tercera</w:t></w:r></w:p><w:p><w:r><w:t>D. Cuarta</w:t></w:r></w:p></w:document>"#);
+        let (questions, errors) = parse_questions(&docx_lines(&bytes).unwrap());
+        assert!(errors.is_empty());
+        assert_eq!(questions[0].answer, 'b');
+        assert_eq!(questions[0].statement, "A & B ✓");
+    }
+
+    #[test]
+    fn docx_regular_option_label_does_not_hide_a_short_bold_answer() {
+        let bytes=docx(br#"<w:document><w:p><w:r><w:t>1. Distancia</w:t></w:r></w:p><w:p><w:r><w:t>A. </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>2m</w:t></w:r></w:p><w:p><w:r><w:t>B. 3m</w:t></w:r></w:p><w:p><w:r><w:t>C. 4m</w:t></w:r></w:p><w:p><w:r><w:t>D. 5m</w:t></w:r></w:p></w:document>"#);
+        let (questions, errors) = parse_questions(&docx_lines(&bytes).unwrap());
+        assert!(errors.is_empty());
+        assert_eq!(questions[0].answer, 'a');
+    }
+
+    #[test]
+    fn docx_bold_option_labels_alone_do_not_select_an_answer() {
+        let mut xml = "<w:document><w:p><w:r><w:t>1. Pregunta</w:t></w:r></w:p>".to_owned();
+        for letter in ['A', 'B', 'C', 'D'] {
+            xml.push_str(&format!("<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>{letter}. </w:t></w:r><w:r><w:t>Respuesta</w:t></w:r></w:p>"));
+        }
+        xml.push_str("</w:document>");
+        let (questions, errors) = parse_questions(&docx_lines(&docx(xml.as_bytes())).unwrap());
+        assert!(questions.is_empty());
+        assert_eq!(errors.len(), 1);
     }
 
     #[test]
@@ -541,14 +615,27 @@ mod tests {
             Line {
                 text: "1. Pregunta".into(),
                 bold: false,
+                color: None,
             },
             Line {
                 text: "A. Uno".into(),
                 bold: true,
+                color: None,
             },
             Line {
                 text: "B. Dos".into(),
                 bold: false,
+                color: None,
+            },
+            Line {
+                text: "C. Tres".into(),
+                bold: false,
+                color: None,
+            },
+            Line {
+                text: "D. Cuatro".into(),
+                bold: false,
+                color: None,
             },
         ];
         let (q, e) = parse_questions(&lines);
@@ -571,11 +658,19 @@ mod tests {
             operations: vec![
                 Operation::new("BT", vec![]),
                 Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("TL", vec![14.into()]),
+                Operation::new("Td", vec![50.into(), 750.into()]),
                 Operation::new("Tj", vec![Object::string_literal("1. Question\n")]),
+                Operation::new("T*", vec![]),
                 Operation::new("Tf", vec!["F2".into(), 12.into()]),
                 Operation::new("Tj", vec![Object::string_literal("A. Correct\n")]),
+                Operation::new("T*", vec![]),
                 Operation::new("Tf", vec!["F1".into(), 12.into()]),
                 Operation::new("Tj", vec![Object::string_literal("B. Wrong\n")]),
+                Operation::new("T*", vec![]),
+                Operation::new("Tj", vec![Object::string_literal("C. Other\n")]),
+                Operation::new("T*", vec![]),
+                Operation::new("Tj", vec![Object::string_literal("D. Last\n")]),
                 Operation::new("ET", vec![]),
             ],
         };

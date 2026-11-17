@@ -19,7 +19,7 @@ export default function AuthModalShell({
 
   return (
     <ModalPortal>
-      <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-6">
+      <div className="fixed inset-0 w-screen z-[100] flex items-center justify-center px-4 py-6">
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

@@ -32,7 +32,21 @@ pub async fn general(
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     require_role(&claims, &["admin", "instructor"])?;
-    store(multipart, false).await
+    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+    let uploaded = store(multipart, false).await?;
+    let path = uploaded.1.0["path"].as_str().ok_or(AppError::Internal)?;
+    if let Err(error) =
+        sqlx::query("INSERT INTO upload_ownership(storage_path,owner_id) VALUES($1,$2)")
+            .bind(path)
+            .bind(claims.profile_id)
+            .execute(pool)
+            .await
+    {
+        // This path was minted by this request; no existing file is selected.
+        let _ = fs::remove_file(media_root().await?.join(path)).await;
+        return Err(error.into());
+    }
+    Ok(uploaded)
 }
 
 pub async fn avatar(
@@ -45,9 +59,140 @@ pub async fn avatar(
 }
 
 pub async fn registration_avatar(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     multipart: Multipart,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
-    store(multipart, true).await
+    crate::auth::enforce_login_rate(&headers, "registration-avatar")?;
+    let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(850529124)")
+        .execute(&mut *tx)
+        .await?;
+    let root = media_root().await?;
+    fs::create_dir_all(root.join("avatars"))
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let directory = fs::canonicalize(root.join("avatars"))
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if !directory.starts_with(&root) {
+        return Err(AppError::Forbidden);
+    }
+    let expired:Vec<String>=sqlx::query_scalar("SELECT storage_path FROM registration_avatar_upload WHERE owner_id IS NULL AND expires_at<NOW() ORDER BY expires_at LIMIT 32 FOR UPDATE SKIP LOCKED")
+        .fetch_all(&mut *tx).await?;
+    for path in expired {
+        if !valid_registration_avatar_path(&path) {
+            continue;
+        }
+        match fs::remove_file(root.join(&path)).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => continue,
+        }
+        sqlx::query(
+            "DELETE FROM registration_avatar_upload WHERE storage_path=$1 AND owner_id IS NULL",
+        )
+        .bind(path)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let requester = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .unwrap_or("local")
+        .trim();
+    let lookup = state
+        .cipher
+        .blind_index(&format!("registration-avatar-ip:{requester}"))?;
+    let (count,bytes):(i64,i64)=sqlx::query_as("SELECT count(*),COALESCE(sum(byte_size),0)::bigint FROM registration_avatar_upload WHERE requester_lookup=$1 AND created_at>NOW()-INTERVAL '24 hours'")
+        .bind(&lookup).fetch_one(&mut *tx).await?;
+    if count >= 20 || bytes + max_upload_bytes(true) as i64 > 20 * 1024 * 1024 {
+        return Err(AppError::RateLimited);
+    }
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(sum(byte_size),0)::bigint FROM registration_avatar_upload",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if total + max_upload_bytes(true) as i64 > 512 * 1024 * 1024 {
+        return Err(invalid(
+            "Cuota de fotos alcanzada. Puede registrarse sin fotografía.",
+        ));
+    }
+    let mut uploaded = store(multipart, true).await?;
+    let path = uploaded.1.0["path"]
+        .as_str()
+        .ok_or(AppError::Internal)?
+        .to_owned();
+    let ticket = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let ticket_lookup = state
+        .cipher
+        .blind_index(&format!("registration-avatar-ticket:{ticket}"))?;
+    let size = uploaded.1.0["size"].as_i64().ok_or(AppError::Internal)?;
+    let inserted=sqlx::query("INSERT INTO registration_avatar_upload(ticket_lookup,storage_path,requester_lookup,byte_size) VALUES($1,$2,$3,$4)")
+        .bind(ticket_lookup).bind(&path).bind(lookup).bind(size).execute(&mut *tx).await;
+    if let Err(error) = inserted {
+        let _ = fs::remove_file(root.join(&path)).await;
+        return Err(error.into());
+    }
+    if tx.commit().await.is_err() {
+        let _ = fs::remove_file(root.join(&path)).await;
+        return Err(AppError::Internal);
+    }
+    uploaded.1.0["avatar_upload_token"] = json!(ticket);
+    Ok(uploaded)
+}
+
+fn valid_registration_avatar_path(path: &str) -> bool {
+    path.strip_prefix("avatars/avatar_")
+        .and_then(|name| name.split_once('.'))
+        .is_some_and(|(id, ext)| Uuid::parse_str(id).is_ok() && IMAGE_EXTENSIONS.contains(&ext))
+}
+
+pub(crate) async fn claim_registration_avatar(
+    state: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner: Uuid,
+    photo: &str,
+    ticket: &str,
+) -> Result<(), AppError> {
+    if photo.is_empty() {
+        return Ok(());
+    }
+    let url = url::Url::parse(photo).map_err(|_| invalid("Vuelva a subir la fotografía."))?;
+    let origin =
+        url::Url::parse(&std::env::var("FRONTEND_URL").map_err(|_| AppError::Unavailable)?)
+            .map_err(|_| AppError::Unavailable)?;
+    let path = url
+        .path()
+        .strip_prefix("/media/")
+        .ok_or_else(|| invalid("Fotografía no autorizada."))?;
+    if url.origin() != origin.origin()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !valid_registration_avatar_path(path)
+        || ticket.len() != 64
+        || !ticket.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(invalid(
+            "Fotografía no autorizada. Súbala de nuevo o continúe sin foto.",
+        ));
+    }
+    let lookup = state
+        .cipher
+        .blind_index(&format!("registration-avatar-ticket:{ticket}"))?;
+    let changed=sqlx::query("UPDATE registration_avatar_upload SET owner_id=$1,consumed_at=NOW() WHERE ticket_lookup=$2 AND storage_path=$3 AND owner_id IS NULL AND expires_at>NOW()")
+        .bind(owner).bind(lookup).bind(path).execute(&mut **tx).await?.rows_affected();
+    if changed != 1 {
+        return Err(invalid(
+            "La fotografía ha caducado o ya se utilizó. Súbala de nuevo o continúe sin foto.",
+        ));
+    }
+    Ok(())
 }
 
 async fn store(
@@ -112,6 +257,7 @@ async fn store(
             "file_url": file_url,
             "path": relative_path,
             "absolute_url": absolute_url(&file_url),
+            "size":data.len(),
         });
         if !image_only {
             response["original_name"] = json!(original_name);
@@ -136,19 +282,9 @@ pub async fn download(
     require_role(&claims, &["admin", "instructor", "alumno"])?;
     if claims.role != "admin" {
         let statement = format!(
-            "SELECT EXISTS(SELECT 1 FROM materiales_material m WHERE \
-             (m.archivo_path=$1 OR (m.archivo_path='' AND \
-               regexp_replace(split_part(m.archivo_url,'?',1),'^https?://[^/]+','','i') \
-                 IN ('/api/media/' || $1, '/media/' || $1))) \
-             AND {} AND ($3::text<>'alumno' OR (m.activo AND NOT EXISTS \
-               (SELECT 1 FROM materiales_permisoaccesomaterial p WHERE p.alumno_id=$2 \
-                 AND NOT p.permitido AND (p.material_id=m.id OR \
-                   (p.material_id IS NULL AND p.categoria=m.categoria)))))) \
-             OR ($3::text<>'alumno' AND EXISTS(SELECT 1 FROM examenes_archivoexamen a WHERE \
-               (a.archivo_path=$1 OR (a.archivo_path='' AND \
-                 regexp_replace(split_part(a.archivo_url,'?',1),'^https?://[^/]+','','i') \
-                   IN ('/api/media/' || $1, '/media/' || $1))) AND {}))",
+            "SELECT EXISTS(SELECT 1 FROM upload_ownership u WHERE u.storage_path=$1 AND u.owner_id=$2 AND $3::text IN ('admin','instructor')) OR EXISTS(SELECT 1 FROM materiales_material m WHERE (m.archivo_path=$1 OR (m.archivo_path='' AND regexp_replace(split_part(m.archivo_url,'?',1),'^https?://[^/]+','','i') IN ('/api/media/' || $1,'/media/' || $1))) AND {} AND {}) OR ($3::text<>'alumno' AND EXISTS(SELECT 1 FROM examenes_archivoexamen a WHERE (a.archivo_path=$1 OR (a.archivo_path='' AND regexp_replace(split_part(a.archivo_url,'?',1),'^https?://[^/]+','','i') IN ('/api/media/' || $1,'/media/' || $1))) AND {}))",
             crate::academic_scope::resource_scope("m", "subido_por_id", 3, 2),
+            crate::academic_scope::material_access("m", 3, 2),
             crate::academic_scope::resource_scope("a", "subido_por_id", 3, 2)
         );
         let allowed: bool = sqlx::query_scalar(&statement)
@@ -391,6 +527,26 @@ fn invalid(message: &str) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn avatar_cleanup_only_selects_paths_minted_for_registration() {
+        let id = uuid::Uuid::new_v4();
+        assert!(super::valid_registration_avatar_path(&format!(
+            "avatars/avatar_{id}.png"
+        )));
+        for path in [
+            "avatars/legacy.png",
+            "uploads/avatar_0000.png",
+            "avatars/avatar_../secret.png",
+            "avatars/avatar_not-a-uuid.png",
+            "avatars/avatar_00000000-0000-0000-0000-000000000000.png/other",
+            "avatars/avatar_00000000-0000-0000-0000-000000000000.exe",
+        ] {
+            assert!(
+                !super::valid_registration_avatar_path(path),
+                "cleanup accepted {path}"
+            );
+        }
+    }
     use super::{
         extension, valid_private_path, validate_decodable_image, validate_magic, validate_type,
     };

@@ -46,6 +46,14 @@ pub struct FieldCipher {
 }
 
 impl FieldCipher {
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            current: Some([7; 32]),
+            previous: None,
+        }
+    }
+
     pub fn from_env() -> Result<Self, AppError> {
         Ok(Self {
             current: read_key("FIELD_ENCRYPTION_KEY", "FIELD_ENCRYPTION_KEY_FILE")?,

@@ -1,3 +1,4 @@
+import AcademicPracticalHistory from '@/components/AcademicPracticalHistory';
 import { CHART_COLORS } from '@/lib/themeConfig';
 import DataLoadNotice from '@/components/ui/DataLoadNotice';
 import React, { useState, useEffect } from 'react';
@@ -182,7 +183,7 @@ export default function AlumnoResultados({ alumnoId }) {
     setLoading(true);
     setLoadError('');
     try {
-      const data = await examenesService.resultados.filter({ alumno_id: alumnoId }, '-fecha', 200);
+      const data = await examenesService.resultados.listAll({ alumno_id: alumnoId });
       setResultados(data);
     } catch {
       setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');
@@ -222,6 +223,7 @@ export default function AlumnoResultados({ alumnoId }) {
 
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+      <AcademicPracticalHistory studentId={alumnoId} />
       <DataLoadNotice error={loadError} retry={loadData} />
       {/* Header */}
       <div className="mb-8">

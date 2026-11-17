@@ -721,6 +721,16 @@ pub struct TokenService {
 }
 
 impl TokenService {
+    #[cfg(test)]
+    pub(crate) fn test_headers_for_role(&self, role: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        let token = self
+            .issue(1, Uuid::new_v4(), role, "access", 5, "unit-only")
+            .unwrap();
+        headers.insert(VERIFIED_HEADER, token.parse().unwrap());
+        headers
+    }
+
     pub fn from_env() -> Result<Self, AppError> {
         let secret = read_secret("SECRET_KEY", "SECRET_KEY_FILE").ok_or(AppError::Unavailable)?;
         Ok(Self {

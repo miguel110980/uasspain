@@ -36,13 +36,13 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
     if (!silent) setLoading(true);
     const { values, failed } = await loadResources({
       Exámenes: () => examenesService.examenes.list(),
-      Resultados: () => examenesService.resultados.filter({ alumno_id: alumnoId }, '-created_date', 100),
+      Resultados: () => examenesService.resultados.listAll({ alumno_id: alumnoId }),
       Bloqueos: () => examenesService.bloqueos.filter({ alumno_id: alumnoId }),
     });
     if (request !== loadVersion.current) return;
     if (values.Exámenes) {
       setExamenes(values.Exámenes);
-      setSelectedExamen(current => current && !values.Exámenes.some(exam => exam.id === current.id) ? null : current);
+      setSelectedExamen(current => current ? values.Exámenes.find(exam => exam.id === current.id) ?? null : null);
     }
     if (values.Resultados) setResultados(values.Resultados);
     if (values.Bloqueos) {
@@ -203,7 +203,7 @@ export default function AlumnoExamenes({ alumnoId, onIniciarExamen }) {
               <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-3">Modalidad</p>
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { value: 'tiempo', label: 'Por tiempo', desc: '40 minutos', icon: Clock },
+                  { value: 'tiempo', label: 'Por tiempo', desc: selectedExamen.duration_seconds ? `${Number((selectedExamen.duration_seconds / 60).toFixed(2))} minutos` : 'Duración no disponible', icon: Clock },
                   { value: 'libre', label: 'Libre', desc: 'Sin límite', icon: Play },
                 ].map(({ value, label, desc, icon: Icon }) => (
                   <button

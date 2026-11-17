@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const findings=JSON.parse(readFileSync('.run/four-issues-20261117/gitleaks-docs-redacted.json','utf8'));
+const scanner=JSON.parse(readFileSync('docs/audits/evidence/2026-11-17-video-repair-security.json','utf8'));
+assert.equal(findings.length,1);
+const finding=findings[0],file=finding.File.replaceAll('\\','/');
+assert.equal(finding.RuleID,'generic-api-key');
+assert.equal(file,'docs/audits/evidence/2026-11-17-direct-https-windows-boot.json');
+const checkpoint=JSON.parse(readFileSync(file,'utf8'));
+assert.equal(checkpoint.dpapi_sha256,createHash('sha256').update(readFileSync('.secrets/postgres-storage-key.dpapi')).digest('hex'));
+assert.equal(checkpoint.dpapi_sha256.length,64);
+const docs=scanner.checks.find(c=>c.id==='SECRETS:docs/audits');assert.equal(docs.status,'FAIL');
+assert.ok(scanner.checks.filter(c=>c!==docs).every(c=>c.status==='PASS'));
+const report={observed_at:new Date().toISOString(),raw_scan:'2026-11-17-video-repair-security.json',raw_scanner_status_preserved:scanner.status,raw_directory_exit:docs.exit,review:{rule:finding.RuleID,file,line:finding.StartLine,result:'FALSE_POSITIVE_VERIFIED_SHA256_OF_ENCRYPTED_DPAPI_FILE',verification:'Compared the value to the actual SHA-256 digest of the protected ciphertext; it is not a credential, token or private key; no value exported here'},scanner_rules_changed:false,exclusions_added:false,confirmed_secret_findings_in_scanned_directories:0,all_five_images_high:0,all_five_images_critical:0,scope:'Current five Docker images and gitleaks directory scans of scripts/audit and docs/audits only; no claim about all Git history',status:'PASS_WITH_DOCUMENTED_FALSE_POSITIVE_REVIEW'};
+writeFileSync('docs/audits/evidence/2026-11-17-video-repair-security-review.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));

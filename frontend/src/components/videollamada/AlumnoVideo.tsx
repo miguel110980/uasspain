@@ -50,13 +50,13 @@ export default function AlumnoVideo({ alumnoId, alumnoNombre }) {
   };
 
   const handleColgar = async () => {
-    setEnLlamada(false);
     if (llamadaActiva) {
       try {
         await conexionesService.videollamadas.update(llamadaActiva.id, { estado: 'finalizada' });
-      } catch { /* noop */ }
+      } catch { setCallError('No se pudo finalizar la llamada. Vuelve a intentarlo.'); return; }
       setLlamadaActiva(null);
     }
+    setEnLlamada(false);
   };
 
   const handleUnirse = () => {
@@ -120,6 +120,7 @@ export default function AlumnoVideo({ alumnoId, alumnoNombre }) {
                 <Video className="w-4 h-4" />
                 Unirse a la llamada
               </button>
+              <button onClick={() => { void handleColgar(); }} className="mt-3 px-4 py-2 border border-border-subtle text-sm">Rechazar llamada</button>
             </div>
           </motion.div>
         )}

@@ -22,7 +22,7 @@ export default function InstructorResultados() {
     setLoadError('');
     try {
       const [resultadosData, profilesData] = await Promise.all([
-        examenesService.resultados.list('-fecha', 500),
+        examenesService.resultados.listAll(),
         authService.listProfiles(),
       ]);
       setResultados(resultadosData);

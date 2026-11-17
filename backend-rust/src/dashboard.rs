@@ -24,18 +24,16 @@ WITH scope AS MATERIALIZED (
 SELECT jsonb_build_object(
  'students',(SELECT count(*) FROM scope),
  'active_students',(SELECT count(*) FROM scope WHERE status='activo'),
- 'pending_students',(SELECT count(*) FROM scope WHERE status='pendiente'),
+ 'pending_students',CASE WHEN $1='instructor' THEN (SELECT count(*) FROM accounts_userprofile p JOIN auth_user u ON u.id=p.user_id WHERE p.status='pendiente' AND p.otp_verified AND u.is_active AND p.role='alumno' AND jsonb_typeof(p.roles)='array' AND p.roles<@'["alumno"]'::jsonb) ELSE (SELECT count(*) FROM scope WHERE status='pendiente') END,
  'blocked_students',(SELECT count(*) FROM scope WHERE status='bloqueado'),
  'rejected_students',(SELECT count(*) FROM scope WHERE status='rechazado'),
  'results',(SELECT count(*) FROM results),
  'passed',(SELECT count(*) FROM results WHERE aprobado),
  'average_grade',(SELECT COALESCE(round(avg(nota),1),0) FROM results),
- 'materials',(SELECT count(*) FROM materiales_material m WHERE {material_scope} AND ($1<>'alumno' OR (m.activo AND NOT EXISTS (
-   SELECT 1 FROM materiales_permisoaccesomaterial p WHERE p.alumno_id=$2 AND NOT p.permitido AND (p.material_id=m.id OR (p.material_id IS NULL AND p.categoria=m.categoria)))))),
+ 'materials',(SELECT count(*) FROM materiales_material m WHERE {material_scope} AND {material_access}),
  'completed_materials',(SELECT count(*) FROM materiales_materialcompletado c JOIN scope p ON p.id=c.alumno_id WHERE c.completado),
- 'exams',(SELECT count(*) FROM examenes_examen e WHERE {exam_scope} AND ($1<>'alumno' OR (e.activo AND NOT EXISTS (
-   SELECT 1 FROM examenes_bloqueoexamen b WHERE b.alumno_id=$2 AND b.bloqueado AND (b.fecha_inicio IS NULL OR b.fecha_inicio<=NOW()) AND (b.fecha_fin IS NULL OR b.fecha_fin>NOW()) AND (b.examen_id=e.id OR (b.examen_id IS NULL AND b.categoria=e.categoria)))))),
- 'messages',CASE WHEN $1='admin' THEN NULL ELSE (SELECT count(*) FROM conexiones_mensaje m JOIN scope p ON p.id=m.alumno_id) END,
+ 'exams',(SELECT count(*) FROM examenes_examen e WHERE {exam_scope} AND {exam_access}),
+ 'messages',CASE WHEN $1='admin' THEN NULL ELSE (SELECT count(*) FROM conexiones_mensaje m JOIN scope p ON p.id=m.alumno_id JOIN accounts_userprofile owner ON owner.id=m.alumno_id WHERE m.instructor_id=owner.assigned_instructor_id) END,
  'connections',(SELECT count(*) FROM conexiones_registroconexion r WHERE $1='admin' OR r.profile_id=$2 OR r.profile_id IN(SELECT id FROM scope)),
  'active_sessions',(SELECT count(DISTINCT p.id) FROM conexiones_registroconexion r JOIN accounts_userprofile p ON p.id=r.profile_id JOIN auth_user u ON u.id=p.user_id
    WHERE r.estado_sesion='activa' AND r.estado_acceso='correcto' AND EXISTS(SELECT 1 FROM auth_tab_session ats WHERE ats.session_key=r.session_id AND ats.revoked_at IS NULL AND ats.expires_at>clock_timestamp() AND ats.last_activity_at>clock_timestamp()-({idle_timeout} * INTERVAL '1 second')) AND p.status='activo' AND p.otp_verified AND u.is_active
@@ -43,7 +41,9 @@ SELECT jsonb_build_object(
 )"#,
         idle_timeout = crate::auth::IDLE_TIMEOUT_SECONDS,
         material_scope = crate::academic_scope::resource_scope("m", "subido_por_id", 1, 2),
-        exam_scope = crate::academic_scope::resource_scope("e", "creado_por_id", 1, 2)
+        exam_scope = crate::academic_scope::resource_scope("e", "creado_por_id", 1, 2),
+        material_access = crate::academic_scope::material_access("m", 1, 2),
+        exam_access = crate::academic_scope::exam_access("e", 1, 2)
     )
 }
 

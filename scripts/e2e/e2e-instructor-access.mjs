@@ -91,7 +91,7 @@ try{
   gate((await toggle(true)).status===400,'category_exam_deny_not_overridden');
   await admin.call(`/api/bloqueos-examen/${inherited.id}/`,'DELETE');
   const studentCounts=(await student.call('/api/dashboard/counts/')).body;
-  gate(studentCounts.exams===(await student.call('/api/examenes/')).body.length&&studentCounts.materials===(await student.call('/api/materiales/')).body.length,'student_counters_match_authorized_lists');
+  gate(studentCounts.exams===(await student.call('/api/examenes/')).body.length&&studentCounts.materials===(await student.call('/api/materiales/')).body.filter(m=>!m.bloqueado).length,'student_counters_match_authorized_lists');
   const counts=(await instructor.call('/api/dashboard/counts/')).body;
   gate(counts.students===Number(sql(`SELECT count(*) FROM accounts_userprofile WHERE assigned_instructor_id='${uuid(teacherId)}' AND (role='alumno' OR roles ? 'alumno')`)),'instructor_total_matches_full_postgres_scope');
   gate((await foreign.call('/api/resultados-examen/delete-many/','POST',{query:{alumno_id:pupilId}})).body.deleted===0&&sql(`SELECT count(*) FROM examenes_resultadoexamen WHERE id='${resultId}'`)==='1','foreign_bulk_result_deletion_preserves_history');

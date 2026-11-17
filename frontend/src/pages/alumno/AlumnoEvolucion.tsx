@@ -92,7 +92,7 @@ export default function AlumnoEvolucion({ alumnoId }) {
     setLoading(true);
     setLoadError('');
     try {
-      const data = await examenesService.resultados.filter({ alumno_id: alumnoId }, '-fecha', 200);
+      const data = await examenesService.resultados.listAll({ alumno_id: alumnoId });
       setResultados(data);
     } catch {
       setLoadError('No se pudieron cargar los datos. Vuelve a intentarlo.');

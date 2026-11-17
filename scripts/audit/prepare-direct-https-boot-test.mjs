@@ -1,0 +1,14 @@
+/** Checkpoint before an explicitly owner-authorized normal Windows reboot. No reboot here. */
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {readFileSync,writeFileSync,existsSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const path='docs/audits/evidence/2026-11-17-direct-https-windows-boot.json';
+assert.ok(!existsSync(path),'Preserve the existing boot checkpoint; inspect it before a new attempt');
+const cmd=(exe,args)=>execFileSync(exe,args,{encoding:'utf8',windowsHide:true,stdio:['ignore','pipe','pipe']});
+const sha=file=>createHash('sha256').update(readFileSync(file)).digest('hex');
+const os=JSON.parse(cmd('powershell.exe',['-NoProfile','-Command',"$uasOs=Get-CimInstance Win32_OperatingSystem;[pscustomobject]@{computer=$uasOs.CSName;boot_utc=$uasOs.LastBootUpTime.ToUniversalTime().ToString('o')} | ConvertTo-Json"]));
+const containers=['nginx','frontend','backend','postgres','redis'].map(service=>{const c=JSON.parse(cmd('docker',['inspect','uasspain-'+service]))[0];assert.equal(c.Config.Labels['com.docker.compose.project'],'uasspain');assert.equal(c.State.Health?.Status,'healthy');assert.equal(c.HostConfig.RestartPolicy.Name,'unless-stopped');return {service,id:c.Id,image:c.Image,started_at:c.State.StartedAt,restart_policy:c.HostConfig.RestartPolicy.Name,mounts:c.Mounts.filter(m=>m.Type==='volume').map(m=>({name:m.Name,destination:m.Destination})),bindings:c.HostConfig.PortBindings};});
+const proxy=cmd('netsh',['interface','portproxy','show','all']);assert.ok(!/192\.168\.1\.34\s+443/.test(proxy));
+const report={observed_at:new Date().toISOString(),status:'PREPARED_NOT_YET_REBOOTED',authorization:'Owner requested agent to perform the Windows reboot; owner then confirmed file copy stopped',os_before:os,containers_before:containers,compose_sha256:sha('docker-compose.yml'),env_sha256:sha('.env'),dpapi_sha256:sha('.secrets/postgres-storage-key.dpapi'),ca_sha256:sha('.secrets/tls/ca.crt'),external_before_reboot:{status:'PASS_OWNER_CONFIRMED',question_id:'call_afe1e44a9c5a4cccb46f04771bd10481',answer:'si',scope:'Mobile data without Wi-Fi/VPN/Tailscale/certificate exceptions; page and authenticated panel after direct HTTPS and Nginx restart'},startup_readonly_observations:{docker_desktop_existing_autostart:true,existing_limited_user_dpapi_unlock_task_running:true,all_five_restart_unless_stopped:true},new_startup_tasks:0,planned_restart:{executable:'shutdown.exe',arguments:['/r','/t','0'],force_close:false,request_executed:false},windows_boot_acceptance:'NOT_RUN',postboot_verifier:'node scripts/audit/verify-direct-https-after-windows-boot.mjs',release_gate:'BLOCKED'};
+writeFileSync(path,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({status:report.status,boot_before:os.boot_utc,healthy:containers.length,external:report.external_before_reboot.status}));

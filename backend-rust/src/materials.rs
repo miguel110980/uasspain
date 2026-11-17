@@ -78,14 +78,15 @@ pub async fn list_materials(
 ) -> Result<Json<Vec<Value>>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     let rows = sqlx::query_scalar::<_, Value>(&format!(
-        "SELECT to_jsonb(m) FROM materiales_material m WHERE \
+        "SELECT to_jsonb(m) || jsonb_build_object('bloqueado', \
+         $4::text='alumno' AND NOT ({grant})) FROM materiales_material m WHERE \
          ($1::text IS NULL OR m.categoria = $1) AND ($2::text IS NULL OR m.tipo = $2) \
          AND ($3::boolean IS NULL OR m.activo = $3) AND \
-         ($4::text <> 'alumno' OR (m.activo AND NOT EXISTS (SELECT 1 FROM materiales_permisoaccesomaterial p \
-           WHERE p.alumno_id = $5 AND p.permitido = FALSE AND \
-           (p.material_id = m.id OR (p.material_id IS NULL AND p.categoria = m.categoria))))) \
+         {access} \
          AND {} ORDER BY m.orden, m.created_date DESC LIMIT $6",
-        crate::academic_scope::resource_scope("m", "subido_por_id", 4, 5)
+        crate::academic_scope::resource_scope("m", "subido_por_id", 4, 5),
+        access = crate::academic_scope::material_listing_scope("m", 4),
+        grant = crate::academic_scope::material_grant("m", 5)
     ))
     .bind(query.categoria.as_deref())
     .bind(query.tipo.as_deref())
@@ -95,7 +96,22 @@ pub async fn list_materials(
     .bind(limit(query.limit))
     .fetch_all(pool(&state)?)
     .await?;
-    Ok(Json(rows))
+    Ok(Json(rows.into_iter().map(material_list_item).collect()))
+}
+
+fn material_list_item(row: Value) -> Value {
+    if row["bloqueado"] != true {
+        return row;
+    }
+    // Whitelist metadata: a locked assignment must never reveal a file URL,
+    // storage path, hash, video URL or future content-bearing columns.
+    let mut metadata = json!({"bloqueado": true});
+    for field in ["id", "titulo", "categoria", "tipo", "orden", "activo"] {
+        if let Some(value) = row.get(field) {
+            metadata[field] = value.clone();
+        }
+    }
+    metadata
 }
 
 pub async fn create_material(
@@ -147,8 +163,9 @@ pub async fn material_detail(
 ) -> Result<Json<Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
     let statement = format!(
-        "SELECT to_jsonb(m) FROM materiales_material m WHERE m.id=$1 AND ($2::text<>'alumno' OR (m.activo AND NOT EXISTS (SELECT 1 FROM materiales_permisoaccesomaterial p WHERE p.alumno_id=$3 AND NOT p.permitido AND (p.material_id=m.id OR (p.material_id IS NULL AND p.categoria=m.categoria))))) AND {}",
-        crate::academic_scope::resource_scope("m", "subido_por_id", 2, 3)
+        "SELECT to_jsonb(m) FROM materiales_material m WHERE m.id=$1 AND {access} AND {}",
+        crate::academic_scope::resource_scope("m", "subido_por_id", 2, 3),
+        access = crate::academic_scope::material_access("m", 2, 3)
     );
     let row = sqlx::query_scalar::<_, Value>(&statement)
         .bind(id)
@@ -226,10 +243,6 @@ pub struct ScopedQuery {
 pub struct CompletionWrite {
     alumno_id: Option<Uuid>,
     material_id: Uuid,
-    #[serde(default)]
-    material_titulo: String,
-    #[serde(default)]
-    categoria: String,
     completado: Option<bool>,
     fecha_completado: Option<DateTime<Utc>>,
     progreso: Option<u16>,
@@ -290,6 +303,8 @@ pub async fn create_completion(
         ensure_assigned_student(&state, &claims, student).await?;
         student
     };
+    let (mut tx, title, category) =
+        completion_transaction(&state, &claims, student, input.material_id).await?;
     let progress = input.progreso.unwrap_or(100).min(100) as i16;
     let row = sqlx::query_scalar::<_, Value>(
         "INSERT INTO materiales_materialcompletado (id, created_date, updated_date, alumno_id, \
@@ -300,9 +315,10 @@ pub async fn create_completion(
          RETURNING to_jsonb(materiales_materialcompletado) || \
          jsonb_build_object('alumno_id', alumno_id, 'material_id', material_id)",
     )
-    .bind(Uuid::new_v4()).bind(student).bind(input.material_id).bind(input.material_titulo)
-    .bind(input.categoria).bind(input.completado.unwrap_or(true)).bind(input.fecha_completado)
-    .bind(progress).fetch_one(pool(&state)?).await?;
+    .bind(Uuid::new_v4()).bind(student).bind(input.material_id).bind(title)
+    .bind(category).bind(input.completado.unwrap_or(true)).bind(input.fecha_completado)
+    .bind(progress).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
     Ok((StatusCode::CREATED, Json(row)))
 }
 
@@ -313,6 +329,14 @@ pub async fn update_completion(
     Json(input): Json<CompletionPatch>,
 ) -> Result<Json<Value>, AppError> {
     let claims = authenticate(&state, &headers, "access")?;
+    let (student, material): (Uuid, Uuid) = sqlx::query_as(
+        "SELECT alumno_id,material_id FROM materiales_materialcompletado WHERE id=$1",
+    )
+    .bind(id)
+    .fetch_optional(pool(&state)?)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    let (mut tx, _, _) = completion_transaction(&state, &claims, student, material).await?;
     let progress = input.progreso.map(|value| value.min(100) as i16);
     let row = sqlx::query_scalar::<_, Value>(
         "UPDATE materiales_materialcompletado SET completado = COALESCE($2, completado), \
@@ -327,10 +351,43 @@ pub async fn update_completion(
     .bind(progress)
     .bind(&claims.role)
     .bind(claims.profile_id)
-    .fetch_optional(pool(&state)?)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or(AppError::NotFound)?;
+    tx.commit().await?;
     Ok(Json(row))
+}
+
+async fn completion_transaction(
+    state: &AppState,
+    claims: &Claims,
+    student: Uuid,
+    material: Uuid,
+) -> Result<(sqlx::Transaction<'static, sqlx::Postgres>, String, String), AppError> {
+    require_role(claims, &["admin", "instructor", "alumno"])?;
+    let mut tx = pool(state)?.begin().await?;
+    crate::account_lifecycle::lock(&mut tx).await?;
+    crate::account_lifecycle::actor_active(&mut tx, claims).await?;
+    let assigned: Option<Uuid> = sqlx::query_scalar("SELECT assigned_instructor_id FROM accounts_userprofile WHERE id=$1 AND status='activo' AND otp_verified AND (role='alumno' OR roles ? 'alumno') FOR UPDATE")
+        .bind(student).fetch_optional(&mut *tx).await?.ok_or(AppError::NotFound)?;
+    if (claims.role == "alumno" && claims.profile_id != student)
+        || (claims.role == "instructor" && assigned != Some(claims.profile_id))
+    {
+        return Err(AppError::Forbidden);
+    }
+    let statement = format!(
+        "SELECT m.titulo,m.categoria FROM materiales_material m WHERE m.id=$1 AND {} AND {} FOR SHARE OF m",
+        crate::academic_scope::resource_scope("m", "subido_por_id", 2, 3),
+        crate::academic_scope::material_access("m", 2, 3)
+    );
+    let (title, category): (String, String) = sqlx::query_as(&statement)
+        .bind(material)
+        .bind(&claims.role)
+        .bind(claims.profile_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok((tx, title, category))
 }
 
 pub async fn completion_detail(
@@ -401,9 +458,9 @@ pub async fn list_publications(
     headers: HeaderMap,
     Query(query): Query<MaterialQuery>,
 ) -> Result<Json<Vec<Value>>, AppError> {
-    authenticate(&state, &headers, "access")?;
-    let rows = sqlx::query_scalar::<_, Value>("SELECT to_jsonb(p) FROM materiales_publicacionboe p WHERE ($1::text IS NULL OR categoria = $1) AND ($2::boolean IS NULL OR activo = $2) ORDER BY fecha_publicacion DESC NULLS LAST, created_date DESC LIMIT $3")
-        .bind(query.categoria.as_deref()).bind(query.activo).bind(limit(query.limit)).fetch_all(pool(&state)?).await?;
+    let claims = authenticate(&state, &headers, "access")?;
+    let rows = sqlx::query_scalar::<_, Value>("SELECT to_jsonb(p) FROM materiales_publicacionboe p WHERE ($1::text IS NULL OR categoria = $1) AND ($2::boolean IS NULL OR activo = $2) AND ($4<>'alumno' OR (activo AND (fecha_publicacion IS NULL OR fecha_publicacion<=CURRENT_DATE))) ORDER BY fecha_publicacion DESC NULLS LAST, created_date DESC LIMIT $3")
+        .bind(query.categoria.as_deref()).bind(query.activo).bind(limit(query.limit)).bind(&claims.role).fetch_all(pool(&state)?).await?;
     Ok(Json(rows))
 }
 
@@ -428,11 +485,12 @@ pub async fn publication_detail(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, AppError> {
-    authenticate(&state, &headers, "access")?;
+    let claims = authenticate(&state, &headers, "access")?;
     let row = sqlx::query_scalar::<_, Value>(
-        "SELECT to_jsonb(p) FROM materiales_publicacionboe p WHERE id=$1",
+        "SELECT to_jsonb(p) FROM materiales_publicacionboe p WHERE id=$1 AND ($2<>'alumno' OR (activo AND (fecha_publicacion IS NULL OR fecha_publicacion<=CURRENT_DATE)))",
     )
     .bind(id)
+    .bind(&claims.role)
     .fetch_optional(pool(&state)?)
     .await?
     .ok_or(AppError::NotFound)?;
@@ -624,7 +682,46 @@ pub(crate) async fn ensure_file_scope(
     path: &str,
     url: &str,
 ) -> Result<(), AppError> {
-    // A new record must not turn a known foreign private file into an owned resource.
+    // Check both references: a claimed path cannot mask a different private URL.
+    let url_path = url::Url::parse(url)
+        .ok()
+        .map(|value| value.path().to_owned())
+        .unwrap_or_else(|| url.to_owned());
+    let url_relative = url_path
+        .strip_prefix("/api/media/")
+        .or_else(|| url_path.strip_prefix("/media/"))
+        .unwrap_or("");
+    for relative in [path, url_relative]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+    {
+        if !crate::uploads::valid_private_path(relative) {
+            return Err(AppError::Validation("Ruta privada no válida.".into()));
+        }
+        let owner: Option<Uuid> =
+            sqlx::query_scalar("SELECT owner_id FROM upload_ownership WHERE storage_path=$1")
+                .bind(relative)
+                .fetch_optional(pool)
+                .await?;
+        if claims.role != "admin" {
+            match owner {
+                Some(id) if id == claims.profile_id => {}
+                Some(_) => return Err(AppError::Forbidden),
+                None => {
+                    // Legacy files require an existing resource authored by this actor.
+                    let owned: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM materiales_material WHERE subido_por_id=$2 AND \
+                         (archivo_path=$1 OR regexp_replace(regexp_replace(split_part(archivo_url,'?',1),'^https?://[^/]+','','i'),'^(/api)?/media/','')=$1)) \
+                         OR EXISTS(SELECT 1 FROM examenes_archivoexamen WHERE subido_por_id=$2 AND \
+                         (archivo_path=$1 OR regexp_replace(regexp_replace(split_part(archivo_url,'?',1),'^https?://[^/]+','','i'),'^(/api)?/media/','')=$1))"
+                    ).bind(relative).bind(claims.profile_id).fetch_one(pool).await?;
+                    if !owned {
+                        return Err(AppError::Forbidden);
+                    }
+                }
+            }
+        }
+    }
     let statement = format!(
         "SELECT EXISTS(SELECT 1 FROM materiales_material m WHERE NOT {} AND \
          ((NULLIF($1::text,'') IS NOT NULL AND m.archivo_path=$1) OR \
@@ -695,7 +792,33 @@ async fn delete(pool: &PgPool, table: &str, id: Uuid) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_url;
+    use super::{material_list_item, validate_url};
+    use serde_json::json;
+
+    #[test]
+    fn locked_material_exposes_only_catalog_metadata() {
+        let row = json!({
+            "id": "assigned", "titulo": "Course document", "categoria": "A2",
+            "tipo": "pdf", "orden": 1, "activo": true, "bloqueado": true,
+            "descripcion": "private description", "archivo_url": "private URL",
+            "archivo_path": "private path", "archivo_sha256": "private hash",
+            "video_url": "private video", "future_content": "private column"
+        });
+        assert_eq!(
+            material_list_item(row),
+            json!({
+                "id": "assigned", "titulo": "Course document", "categoria": "A2",
+                "tipo": "pdf", "orden": 1, "activo": true, "bloqueado": true
+            })
+        );
+    }
+
+    #[test]
+    fn unlocked_material_retains_download_metadata() {
+        let row = json!({"id": "allowed", "bloqueado": false,
+            "archivo_url": "/api/media/uploads/document.pdf", "archivo_nombre_original": "document.pdf"});
+        assert_eq!(material_list_item(row.clone()), row);
+    }
     #[test]
     fn rejects_active_url_schemes() {
         assert!(validate_url("javascript:alert(1)").is_err());

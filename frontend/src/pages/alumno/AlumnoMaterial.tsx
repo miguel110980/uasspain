@@ -54,6 +54,7 @@ export default function AlumnoMaterial({ alumnoId }) {
   };
 
   const toggleCompletado = async (materialId) => {
+    if (materiales.find((material) => material.id === materialId)?.bloqueado) return;
     const existente = completados.find((c) => c.material_id === materialId);
     if (existente) {
       const nuevoEstado = !existente.completado;
@@ -168,6 +169,7 @@ export default function AlumnoMaterial({ alumnoId }) {
                       </div>
                         <div className="col-span-2 flex flex-wrap items-center gap-2 sm:shrink-0">
                           <button
+                            disabled={mat.bloqueado === true}
                             onClick={() => toggleCompletado(mat.id)}
                             className={`inline-flex items-center gap-2 px-3 py-2 border text-xs font-bold uppercase tracking-widest transition-all duration-200 ${
                               estaCompletado(mat.id)
@@ -179,11 +181,13 @@ export default function AlumnoMaterial({ alumnoId }) {
                             {estaCompletado(mat.id) ? 'Completado' : 'Marcar'}
                           </button>
                           <button
+                            disabled={mat.bloqueado === true}
+                            title={mat.bloqueado ? 'Material bloqueado. Consulta con tu instructor.' : undefined}
                             onClick={() => handleDescargar(mat.archivo_url, mat.titulo, mat.archivo_nombre_original)}
                             className="inline-flex items-center gap-2 px-3 py-2 bg-primary/10 border border-primary/30 text-primary hover:bg-primary hover:text-primary-foreground text-xs font-bold uppercase tracking-widest transition-all duration-200"
                           >
                             <Download className="w-3.5 h-3.5" />
-                            Descargar
+                            {mat.bloqueado ? 'Bloqueado' : 'Descargar'}
                           </button>
                         </div>
                     </motion.div>

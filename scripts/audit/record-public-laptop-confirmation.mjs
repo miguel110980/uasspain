@@ -1,0 +1,7 @@
+/** Records the exact owner-confirmed independent external test, not a machine probe. */
+import {readFileSync,writeFileSync} from 'node:fs';
+const path='docs/audits/evidence/2026-11-16-public-after-network.json';
+const previous=JSON.parse(readFileSync(path,'utf8').replace(/^\uFEFF/,''));
+if(previous.latest_confirmation_id==='call_6cbd53e78e254fa7a35d65b5c5303898')throw Error('Confirmation already recorded');
+const report={recorded_at:new Date().toISOString(),status:'PASS',scope:'Basic public website and access-form rendering only, confirmed by owner on second laptop using mobile data after router HTTPS rule',target:'https://uasspain-prueba.duckdns.org',latest_confirmation_id:'call_6cbd53e78e254fa7a35d65b5c5303898',owner_confirmation:'funciona perfectamente',owner_test_conditions:'Second laptop, phone mobile data, Wi-Fi/VPN/Tailscale off, no certificate exceptions; conditions explicitly stated in the answered question',latest_external_laptop_test:'PASS_OWNER_CONFIRMED_AFTER_ROUTER_REPAIR',authenticated_admin:'NOT_RUN_ON_EXTERNAL_CLIENT',other_role_panels:'NOT_RUN_ON_EXTERNAL_CLIENT',wss_and_media_wan:'NOT_RUN',external_private_port_checks:'NOT_RUN',previous_observations:previous,limits:'Owner observation, not automated TCP capture; does not certify all panels, OAuth, WSS, media or absence of other public services'};
+writeFileSync(path,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({status:report.status,scope:report.scope}));

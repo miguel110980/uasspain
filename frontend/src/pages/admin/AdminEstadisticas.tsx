@@ -29,7 +29,7 @@ export default function AdminEstadisticas() {
   const load = (manual = false) => runLoad(async () => {
     const [profiles, resultados, examenes, material, registroConexion] = await Promise.all([
       authService.listProfiles('-created_date', 1000),
-      examenesService.resultados.list('-created_date', 1000),
+      examenesService.resultados.listAll(),
       examenesService.examenes.list(),
       materialesService.materiales.list(),
       conexionesService.registros.list('-created_date', 1000),

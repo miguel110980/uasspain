@@ -28,7 +28,7 @@ export default function InstructorEstadisticas() {
     setLoadError('');
     try {
       const [resultadosData, materialesData, completadosData, profilesData] = await Promise.all([
-        examenesService.resultados.list('-fecha', 1000),
+        examenesService.resultados.listAll(),
         materialesService.materiales.list(),
         materialesService.completados.list('-created_date', 1000),
         authService.filterProfiles({ role: 'alumno', status: 'activo' }, '-created_date', 500),

@@ -8,7 +8,7 @@ import GoogleOAuthForm from '@/components/admin/GoogleOAuthForm';
 import MailIntegrationForm from '@/components/admin/MailIntegrationForm';
 import AuthPolicyForm from '@/components/admin/AuthPolicyForm';
 import type { SystemStatusResponse } from '@/api/systemStatus';
-import { websocketServiceStatus } from '@/lib/systemStatus';
+import { publicTlsBlocklistStatus, websocketServiceStatus } from '@/lib/systemStatus';
 
 const SECCIONES = [
   { id: 'general', label: 'Configuración general', icon: Settings },
@@ -67,7 +67,7 @@ export default function AdminConfiguracion() {
         { label: 'Trust proxy (Nginx)', value: sec.trust_proxy ? 'Activado' : 'Desactivado', estado: sec.trust_proxy ? 'ok' : 'warning' },
         { label: 'Hosts permitidos', value: (sec.allowed_hosts || []).join(', ') || '—' },
         { label: 'Orígenes CORS / CSRF', value: sec.cors_origins?.join(', ') || 'No disponible' },
-        { label: 'Hosts pendientes de TLS público', value: Array.isArray(sec.tls_pending_hosts) ? sec.tls_pending_hosts.join(', ') || 'Ninguno' : 'No disponible', estado: sec.tls_pending_hosts?.length ? 'warning' : undefined },
+        publicTlsBlocklistStatus(sec.tls_pending_hosts),
         { label: 'Política CSP configurada', value: sec.csp ? 'Sí' : 'No', estado: sec.csp ? 'ok' : 'warning' },
         { label: 'Política HSTS configurada', value: sec.hsts ? 'Sí' : 'No', estado: sec.hsts ? 'ok' : 'warning' },
       ],

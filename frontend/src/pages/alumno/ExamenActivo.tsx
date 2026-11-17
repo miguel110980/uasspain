@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, ChevronLeft, ChevronRight, CheckCircle, XCircle, AlertTriangle, Loader2, ShieldAlert } from 'lucide-react';
 import examenesService from '@/services/examenesService';
 
-const DURACION_TIEMPO = 40 * 60; // 40 minutos en segundos
+const DEFAULT_DURATION = 2400;
 
 export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
   const [preguntas, setPreguntas] = useState([]);
@@ -12,7 +12,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
   const [error, setError] = useState(null);
   const [respuestas, setRespuestas] = useState({});
   const [preguntaActual, setPreguntaActual] = useState(0);
-  const [tiempoRestante, setTiempoRestante] = useState(DURACION_TIEMPO);
+  const [tiempoRestante, setTiempoRestante] = useState(DEFAULT_DURATION);
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [finalizando, setFinalizando] = useState(false);
   const [errorEnvio, setErrorEnvio] = useState(null);
@@ -22,6 +22,10 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const deadlineRef = useRef<number | null>(null);
   const attemptRef = useRef<string | null>(null);
+  const answersRef = useRef<Record<string, string>>({});
+  const revisionRef = useRef(0);
+  const saveFailedRef = useRef(false);
+  const pendingSaveRef = useRef<{ revision: number; answers: Record<string, string> } | null>(null);
   const submittingRef = useRef(false);
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const handleFinalizarRef = useRef<(automatico?: boolean) => void>(() => {});
@@ -36,11 +40,14 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
         if (cancelled) return;
         attemptRef.current = attempt.id;
         setPreguntas(attempt.preguntas);
-        setRespuestas(attempt.respuestas || {});
+        answersRef.current = attempt.respuestas || {};
+        revisionRef.current = attempt.answer_revision;
+        saveFailedRef.current = false;
+        setRespuestas(answersRef.current);
         const serverNow = Date.parse(attempt.server_now);
         const remainingMs = attempt.expires_at ? Math.max(0, Date.parse(attempt.expires_at) - serverNow) : null;
         deadlineRef.current = remainingMs === null ? null : performance.now() + remainingMs;
-        setTiempoRestante(remainingMs === null ? DURACION_TIEMPO : Math.ceil(remainingMs / 1000));
+        setTiempoRestante(remainingMs === null ? attempt.duration_seconds : Math.ceil(remainingMs / 1000));
       } catch {
         if (!cancelled) setError('No se pudo iniciar el examen. Comprueba tu conexión y los permisos con tu instructor.');
       } finally {
@@ -66,21 +73,48 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [loading, resultado, modalidad]);
 
-  useEffect(() => {
+  const queueSave = (answers: Record<string, string>) => {
     const id = attemptRef.current;
-    if (loading || resultado || finalizando || !id || tiempoRestante <= 0) return;
-    const timer = setTimeout(() => {
-      saveChainRef.current = saveChainRef.current
-        .then(() => examenesService.guardarRespuestas(id, respuestas))
-        .then(() => setErrorGuardado(false))
-        .catch(() => setErrorGuardado(true));
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [respuestas, loading, resultado, finalizando, tiempoRestante <= 0]);
+    if (!id) return;
+    saveChainRef.current = saveChainRef.current.then(async () => {
+      if (saveFailedRef.current) return;
+      pendingSaveRef.current = { revision: revisionRef.current, answers };
+      const saved = await examenesService.guardarRespuestas(id, answers, revisionRef.current);
+      revisionRef.current = saved.answer_revision;
+      pendingSaveRef.current = null;
+      setErrorGuardado(false);
+    }).catch(() => { saveFailedRef.current = true; setErrorGuardado(true); });
+  };
+
+  const retrySave = async () => {
+    if (submittingRef.current || !attemptRef.current) return;
+    submittingRef.current = true;
+    try {
+      await saveChainRef.current;
+      const latest = await examenesService.iniciarIntento(examen.id, modalidad);
+      const pending = pendingSaveRef.current;
+      const sameAnswers = (a, b) => Object.keys({ ...a, ...b }).every(key => a[key] === b[key]);
+      const acknowledged = pending && latest.answer_revision === pending.revision + 1 && sameAnswers(latest.respuestas, pending.answers);
+      if (latest.id !== attemptRef.current || (latest.answer_revision !== revisionRef.current && !acknowledged)) {
+        throw new Error('El intento cambió en otra ventana. Tus respuestas se conservan aquí; revisa la otra ventana antes de continuar.');
+      }
+      revisionRef.current = latest.answer_revision;
+      saveFailedRef.current = false;
+      queueSave(answersRef.current);
+      await saveChainRef.current;
+      if (saveFailedRef.current) throw new Error('No se pudo confirmar el guardado. Tus respuestas siguen en pantalla.');
+      setErrorEnvio(null);
+    } catch (error) {
+      setErrorEnvio(error instanceof Error ? error.message : 'No se pudo recuperar el guardado.');
+    } finally { submittingRef.current = false; }
+  };
 
   const handleRespuesta = (pregId, opcion) => {
     if (resultado || submittingRef.current || (modalidad === 'tiempo' && tiempoRestante <= 0)) return;
-    setRespuestas((prev) => ({ ...prev, [pregId]: opcion }));
+    const next = { ...answersRef.current, [pregId]: opcion };
+    answersRef.current = next;
+    setRespuestas(next);
+    queueSave(next);
   };
 
   const handleFinalizar = useCallback(async (_automatico = false) => {
@@ -88,14 +122,17 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
     submittingRef.current = true;
     setFinalizando(true);
     setErrorEnvio(null);
+    await saveChainRef.current;
     const payload = {
+      expected_revision: revisionRef.current,
       attempt_id: attemptRef.current,
       examen_id: examen.id,
       modalidad,
-      respuestas,
+      respuestas: answersRef.current,
     };
 
     try {
+      if (saveFailedRef.current && !_automatico) throw new Error("Guardado pendiente");
       const saved = await examenesService.resultados.create(payload);
       setResultado(saved);
       setVistaRevision(false);
@@ -202,7 +239,7 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
               onClick={() => onFinalizar()}
               className="px-6 py-3 bg-primary text-primary-foreground font-bold uppercase tracking-tighter text-xs hover:bg-primary/80 transition-all duration-300"
             >
-              Volver a exámenes
+              Volver a resultados
             </button>
           </div>
         </div>
@@ -296,9 +333,10 @@ export default function ExamenActivo({ examen, modalidad, onFinalizar }) {
       {/* Progreso */}
       <div className="glass-card px-6 py-4 mb-6">
         {errorGuardado && (
-          <p role="status" className="text-xs text-warning mb-3">
+          <div role="status" className="text-xs text-warning mb-3">
             No se han podido guardar las últimas respuestas. Comprueba tu conexión antes de que termine el tiempo.
-          </p>
+            <button type="button" onClick={() => void retrySave()} className="ml-2 underline">Reintentar guardado</button>
+          </div>
         )}
         {errorEnvio && (
           <p className="text-xs text-danger font-mono mb-3 border border-danger-border bg-danger-soft px-3 py-2">

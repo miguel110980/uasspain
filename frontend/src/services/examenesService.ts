@@ -20,6 +20,21 @@ function crud(baseUrl: string, schema?: Record<string, SanitizeKind>) {
       return unwrapList(res);
     },
 
+    async listAll(filters: Record<string, unknown> = {}) {
+      const rows: Record<string, any>[] = [];
+      const seen = new Set<string>();
+      for (let offset = 0; offset < 5000000; offset += 500) {
+        const response = await apiClient.get(baseUrl, { params: buildListParams('-fecha', 500, { ...filters, offset }) });
+        const page = unwrapList(response);
+        for (const row of page) {
+          if (!row.id || seen.has(String(row.id))) throw new Error('No se pudo recorrer el historial de forma estable. Actualiza para reintentar.');
+          seen.add(String(row.id)); rows.push(row);
+        }
+        if (page.length < 500) return rows;
+      }
+      throw new Error('El historial supera el límite de consulta. Contacta con administración.');
+    },
+
     async filter(query: Record<string, unknown>, sort?: string, limit?: number) {
       return crud(baseUrl, schema).list(sort, limit, query);
     },
@@ -82,8 +97,9 @@ export const examenesService = {
     return res.data;
   },
 
-  async guardarRespuestas(attemptId: string, respuestas: Record<string, string>) {
-    await apiClient.put(`/api/intentos-examen/${attemptId}/`, { respuestas });
+  async guardarRespuestas(attemptId: string, respuestas: Record<string, string>, expectedRevision: number) {
+    const response = await apiClient.put(`/api/intentos-examen/${attemptId}/`, { respuestas, expected_revision: expectedRevision });
+    return response.data;
   },
 
   async uploadArchivo(file: File, options: { signal?: AbortSignal } = {}) {
@@ -105,8 +121,9 @@ export const examenesService = {
     return normalizeUploadResponse(res.data);
   },
 
-  async importarExamenPDF({ fileUrl, categoria, metadata = null, signal = null }) {
+  async importarExamenPDF({ fileUrl, categoria, metadata = null, signal = null, confirm = false, previewToken = '' }) {
     const payload: Record<string, unknown> = sanitizePayload({ file_url: fileUrl, categoria }, IMPORT_PDF_SCHEMA);
+    payload.confirm = confirm; payload.preview_token = previewToken;
     if (metadata && typeof metadata === 'object') {
       payload.metadata = metadata;
     }

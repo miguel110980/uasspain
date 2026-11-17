@@ -1,4 +1,5 @@
 import FeedbackNavigation from '@/components/ui/FeedbackNavigation';
+import { useIncomingCallNotice } from '@/hooks/useIncomingCallNotice';
 import React, { lazy, useState, useEffect } from 'react';
 import {
   LayoutDashboard, ClipboardList, BarChart2, BookOpen, MessageCircle, Video, User, TrendingUp,
@@ -52,10 +53,12 @@ const TITLES = Object.fromEntries(NAV_GROUPS.flatMap((g) => g.items.map((i) => [
 // Nota: las pestañas del contenido principal permanecen montadas (toggle con 'hidden')
 // para evitar recargas de datos al cambiar de pestaña y mejorar la fluidez en móvil.
 export default function AlumnoPanel() {
+  const [academicRevision, setAcademicRevision] = useState(0);
   const [section, setSection] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, profile: authProfile } = usePanelAuthContext();
   const [profile, setProfile] = useState(null);
+  const notifyIncomingCall = useIncomingCallNotice(authProfile?.id, () => handleSelect('video'));
   const [examenActivo, setExamenActivo] = useState(null);
   const [conexionId, setConexionId] = useState(null);
   const [chatSinLeer, setChatSinLeer] = useState(false);
@@ -128,12 +131,25 @@ export default function AlumnoPanel() {
       try {
         const activas = await conexionesService.videollamadas.filter({ alumno_id: profile.id, estado: 'activa', iniciada_por: 'instructor' });
         setVideoEntrante(activas.length > 0);
+        notifyIncomingCall(activas);
       } catch {}
     };
     checkVideo();
     const unsubscribe = conexionesService.subscribeVideollamadas(() => checkVideo());
     return () => unsubscribe();
   }, [profile?.id]);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = conexionesService.subscribeConexiones(event => {
+      const payload = conexionesService.parseWsPayload(event);
+      if (payload?.type !== 'asignacion') return;
+      setAcademicRevision(value => value + 1);
+      setChatSinLeer(false); setVideoEntrante(false);
+      authService.me().then(current => { if (active) setProfile(current.profile); }).catch(() => {});
+    });
+    return () => { active = false; unsubscribe(); };
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -209,8 +225,6 @@ export default function AlumnoPanel() {
 
       <div className="flex-1 min-w-0 flex flex-col">
         <AdminTopbar
-          navigation={examenActivo ? [] : NAV_GROUPS.flatMap(group => group.items)}
-          onNavigate={handleSelect}
           title={examenActivo ? 'Examen en curso' : (TITLES[section] || 'Panel')}
           onMenu={() => setSidebarOpen(true)}
           user={topbarUser}
@@ -219,7 +233,7 @@ export default function AlumnoPanel() {
           pendingCount={topbarNotifications.length}
           notifications={topbarNotifications}
         />
-        <main className="flex-1 p-4 md:p-6 max-w-[1400px] w-full mx-auto">
+        <main key={academicRevision} className="flex-1 p-4 md:p-6 max-w-[1400px] w-full mx-auto">
           {examenActivo ? (
             <PanelSection><ExamenActivo
               examen={examenActivo.examen}

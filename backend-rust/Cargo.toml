@@ -13,6 +13,7 @@ axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
 base64 = "0.22"
 bcrypt = "0.17"
+cfb = "0.14"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 futures-util = "0.3"
@@ -24,6 +25,7 @@ lopdf = "0.45"
 pbkdf2 = "0.12"
 quick-xml = "0.42"
 rand = "0.9"
+rwml = { version = "0.1.5", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 redis = { version = "1.7", default-features = false, features = ["aio", "connection-manager", "tokio-rustls-comp", "tls-rustls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
@@ -39,11 +41,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
-zip = { version = "4", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+seccompiler = "0.5"
 
 [lints.rust]
 unsafe_code = "forbid"

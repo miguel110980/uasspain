@@ -248,7 +248,7 @@ fn timezone_valid(zone: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"_-/+".contains(&b))
         && Path::new("/usr/share/zoneinfo").join(zone).is_file()
 }
-fn validate(config: &Config) -> Result<(), AppError> {
+pub(crate) fn validate(config: &Config) -> Result<(), AppError> {
     if !matches!(
         config.host_platform.as_str(),
         "" | "windows" | "linux" | "other"
@@ -450,7 +450,7 @@ pub async fn observation() -> Result<Observation, &'static str> {
         .map_err(|_| "AGENT_UNAVAILABLE")?;
     verify_envelope(&raw, &key, Utc::now())
 }
-async fn current(state: &AppState) -> Result<(Config, i64), AppError> {
+pub(crate) async fn current(state: &AppState) -> Result<(Config, i64), AppError> {
     let pool = state.pool.as_ref().ok_or(AppError::Unavailable)?;
     let row: Option<(Value, i64)> =
         sqlx::query_as("SELECT config,revision FROM infrastructure_config WHERE id=1")
@@ -464,7 +464,10 @@ async fn current(state: &AppState) -> Result<(Config, i64), AppError> {
         None => Ok((Config::default(), 0)),
     }
 }
-fn admin(state: &AppState, headers: &HeaderMap) -> Result<crate::auth::Claims, AppError> {
+pub(crate) fn admin(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<crate::auth::Claims, AppError> {
     let claims = authenticate(state, headers, "access")?;
     require_role(&claims, &["admin"])?;
     enforce_operation_rate(headers, &format!("infrastructure:{}", claims.profile_id))?;
@@ -495,6 +498,7 @@ pub async fn put(
     sqlx::query("SELECT pg_advisory_xact_lock(724851907)")
         .execute(&mut *tx)
         .await?;
+    crate::vpn_apply::ensure_idle().await?;
     let revision: Option<i64> =
         sqlx::query_scalar("SELECT revision FROM infrastructure_config WHERE id=1 FOR UPDATE")
             .fetch_optional(&mut *tx)
