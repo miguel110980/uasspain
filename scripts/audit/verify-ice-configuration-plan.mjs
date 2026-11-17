@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {docker,work} from './four-issues-lab-common.mjs';
+const root=process.cwd();
+const model=file=>JSON.parse(docker(['compose','--project-directory',root,'-f',file,'-f',resolve('docker-compose.encrypted.yml'),'config','--format','json']));
+const before=model(resolve(work,'compose-before-ice.yml')),after=model(resolve('docker-compose.yml'));
+assert.deepEqual(Object.keys(after.services).sort(),['backend','frontend','nginx','postgres','redis']);
+const projected=structuredClone(after);
+delete projected.services.backend.environment.WEBRTC_ICE_SERVERS_FILE;
+projected.services.backend.secrets=projected.services.backend.secrets.filter(s=>s.source!=='webrtc_ice_servers');
+delete projected.secrets.webrtc_ice_servers;
+assert.deepEqual(projected,before,'Only the backend ICE file environment and read-only secret may change');
+const servers=JSON.parse(readFileSync('config/webrtc-ice-servers.json','utf8'));
+assert.deepEqual(servers,[{urls:['stun:stun.cloudflare.com:3478']}]);
+const report={observed_at:new Date().toISOString(),status:'PASS_LIMITED_ICE_CONFIGURATION_PLAN',before:{ice_environment:false,ice_file_mount:false},after:{ice_file:'/run/secrets/webrtc_ice_servers',stun:['stun:stun.cloudflare.com:3478'],turn:false},permanent_services:5,other_resolved_configuration_identical:true,ports_firewall_dns_router_tls_and_credentials_changes:0,authorization:'Owner: tienes autorizacion para todo lo que se necesita',reversal:'Restore preserved Compose file, then official rebuild/recreate only affected services; no database rollback required',source:'https://developers.cloudflare.com/realtime/turn/faq/'};
+writeFileSync('docs/audits/evidence/2026-11-17-ice-configuration-plan.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));

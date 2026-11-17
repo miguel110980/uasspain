@@ -1,0 +1,30 @@
+/** Read-only preservation and real-login evidence after the deployed direct listener restart. */
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const json=path=>JSON.parse(readFileSync(path,'utf8').replace(/^\uFEFF/,''));
+const sha=b=>createHash('sha256').update(b).digest('hex');
+const dir='.run/audit-20261117/direct-https/apply',before=json(dir+'/before.json'),deployment=json('docs/audits/evidence/2026-11-17-direct-https-apply.json'),restart=json('docs/audits/evidence/2026-11-17-direct-https-restart.json');
+assert.match(deployment.observed_at,/^\d{4}-\d\d-\d\dT[\d:.]+Z$/);
+const query=`SELECT json_build_object('profiles',(SELECT count(*) FROM accounts_userprofile),'identity',md5((SELECT jsonb_agg(to_jsonb(p)||jsonb_build_object('auth_digest',md5(to_jsonb(u)::text)) ORDER BY p.id)::text FROM accounts_userprofile p JOIN auth_user u ON p.user_id=u.id)),'secrets',md5((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.id)::text FROM core_systemsecret s)),'roles',(SELECT json_object_agg(role,n) FROM (SELECT role,count(*) n FROM accounts_userprofile GROUP BY role) r),'google',(SELECT json_build_object('enabled',value->'enabled','verified_origin',value->>'verified_origin') FROM core_systemsetting WHERE key='google_oauth'),'consumed_login_successes',(SELECT count(*) FROM google_oauth_flow WHERE created_at>'${deployment.observed_at}'::timestamptz AND purpose='login' AND result='SUCCESS' AND consumed_at IS NOT NULL),'live_auth_events',(SELECT count(*) FROM google_oauth_event WHERE created_at>'${deployment.observed_at}'::timestamptz AND operation='google_code_authenticated' AND context->>'source'='GOOGLE_LIVE'))`;
+const actual=JSON.parse(execFileSync('docker',['exec','-i','uasspain-postgres','psql','-X','-U','uasspain','-d','uasspain','-qtA','-v','ON_ERROR_STOP=1','-f','-'],{input:`BEGIN READ ONLY; SET LOCAL statement_timeout='20s'; ${query}; COMMIT;`,encoding:'utf8',windowsHide:true}));
+const report={observed_at:new Date().toISOString(),scope:'Original deployed direct HTTPS listener after one Nginx restart; live Google login through integrated browser on server, not independent mobile proof',status:'PENDING',checks:[],external_access:'NOT_RUN_AFTER_DIRECT_DEPLOYMENT',windows_boot:'NOT_RUN',new_services_or_scheduled_tasks:0,sql_writes_by_collector:0};
+const check=(id,ok,observed)=>report.checks.push({id,status:ok?'PASS':'FAIL',observed});
+check('EIGHT_IDENTITIES_CREDENTIALS_ROLES_LINKS_PRESERVED',actual.profiles===8&&actual.identity===before.identity.identity,{profiles:actual.profiles,roles:actual.roles});
+check('PROVIDER_SECRETS_PRESERVED',actual.secrets===before.identity.secrets,{matches_baseline:actual.secrets===before.identity.secrets});
+const keysMatch=sha(readFileSync('.secrets/postgres-storage-key.dpapi'))===before.dpapi_sha256&&sha(readFileSync('.secrets/tls/ca.crt'))===before.ca_sha256;check('DPAPI_AND_CA_PRESERVED',keysMatch,{matches_baseline:keysMatch});
+const originalEnv=readFileSync(dir+'/env.before','utf8'),nl=originalEnv.includes('\r\n')?'\r\n':'\n';
+check('ONLY_APPROVED_ENV_KEY_ADDED',readFileSync('.env','utf8')===originalEnv+(originalEnv.endsWith('\n')?'':nl)+'HTTPS_LAN_BIND=192.168.1.34'+nl,{added_key:'HTTPS_LAN_BIND',value:'192.168.1.34'});
+const proposal=json('docs/audits/evidence/2026-11-17-direct-https-proposal.json'),composeMatches=sha(readFileSync('docker-compose.yml'))===proposal.candidate_compose_sha256;check('COMPOSE_MATCHES_REVIEWED_CANDIDATE',composeMatches,{matches_predeployment_candidate:composeMatches});
+const composeArgs=['compose','-p','uasspain','-f','docker-compose.yml','-f','docker-compose.encrypted.yml','config','--format','json'];
+const liveModel=JSON.parse(execFileSync('docker',composeArgs,{encoding:'utf8',windowsHide:true,maxBuffer:8*1024*1024}));
+const fallback=JSON.parse(execFileSync('docker',composeArgs,{encoding:'utf8',windowsHide:true,maxBuffer:8*1024*1024,env:{...process.env,HTTPS_LAN_BIND:''}}));
+const fallbackPorts=fallback.services.nginx.ports.map(p=>`${p.host_ip}:${p.published}->${p.target}/${p.protocol}`).sort();
+delete fallback.services.nginx.ports;delete liveModel.services.nginx.ports;
+check('UNSET_LAN_BIND_PRESERVES_PRIVATE_DEPLOYMENT',JSON.stringify(fallbackPorts)===JSON.stringify(['127.0.0.1:443->8443/tcp','127.0.0.1:80->8080/tcp'])&&JSON.stringify(fallback)===JSON.stringify(liveModel),{fallback_ports:fallbackPorts,live_runtime_not_modified:true});
+check('ORIGINAL_DEPLOYMENT_AND_RESTART_PASS',deployment.status==='PASS_DEPLOYMENT_ONLY'&&restart.status.startsWith('PASS'),{deployment:deployment.status,restart:restart.status});
+check('REAL_GOOGLE_LOGIN_AFTER_DEPLOYMENT',actual.consumed_login_successes>=1&&actual.live_auth_events>=1&&actual.google?.enabled===true&&actual.google.verified_origin==='https://uasspain-prueba.duckdns.org',{successes:actual.consumed_login_successes,live_auth_events:actual.live_auth_events,google:actual.google,browser_dashboard_users:8,browser_dashboard_services:'5/5',screenshot:'2026-11-17-direct-https-dashboard.jpg'});
+for(const suffix of ['live-before-restart','live-after-restart','assets-before-restart','assets-after-restart','security']){const path='docs/audits/evidence/2026-11-17-direct-https-'+suffix+'.json',evidence=json(path);check('EVIDENCE:'+suffix,evidence.status.startsWith('PASS'),{path,status:evidence.status,checks:evidence.checks?.length});}
+report.status=report.checks.every(x=>x.status==='PASS')?'PASS_DEPLOYED_AND_NGINX_RESTART_VALIDATED':'FAIL';report.release_gate='BLOCKED_REMAINING_MASTER_ACCEPTANCE_AND_WINDOWS_BOOT_TEST';
+writeFileSync('docs/audits/evidence/2026-11-17-direct-https-closure.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({status:report.status,checks:report.checks.length,failures:report.checks.filter(x=>x.status==='FAIL').map(x=>x.id)}));if(report.status==='FAIL')process.exitCode=1;

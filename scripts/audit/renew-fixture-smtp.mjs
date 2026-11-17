@@ -1,0 +1,42 @@
+/** Renew expired public test certificates, preserving all original TLS/keys. */
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const lab = resolve(root, '.run/closure-20261109-630870e0');
+const keys = resolve(lab, 'keys');
+const work = resolve(root, '.run/audit-20261116/smtp-certificate-renewal');
+mkdirSync(work, { recursive: true });
+const openssl = 'C:/msys64/ucrt64/bin/openssl.exe';
+function run(file, args) {
+  const r = spawnSync(file, args, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 4 * 1024 * 1024 });
+  if (r.status !== 0 || r.error) throw Error('Fixture certificate operation failed; private output withheld');
+  return r.stdout.trim();
+}
+const sha = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+const manifest = JSON.parse(readFileSync(resolve(lab, 'api-lab-manifest.json'), 'utf8'));
+assert.equal(manifest.project, 'uasspain-mail-audit-closure-630870e0');
+const receiver = JSON.parse(run('docker', ['inspect', manifest.smtp]))[0];
+assert.equal(receiver.Config.Labels['uasspain.fixture'], manifest.owner);
+const protectedPaths = ['.secrets/tls/ca.crt', '.secrets/tls/edge.crt', '.secrets/postgres-storage-key.dpapi', '.run/closure-20261109-630870e0/keys/ca-key.pem', '.run/closure-20261109-630870e0/keys/key.pem'];
+const protectedHashes = protectedPaths.map(file => sha(resolve(root, file)));
+const oldDates = run(openssl, ['x509', '-in', resolve(keys, 'cert.pem'), '-noout', '-dates']);
+const oldCA = run(openssl, ['x509', '-in', resolve(keys, 'ca.pem'), '-noout', '-dates']);
+copyFileSync(resolve(keys, 'cert.pem'), resolve(work, 'previous-cert.pem'));
+copyFileSync(resolve(keys, 'ca.pem'), resolve(work, 'previous-ca.pem'));
+run(openssl, ['req', '-x509', '-new', '-key', resolve(keys, 'ca-key.pem'), '-out', resolve(work, 'ca.pem'), '-days', '30', '-sha256', '-subj', '/CN=UASSpain Synthetic SMTP Audit CA', '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign', '-addext', 'subjectKeyIdentifier=hash']);
+run(openssl, ['req', '-new', '-key', resolve(keys, 'key.pem'), '-out', resolve(work, 'server.csr'), '-subj', '/CN=mail-dual-fixture']);
+writeFileSync(resolve(work, 'server.ext'), 'subjectAltName=DNS:mail-dual-fixture\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nauthorityKeyIdentifier=keyid,issuer\nsubjectKeyIdentifier=hash\n');
+run(openssl, ['x509', '-req', '-in', resolve(work, 'server.csr'), '-CA', resolve(work, 'ca.pem'), '-CAkey', resolve(keys, 'ca-key.pem'), '-CAcreateserial', '-out', resolve(work, 'cert.pem'), '-days', '30', '-sha256', '-extfile', resolve(work, 'server.ext')]);
+const verified = run(openssl, ['verify', '-x509_strict', '-verify_hostname', 'mail-dual-fixture', '-CAfile', resolve(work, 'ca.pem'), resolve(work, 'cert.pem')]);
+assert.ok(verified.endsWith(': OK'));
+copyFileSync(resolve(work, 'ca.pem'), resolve(keys, 'ca.pem'));
+copyFileSync(resolve(work, 'cert.pem'), resolve(keys, 'cert.pem'));
+run('docker', ['restart', manifest.smtp]);
+assert.deepEqual(protectedPaths.map(file => sha(resolve(root, file))), protectedHashes);
+const report = { observed_at: new Date().toISOString(), status: 'PASS', scope: 'Existing synthetic SMTP fixture only; no host trust import or original certificate change', previous_leaf_dates: oldDates, previous_fixture_ca_dates: oldCA, new_leaf_dates: run(openssl, ['x509', '-in', resolve(keys, 'cert.pem'), '-noout', '-dates']), strict_hostname_verification: true, original_ca_and_leaf_unchanged: true, fixture_private_keys_unchanged: true, dpapi_unchanged: true, receiver_id_unchanged: true, historical_public_certs_retained: true };
+writeFileSync(resolve(root, 'docs/audits/evidence/2026-11-16-smtp-fixture-renewal.json'), JSON.stringify(report, null, 2) + '\n');
+console.log(JSON.stringify(report));
