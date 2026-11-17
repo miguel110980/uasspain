@@ -1,5 +1,5 @@
 # ─── Nginx edge: único punto de entrada público (HTTP/HTTPS) ───
-FROM nginx:1.30.6-alpine3.24@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
+FROM nginx:1.31.8-alpine3.24@sha256:fed7e14be83cbd2661a75cdc5b872d936cf155d46c327084d30b8df19ae88d72
 
 # Actualiza paquetes del sistema dentro de la tag inmutable (CVEs de alpine/openssl)
 RUN apk upgrade --no-cache \
