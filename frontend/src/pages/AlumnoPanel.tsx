@@ -1,4 +1,5 @@
 import FeedbackNavigation from '@/components/ui/FeedbackNavigation';
+import { useIncomingCallNotice } from '@/hooks/useIncomingCallNotice';
 import React, { lazy, useState, useEffect } from 'react';
 import {
   LayoutDashboard, ClipboardList, BarChart2, BookOpen, MessageCircle, Video, User, TrendingUp,
@@ -57,6 +58,7 @@ export default function AlumnoPanel() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, profile: authProfile } = usePanelAuthContext();
   const [profile, setProfile] = useState(null);
+  const notifyIncomingCall = useIncomingCallNotice(authProfile?.id, () => handleSelect('video'));
   const [examenActivo, setExamenActivo] = useState(null);
   const [conexionId, setConexionId] = useState(null);
   const [chatSinLeer, setChatSinLeer] = useState(false);
@@ -129,6 +131,7 @@ export default function AlumnoPanel() {
       try {
         const activas = await conexionesService.videollamadas.filter({ alumno_id: profile.id, estado: 'activa', iniciada_por: 'instructor' });
         setVideoEntrante(activas.length > 0);
+        notifyIncomingCall(activas);
       } catch {}
     };
     checkVideo();

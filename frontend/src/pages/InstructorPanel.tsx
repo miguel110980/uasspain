@@ -1,4 +1,5 @@
 import FeedbackNavigation from '@/components/ui/FeedbackNavigation';
+import { useIncomingCallNotice } from '@/hooks/useIncomingCallNotice';
 import React, { lazy, useState, useEffect, useMemo, useRef } from 'react';
 import {
   LayoutDashboard, Users, ClipboardList, BookOpen, BarChart2, Wifi,
@@ -79,6 +80,7 @@ export default function InstructorPanel() {
   const [chatSinLeerStaff, setChatSinLeerStaff] = useState(0);
   const [chatInitialTab, setChatInitialTab] = useState(/** @type {'alumnos' | 'admin' | undefined} */ (undefined));
   const [videoEntrante, setVideoEntrante] = useState(false);
+  const notifyIncomingCall = useIncomingCallNotice(authProfile?.id, () => handleSelect('video'));
   const [modalResultados, setModalResultados] = useState(null);
   const [modalAccesos, setModalAccesos] = useState(null);
   const [visitedTabs, setVisitedTabs] = useState(() => new Set(['dashboard']));
@@ -145,6 +147,7 @@ export default function InstructorPanel() {
       try {
         const entrantes = await conexionesService.videollamadas.filter({ estado: 'activa' });
         setVideoEntrante(entrantes.some(call => String(call.iniciador_id) !== String(authProfile?.id)));
+        notifyIncomingCall(entrantes);
       } catch {}
     };
     checkVideo();

@@ -157,7 +157,7 @@ pub async fn public_google_oauth(
 pub async fn public_publications(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<PublicPublication>>, AppError> {
-    let rows = sqlx::query_as::<_, PublicPublication>("SELECT id,titulo,resumen,fecha_publicacion,url,categoria,activo,created_date FROM materiales_publicacionboe WHERE activo ORDER BY fecha_publicacion DESC NULLS LAST,created_date DESC LIMIT 20").fetch_all(pool(&state)?).await?;
+    let rows = sqlx::query_as::<_, PublicPublication>("SELECT id,titulo,resumen,fecha_publicacion,url,categoria,activo,created_date FROM materiales_publicacionboe WHERE activo AND (fecha_publicacion IS NULL OR fecha_publicacion<=CURRENT_DATE) ORDER BY fecha_publicacion DESC NULLS LAST,created_date DESC LIMIT 100").fetch_all(pool(&state)?).await?;
     Ok(Json(rows))
 }
 

@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 struct Line {
     text: String,
     bold: bool,
+    color: Option<String>,
 }
 
 fn visit(
@@ -24,11 +25,43 @@ fn visit(
                 if *bytes > 2 * 1024 * 1024 || lines.len() >= 20000 {
                     return Err("document size".into());
                 }
-                let bold = paragraph
-                    .runs
-                    .iter()
-                    .any(|run| run.props.bold && !run.text.trim().is_empty());
-                lines.push(Line { text, bold });
+                let prefix: Vec<char> = text.trim().chars().take(2).collect();
+                let mut skip = if prefix.len() == 2
+                    && matches!(prefix[0].to_ascii_lowercase(), 'a'..='d')
+                    && matches!(prefix[1], '.' | ')' | ':' | '-')
+                {
+                    2
+                } else {
+                    0
+                };
+                let (mut visible, mut bold_chars, mut colors) = (
+                    0usize,
+                    0usize,
+                    std::collections::BTreeMap::<String, usize>::new(),
+                );
+                for run in &paragraph.runs {
+                    for _ in run.text.chars().filter(|c| !c.is_whitespace()) {
+                        if skip > 0 {
+                            skip -= 1;
+                            continue;
+                        }
+                        visible += 1;
+                        if run.props.bold {
+                            bold_chars += 1;
+                        }
+                        if let Some(color) = &run.props.color {
+                            *colors
+                                .entry(format!("{:02X}{:02X}{:02X}", color.r, color.g, color.b))
+                                .or_default() += 1;
+                        }
+                    }
+                }
+                let bold = visible > 0 && bold_chars * 5 >= visible * 4;
+                let color = colors
+                    .into_iter()
+                    .find(|(color, count)| color != "000000" && count * 5 >= visible * 4)
+                    .map(|(color, _)| color);
+                lines.push(Line { text, bold, color });
             }
             rwml::Block::Table(table) => {
                 for row in &table.rows {

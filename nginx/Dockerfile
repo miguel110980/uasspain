@@ -1,7 +1,7 @@
 # ─── Nginx edge: único punto de entrada público (HTTP/HTTPS) ───
 FROM nginx:1.30.6-alpine3.24@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
 
-ARG SECURITY_REFRESH=2026-11-09
+ARG SECURITY_REFRESH=2026-11-16
 
 # Actualiza paquetes del sistema dentro de la tag inmutable (CVEs de alpine/openssl)
 RUN apk upgrade --no-cache \

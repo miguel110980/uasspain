@@ -1,4 +1,5 @@
 import FeedbackNavigation from '@/components/ui/FeedbackNavigation';
+import { useIncomingCallNotice } from '@/hooks/useIncomingCallNotice';
 import React, { lazy, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   LayoutDashboard, Activity, BarChart2, Radio, Network, Shield, ScrollText,
@@ -100,6 +101,7 @@ export default function AdminPanel() {
   const [pendingCount, setPendingCount] = useState(0);
   const [staffUnread, setStaffUnread] = useState(0);
   const [videoIncoming, setVideoIncoming] = useState(0);
+  const notifyIncomingCall = useIncomingCallNotice(authProfile?.id, () => handleSelectSection('video'));
   const [accountProfile, setAccountProfile] = useState(null);
   const [visitedTabs, setVisitedTabs] = useState(() => new Set([initialSection()]));
 
@@ -162,6 +164,7 @@ export default function AdminPanel() {
       try {
         const calls = await conexionesService.videollamadas.filter({ canal: 'administracion', estado: 'activa' });
         setVideoIncoming(calls.filter(call => String(call.iniciador_id) !== String(authProfile.id)).length);
+        notifyIncomingCall(calls);
       } catch { /* The video section displays connection errors. */ }
     };
     void load();

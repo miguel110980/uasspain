@@ -250,6 +250,7 @@ services:
       INFRASTRUCTURE_AGENT_KEY_FILE: /run/backup-secrets/infrastructure_agent.key
       INFRASTRUCTURE_ENABLED: ${INFRASTRUCTURE_ENABLED:-true}
       INFRASTRUCTURE_AGENT_SNAPSHOT: /run/infrastructure-agent/status.json
+      WEBRTC_ICE_SERVERS_FILE: /run/secrets/webrtc_ice_servers
       BACKUP_ENCRYPTION_ENABLED: "true"
       BACKUP_SCHEDULER_ENABLED: "true"
       BACKUP_REQUIRE_VPN: "true"
@@ -316,6 +317,7 @@ services:
       - field_encryption_key
       - bootstrap_admin_password
       - redis_password
+      - webrtc_ice_servers
       - pg_tls_ca
       - redis_tls_ca
       - backend_tls_ca
@@ -423,6 +425,8 @@ services:
     ports:
       - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-80}:8080"
       - "${HTTP_BIND:-127.0.0.1}:${HTTPS_PORT:-443}:8443"
+      # Explicit LAN HTTPS only; loopback default deduplicates in private deployments.
+      - "${HTTPS_LAN_BIND:-127.0.0.1}:${HTTPS_PORT:-443}:8443"
     networks:
       - edge
     read_only: true
@@ -498,6 +502,8 @@ volumes:
 
 # ─── Secrets (fuera de Git, fuera de imágenes) ──────────────────────
 secrets:
+  webrtc_ice_servers:
+    file: ${WEBRTC_ICE_CONFIG_FILE:-./config/webrtc-ice-servers.json}
   secret_key:
     file: ${SECRET_KEY_FILE:-.secrets/secret_key}
   db_password:

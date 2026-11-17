@@ -268,12 +268,12 @@ export default function InstructorExamenes() {
         <p>{importPreview.categoria} · {importPreview.result.total_validas} válidas · {importPreview.result.total_errores} rechazadas</p>
         <div className="max-h-[60vh] overflow-auto space-y-4 my-4">
           {importPreview.result.preguntas.map((question, index) => <article key={index} className="border border-border-subtle p-3">
-            <p>{index + 1}. {question.enunciado}</p>
+            <p>{question.numero ?? index + 1}. {question.enunciado}</p>
             {Object.entries(question.opciones).map(([key, text]) => <p key={key}>{key.toUpperCase()}. {String(text)}{key === question.respuesta_correcta ? ' · Correcta' : ''}</p>)}
           </article>)}
           {importPreview.result.errores.map((error, index) => <p key={'error-'+index} className="text-warning">{error.numero ? 'Pregunta '+error.numero+': ' : ''}{error.motivo}</p>)}
         </div>
-        <button type="button" disabled={uploading} onClick={() => void confirmImport()} className="text-primary">Confirmar importación en borrador</button>
+        <button type="button" disabled={uploading || importPreview.result.total_errores > 0} onClick={() => void confirmImport()} className="text-primary">Confirmar importación en borrador</button>
         <button type="button" disabled={uploading} onClick={() => setImportPreview(null)} className="ml-4">Cancelar importación</button>
       </PanelModal>}
       <DataLoadNotice error={loadError} retry={loadData} />

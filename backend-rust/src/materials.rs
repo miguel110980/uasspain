@@ -458,9 +458,9 @@ pub async fn list_publications(
     headers: HeaderMap,
     Query(query): Query<MaterialQuery>,
 ) -> Result<Json<Vec<Value>>, AppError> {
-    authenticate(&state, &headers, "access")?;
-    let rows = sqlx::query_scalar::<_, Value>("SELECT to_jsonb(p) FROM materiales_publicacionboe p WHERE ($1::text IS NULL OR categoria = $1) AND ($2::boolean IS NULL OR activo = $2) ORDER BY fecha_publicacion DESC NULLS LAST, created_date DESC LIMIT $3")
-        .bind(query.categoria.as_deref()).bind(query.activo).bind(limit(query.limit)).fetch_all(pool(&state)?).await?;
+    let claims = authenticate(&state, &headers, "access")?;
+    let rows = sqlx::query_scalar::<_, Value>("SELECT to_jsonb(p) FROM materiales_publicacionboe p WHERE ($1::text IS NULL OR categoria = $1) AND ($2::boolean IS NULL OR activo = $2) AND ($4<>'alumno' OR (activo AND (fecha_publicacion IS NULL OR fecha_publicacion<=CURRENT_DATE))) ORDER BY fecha_publicacion DESC NULLS LAST, created_date DESC LIMIT $3")
+        .bind(query.categoria.as_deref()).bind(query.activo).bind(limit(query.limit)).bind(&claims.role).fetch_all(pool(&state)?).await?;
     Ok(Json(rows))
 }
 
@@ -485,11 +485,12 @@ pub async fn publication_detail(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, AppError> {
-    authenticate(&state, &headers, "access")?;
+    let claims = authenticate(&state, &headers, "access")?;
     let row = sqlx::query_scalar::<_, Value>(
-        "SELECT to_jsonb(p) FROM materiales_publicacionboe p WHERE id=$1",
+        "SELECT to_jsonb(p) FROM materiales_publicacionboe p WHERE id=$1 AND ($2<>'alumno' OR (activo AND (fecha_publicacion IS NULL OR fecha_publicacion<=CURRENT_DATE)))",
     )
     .bind(id)
+    .bind(&claims.role)
     .fetch_optional(pool(&state)?)
     .await?
     .ok_or(AppError::NotFound)?;

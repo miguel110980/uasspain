@@ -73,6 +73,12 @@ export default function InstructorVideo({ profiles }) {
   const handleUnirse = (llamada) => {
     setEnLlamada(llamada);
   };
+  const handleRechazar = async (llamada) => {
+    try {
+      await conexionesService.videollamadas.update(llamada.id, { estado: 'finalizada' });
+      setLlamadas(previous => previous.filter(call => call.id !== llamada.id));
+    } catch { setCallError('No se pudo rechazar la llamada. Vuelve a intentarlo.'); }
+  };
 
   const handleGroup = async () => {
     if (groupLoading) return;
@@ -182,6 +188,7 @@ export default function InstructorVideo({ profiles }) {
                   <Phone className="w-3.5 h-3.5" />
                   Unirse
                 </button>
+                <button onClick={() => { void handleRechazar(l); }} className="px-3 py-2 border border-border-subtle text-sm">Rechazar llamada</button>
               </motion.div>
             ))}
           </div>

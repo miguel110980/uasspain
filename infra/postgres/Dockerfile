@@ -25,7 +25,7 @@ FROM scratch AS postgres-runtime
 
 COPY --from=assembler /assembled/ /
 
-ARG SECURITY_REFRESH=2026-11-09
+ARG SECURITY_REFRESH=2026-11-16
 RUN apk upgrade --no-cache
 
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
